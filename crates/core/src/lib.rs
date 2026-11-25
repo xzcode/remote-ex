@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 //! Local authorization state machine, not a network listener or OS input injector.
 use remote_ex_protocol::{decode_input, DecodeError, Input, SessionId};
+use remote_ex_security::{VerifiedSession, session::{VIEW, INPUT}};
 use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -11,7 +12,7 @@ pub struct Permissions { pub view: bool, pub input: bool }
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Error {
-    InvalidState, InvalidGrant, PermissionDenied, WrongSession, Sequence, Decode(DecodeError),
+    InvalidState, InvalidGrant, PermissionDenied, WrongSession, ProofMismatch, Sequence, Decode(DecodeError),
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -55,10 +56,18 @@ impl SessionGate {
         self.state = State::Approved;
         Ok(())
     }
-    /// Integration hook for the future authenticated transport. Never call this
-    /// on receipt of an untrusted remote "connected" message.
-    pub fn on_verified_transport(&mut self) -> Result<(), Error> {
+    /// The session owner must additionally check that the actual connected
+    /// DTLS peer corresponds to the signed SDP and approved device. A proof
+    /// from any other session or permission grant cannot activate this gate.
+    /// Never call on receipt of a remote "connected" message.
+    pub fn on_verified_transport(&mut self, proof: &VerifiedSession) -> Result<(), Error> {
         if self.state != State::Approved { return Err(Error::InvalidState); }
+        let t = proof.transcript();
+        if t.session_id != self.id { return Err(Error::WrongSession); }
+        if t.requested != permission_bits(self.requested)
+            || t.granted != permission_bits(self.grant) {
+            return Err(Error::ProofMismatch);
+        }
         self.state = State::Connected;
         Ok(())
     }
@@ -103,11 +112,16 @@ impl SessionGate {
     }
 }
 
+fn permission_bits(p: Permissions) -> u8 {
+    (if p.view { VIEW } else { 0 }) | (if p.input { INPUT } else { 0 })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use remote_ex_protocol::{InputEnvelope, Key, VERSION, input_envelope::Event};
     use prost::Message;
+    use remote_ex_security::{DeviceIdentity, Role, pairing::PendingPairing};
 
     const ID: SessionId = [8; 16];
     fn key(id: SessionId, seq: u64, down: bool) -> Vec<u8> {
@@ -117,14 +131,28 @@ mod tests {
     fn gate(input: bool) -> SessionGate {
         SessionGate::new(ID, Permissions { view: true, input }).unwrap()
     }
+    fn verified(id: SessionId, requested: u8, granted: u8) -> VerifiedSession {
+        let a = DeviceIdentity::generate();
+        let b = DeviceIdentity::generate();
+        let pa = PendingPairing::new(Role::Controller, id, &a, b.public_key(), requested).unwrap();
+        let pb = PendingPairing::new(Role::Host, id, &b, a.public_key(), requested).unwrap();
+        let an = pa.nonce();
+        let bn = pb.nonce();
+        let sa = pa.approve_local(granted).unwrap().sign(&a, bn, b"offer", b"answer").unwrap();
+        let sb = pb.approve_local(granted).unwrap().sign(&b, an, b"offer", b"answer").unwrap();
+        sa.finish(&sb.signature(), b"offer", b"answer").unwrap()
+    }
     #[test]
     fn local_consent_and_transport_required() {
         let mut g = gate(true);
-        assert_eq!(g.on_verified_transport(), Err(Error::InvalidState));
+        let proof = verified(ID, VIEW | INPUT, VIEW | INPUT);
+        assert_eq!(g.on_verified_transport(&proof), Err(Error::InvalidState));
         assert_eq!(g.handle_input(&key(ID, 1, true)), Err(Error::PermissionDenied));
         g.approve_local(Permissions { view: true, input: true }).unwrap();
         assert!(!g.may_view());
-        g.on_verified_transport().unwrap();
+        assert_eq!(g.on_verified_transport(&verified([9; 16], VIEW | INPUT, VIEW | INPUT)), Err(Error::WrongSession));
+        assert_eq!(g.on_verified_transport(&verified(ID, VIEW | INPUT, VIEW)), Err(Error::ProofMismatch));
+        g.on_verified_transport(&proof).unwrap();
         assert!(g.may_view());
         assert_eq!(g.handle_input(&key(ID, 1, true)), Ok(Action::Inject(Input::Key { usage: 4, down: true })));
         assert_eq!(g.handle_input(&key(ID, 1, false)), Err(Error::Sequence));
@@ -138,11 +166,11 @@ mod tests {
         let mut g = gate(false);
         assert_eq!(g.approve_local(Permissions { view: true, input: true }), Err(Error::InvalidGrant));
         g.approve_local(Permissions { view: true, input: false }).unwrap();
-        g.on_verified_transport().unwrap();
+        g.on_verified_transport(&verified(ID, VIEW, VIEW)).unwrap();
         assert_eq!(g.handle_input(&key(ID, 1, true)), Err(Error::PermissionDenied));
         let mut g = gate(true);
         g.approve_local(Permissions { view: true, input: true }).unwrap();
-        g.on_verified_transport().unwrap();
+        g.on_verified_transport(&verified(ID, VIEW | INPUT, VIEW | INPUT)).unwrap();
         g.handle_input(&key(ID, 1, true)).unwrap();
         assert_eq!(g.revoke_input().keys, vec![4]);
         assert_eq!(g.handle_input(&key(ID, 2, false)), Err(Error::PermissionDenied));

@@ -6,6 +6,7 @@ publish.workspace = true
 
 [dependencies]
 remote-ex-protocol = { path = "../protocol" }
+remote-ex-security = { path = "../security" }
 
 [dev-dependencies]
 prost.workspace = true
