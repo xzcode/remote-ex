@@ -6,6 +6,7 @@ use std::sync::{Arc,atomic::AtomicUsize,mpsc::{sync_channel,TryRecvError,TrySend
 use remote_ex_desktop_features::viewport::{self,Rect};
 use xcap::{Monitor,image::{DynamicImage,RgbaImage,Rgba,imageops::{self,FilterType}}};
 #[cfg(target_os="windows")] mod windows_display;
+#[cfg(target_os="macos")] mod macos_display;
 
 fn monitor(display:u32,area:Option<DisplayArea>,input:bool,secondary:bool)->MediaResult<(Monitor,DisplayArea)>{
     #[cfg(target_os="windows")]
@@ -13,11 +14,13 @@ fn monitor(display:u32,area:Option<DisplayArea>,input:bool,secondary:bool)->Medi
     let m=Monitor::all().map_err(error)?.into_iter().find(|m|m.id().ok()==Some(display)).ok_or("Authorized display disconnected")?;
     let primary=m.is_primary().map_err(error)?;
     if input&&!primary&&!secondary{return Err("Non-primary control requires explicit experimental approval".into());}
-    if secondary&&!cfg!(target_os="windows"){return Err("Secondary control currently requires Windows".into());}
+    if secondary&&!cfg!(any(target_os="windows",target_os="macos")){return Err("Secondary control requires Windows or macOS".into());}
     let(x,y)=if secondary{(m.x().map_err(error)?,m.y().map_err(error)?)}else{(0,0)};
     let current=DisplayArea{x,y,width:m.width().map_err(error)?,height:m.height().map_err(error)?}.validate()?;
     #[cfg(target_os="windows")]
     if secondary{windows_display::verify_area(current)?;}
+    #[cfg(target_os="macos")]
+    if secondary{macos_display::verify_area(display,current)?;}
     if area.is_some_and(|a|a!=current){return Err("Display geometry changed".into());}
     if u64::from(current.width)*u64::from(current.height)>32_000_000{return Err("Display exceeds capture limits".into());}
     Ok((m,current))
@@ -55,7 +58,7 @@ fn capture(displays:Vec<(u32,DisplayArea)>,input:bool,config:VideoConfig,seconda
                     if canceled()||worker.load(Ordering::Acquire){return Err("Capture canceled".into());}
                     let(m,_)=monitor(display,Some(area),input,secondary)?;
                     let image=m.capture_image().map_err(error)?;
-                    if (secondary&&(image.width()!=area.width||image.height()!=area.height))||image.width()==0||image.height()==0||u64::from(image.width())*u64::from(image.height())>32_000_000
+                    if (secondary&&cfg!(target_os="windows")&&(image.width()!=area.width||image.height()!=area.height))||image.width()==0||image.height()==0||u64::from(image.width())*u64::from(image.height())>32_000_000
                         ||u64::from(image.width())*u64::from(area.height)!=u64::from(image.height())*u64::from(area.width){
                         return Err("Unsupported captured geometry".into());
                     }
@@ -179,6 +182,12 @@ pub(super) async fn host(peer:&Peer,channel:&ControlChannel,conn:&mut Connection
         #[cfg(target_os="windows")]
         if secondary{
             let backend=windows_display::ScopedBackend::new(display,area)?;
+            let d=Dispatcher::new(gate,backend,area)?;
+            return serve(peer,channel,conn,session,d,capture(displays,true,config,true),true,profile.av()).await;
+        }
+        #[cfg(target_os="macos")]
+        if secondary{
+            let backend=macos_display::ScopedBackend::new(display,area)?;
             let d=Dispatcher::new(gate,backend,area)?;
             return serve(peer,channel,conn,session,d,capture(displays,true,config,true),true,profile.av()).await;
         }

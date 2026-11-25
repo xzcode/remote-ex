@@ -387,7 +387,7 @@ fn supervise(
                 };
                 // Only fixed-size validated public key and a fixed consent line.
                 // No arbitrary text, path, password or command is forwarded.
-                let consent=if snapshot.secondary_control&&host{if profile.av(){"ALLOW SELECTED WINDOWS DISPLAY AUDIO AND INPUT"}else{"ALLOW SELECTED WINDOWS DISPLAY AND INPUT"}}else{profile.consent(host)};
+                let consent=if snapshot.secondary_control&&host{if profile.av(){"ALLOW SELECTED DISPLAY AUDIO AND INPUT"}else{"ALLOW SELECTED DISPLAY AND INPUT"}}else{profile.consent(host)};
                 if writeln!(pipe, "{peer}\n{consent}").and_then(|_| pipe.flush()).is_err() {
                     failure = Some("Could not deliver local approval".into());
                     continue;
@@ -520,7 +520,7 @@ impl SessionManager {
         let pin=remote_ex_signaling::decode_hex::<32>(server_id).map_err(|_|"Invalid expected server ID")?;
         let _=remote_ex_rendezvous_client::Endpoint::secure(url,pin)?;
         let host=match role{"host"=>true,"controller"=>false,_=>return Err("Unknown routed role".into())};
-        if secondary&&(!cfg!(windows)||!host||!matches!(profile,Profile::RoutedControl|Profile::RoutedAvControl)){return Err("Experimental secondary display control requires Windows host control".into());}
+        if secondary&&(!cfg!(any(target_os="windows",target_os="macos"))||!host||!matches!(profile,Profile::RoutedControl|Profile::RoutedAvControl)){return Err("Experimental secondary display control requires Windows or macOS host control".into());}
         if (resume_from.is_some()||checkpoint_path.is_some())&&!profile.exchange().is_some_and(|(kind,sender)|kind=="file"&&sender!=host){return Err("Checkpoint options require the local file receiver".into());}
         let mut command=Command::new(sidecar_path(profile)?);
         command.arg(if host{"--host"}else{"--controller"}).arg(url).arg(remote_ex_signaling::hex(&pin));

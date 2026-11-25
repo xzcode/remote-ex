@@ -1,4 +1,6 @@
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
+// The only exception is the reviewed platform-specific exclusive move FFI.
+// All other modules retain the unsafe-code prohibition.
 pub mod invitation;
 pub mod quality;
 pub mod exchange;

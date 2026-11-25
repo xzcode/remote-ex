@@ -134,3 +134,10 @@
 - Profile19 仍为仅提议+本机核对并明确批准的独立一次会话。扩展非空目录改名、移入恢复目录，及从匹配恢复目录顶层选择项目恢复到批准根内明确的新名称/父目录；恢复仍需新审批。目录子树结构、字节数和逐文件 SHA-256 绑定审批，拒绝子树变化、重叠操作、越界路径、目录过深和覆盖，UI 展示子树项数和大小。恢复不自动猜测原位置，不删除空恢复目录或永久删除数据。
 - 使用 Linux renameat2 RENAME_NOREPLACE、macOS renameatx_np RENAME_EXCL、Windows MoveFileExW flags=0 同卷独占移动，不回退普通 rename 或跨卷 copy/delete。API 依据 https://www.man7.org/linux/man-pages/man2/renameat.2.html 、https://developer.apple.com/documentation/foundation/urlresourcekey/volumesupportsexclusiverenamingkey 、https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-movefileexw 。Unix 目录 FD 相对操作；Windows 为经检查的本机绝对路径，恶意本机并发路径变化仍非已验证边界。无新增第三方依赖。
 - 新增核心目录往返、内容变化/重叠、目标存在（包括空目录）拒绝测试与端到端目录改名、移入恢复、恢复旧目录 fixture。最新 CI 和真实设备验收待结果，部分批次失败仍可能保留已完成操作，不自动回滚。未部署服务器或发行。
+
+
+## 第九轮（第八批编译修复及 macOS 次屏输入候选）
+- 第八批 fea12c7 的 Core #45658510483、Media #45658510692、Desktop #45658510489、Development build #45658510630 实际失败。根因：desktop-features crate forbid(unsafe_code) 禁止新增独占移动 FFI；Vue 模板 v-for 内嵌双引号导致 Vite 解析错误。修复为 crate deny(unsafe_code) 且仅 exclusive_move 模块明确 allow，其他核心模块仍禁止 unsafe；修正模板表达式。无新增依赖。新 CI 结果尚待。
+- macOS 采用明确选定单屏的实验路径，保留系统录屏/辅助功能权限和 30 秒会话上限。XCap 0.9.10 macOS 使用 CGDirectDisplayID 与 CGDisplayBounds；Enigo 0.6.1 的鼠标位置通过主屏尺寸与 NSEvent 换算，不能直接用于混合 DPI。新 Quartz 适配独立查询/核对全局点坐标，拒绝镜像/非唯一显示器、几何变化、鼠标未到达授权位置；截图允许与逻辑尺寸同比例的 Retina 像素。鼠标移动、三键/拖动/滚轮使用 CGEvent，键盘复用 Enigo；按下需实际指针处于选定屏且 AX focused window 完整在其内，释放不因焦点变化受阻。前台窗口本机变化可能竞态；拒绝未知焦点、额外按键；未验证双击、鼠标侧键（不支持）及真实 Retina/多显示器表现。Windows 单屏路径保留，双方桌面监督器使用相同更新授权语句。
+- 参考： https://github.com/nashaofu/xcap/blob/v0.9.10/src/macos/impl_monitor.rs ; https://github.com/enigo-rs/enigo/blob/v0.6.1/src/macos/macos_impl.rs ; https://developer.apple.com/documentation/coregraphics/cgdisplaybounds(_:); https://developer.apple.com/documentation/applicationservices/axuielement_h 。新增无 OS 输入的几何/按键映射测试；原生构建与实机待验。
+- 仍需动态分辨率和长连接稳定性（包括信令/媒体/权限生命周期），不将 M3 标为验收完成，不部署或发布。

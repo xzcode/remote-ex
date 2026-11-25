@@ -6,10 +6,12 @@
 use super::{Catalog,Entry,component,check_metadata,MAX_DEPTH,MAX_ENTRIES};
 use crate::{checkpoint::digest,exchange::MAX_FILE};
 use cap_std::{ambient_authority,fs::{Dir,OpenOptions}};
+// Keep native exclusive rename FFI isolated from the safe core.
+#[allow(unsafe_code)]
 mod exclusive_move;
 use serde::{Deserialize,Serialize};
 use sha2::{Digest,Sha256};
-use std::{collections::BTreeSet,io::{Read,ErrorKind},path::{Path,PathBuf}};
+use std::{collections::BTreeSet,io::{Read,ErrorKind},path::Path};
 pub const MAX_PLAN_BYTES:usize=900;
 pub const MAX_CHANGES:usize=4;
 pub const MAX_REVIEW_BYTES:usize=3600;

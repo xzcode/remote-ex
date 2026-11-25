@@ -498,7 +498,7 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
         "--control" if native_allowed&&profile==Profile::Test=>{profile=Profile::Control;if host{display=Some(a.next().ok_or("Select display ID")?.parse::<u32>().map_err(error)?);}},
         _=>return Err("Unexpected argument".into()),
     }}
-    if secondary&&(!profile.native_control()||!cfg!(target_os="windows")){return Err("Experimental secondary control is Windows host-only".into());}
+    if secondary&&(!profile.native_control()||!cfg!(any(target_os="windows",target_os="macos"))){return Err("Experimental secondary control requires Windows or macOS host control".into());}
     if shared_controller&&(host||!(profile.synthetic()||profile.native_view()||profile.native_control())||persistent&&identity_slot.unwrap_or(0)!=0){return Err("Shared identity is only for outgoing view/control/test using slot one identity".into());}
     if identity_slot.is_some()&&!persistent{return Err("Identity slot requires explicit persistent storage opt-in".into());}
     if defer_test_registration&&(!supervised||persistent||profile!=Profile::Test){return Err("Test registration barrier requires synthetic temporary supervised mode".into());}
@@ -563,7 +563,7 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
     let expected=decode_hex::<32>(&input()?).map_err(error)?;
     if expected==[0;32]||expected==id.public_key(){return Err("Invalid peer key".into());}
     if let Profile::Exchange(mode)=profile{out(&format!("TRANSFER {} {:?}",if mode.sending(host){"SEND"}else{"RECEIVE"},mode.kind))?;}
-    let consent=if secondary{if profile.av(){"ALLOW SELECTED WINDOWS DISPLAY AUDIO AND INPUT"}else{"ALLOW SELECTED WINDOWS DISPLAY AND INPUT"}}else{profile.consent(host)};
+    let consent=if secondary{if profile.av(){"ALLOW SELECTED DISPLAY AUDIO AND INPUT"}else{"ALLOW SELECTED DISPLAY AND INPUT"}}else{profile.consent(host)};
     out(&format!("CONSENT (type {consent}; one-shot)"))?;
     if input()? !=consent||canceled(){return Err("Local consent denied".into());}
     audio::VOLUME.store(volume,Ordering::Release);

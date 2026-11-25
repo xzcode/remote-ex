@@ -53,6 +53,10 @@ jobs:
         shell: bash
         run: |
           cargo build --release --manifest-path crates/media/Cargo.toml --features native-control --bins
+      - name: Scoped macOS display geometry tests (no OS input)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: cargo test --release --manifest-path crates/media/Cargo.toml --features native-control --bin routed_control macos_display::tests
       - name: Build macOS system-audio helper (compile only, no OS capture)
         if: runner.os == 'macOS'
         shell: bash
