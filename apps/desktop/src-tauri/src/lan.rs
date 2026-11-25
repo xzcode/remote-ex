@@ -35,10 +35,11 @@ pub struct Snapshot {
     active: bool,
     local_key: Option<String>,
     detail: Option<String>,
+    profile: Profile,
 }
 impl Default for Snapshot {
     fn default() -> Self {
-        Self { stage: Stage::Idle, active: false, local_key: None, detail: None }
+        Self { stage: Stage::Idle, active: false, local_key: None, detail: None, profile: Profile::Diagnostic }
     }
 }
 
@@ -53,9 +54,31 @@ fn stage(shared: &Mutex<Snapshot>, next: Stage, detail: Option<String>) {
     if !state.active { state.local_key = None; }
 }
 
-fn key_valid(value: &str) -> bool {
-    value.len() == 64 && value.bytes().all(|b| b.is_ascii_hexdigit())
-        && value.bytes().any(|b| b != b'0')
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum Profile { Diagnostic, SecureTest, Screen }
+impl Profile {
+    fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "diagnostic" => Ok(Self::Diagnostic),
+            "secure_test" => Ok(Self::SecureTest),
+            "screen" => Ok(Self::Screen),
+            _ => Err("Unknown session profile".into()),
+        }
+    }
+    fn key_len(self) -> usize { if self == Self::Diagnostic { 64 } else { 128 } }
+    fn consent(self, host: bool) -> &'static str {
+        match self {
+            Self::Diagnostic => "ALLOW DIAGNOSTIC",
+            Self::SecureTest => "ALLOW TEST VIEW",
+            Self::Screen if host => "SHARE SCREEN",
+            Self::Screen => "ALLOW SCREEN VIEW",
+        }
+    }
+}
+fn key_valid(value: &str, profile: Profile) -> bool {
+    value.len() == profile.key_len() && value.bytes().all(|b| b.is_ascii_hexdigit())
+        && value.as_bytes().chunks_exact(64).all(|key| key.iter().any(|b| *b != b'0'))
 }
 fn local_endpoint(value: &str) -> Result<SocketAddr, String> {
     let addr: SocketAddr = value.trim().parse().map_err(|_| "Enter an IP address and port".to_string())?;
@@ -69,10 +92,13 @@ fn local_endpoint(value: &str) -> Result<SocketAddr, String> {
     Ok(addr)
 }
 
-fn sidecar_path() -> Result<PathBuf, String> {
+fn sidecar_path(profile: Profile) -> Result<PathBuf, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let parent = exe.parent().ok_or("Cannot find application directory")?;
-    let name = if cfg!(windows) { "lan_diagnostic.exe" } else { "lan_diagnostic" };
+    let name = match (profile == Profile::Diagnostic, cfg!(windows)) {
+        (true, true) => "lan_diagnostic.exe", (true, false) => "lan_diagnostic",
+        (false, true) => "lan_view.exe", (false, false) => "lan_view",
+    };
     let path = parent.join(name);
     // Deliberately no PATH lookup, user-selected binary or shell.
     if !path.is_file() {
@@ -131,7 +157,7 @@ fn handle_output(shared: &Mutex<Snapshot>, output: Output, pass: &mut bool, fail
         Output::Stdout(text) => {
             if let Some(key) = text.strip_prefix("KEY ") {
                 let mut snapshot = locked(shared);
-                if snapshot.stage == Stage::Starting && key_valid(key) {
+                if snapshot.stage == Stage::Starting && key_valid(key, snapshot.profile) {
                     snapshot.local_key = Some(key.to_ascii_lowercase());
                     snapshot.stage = Stage::AwaitingApproval;
                 } else {
@@ -140,12 +166,14 @@ fn handle_output(shared: &Mutex<Snapshot>, output: Output, pass: &mut bool, fail
             } else if text.starts_with("LISTENING ") {
                 let current = locked(shared).stage;
                 if current == Stage::Connecting { stage(shared, Stage::Listening, None); }
-            } else if text == "CONNECTED" {
+            } else if matches!(text.as_str(), "CONNECTED" | "CONNECTED TEST VIEW")
+                || text.starts_with("CONNECTED SCREEN VIEW") {
                 let current = locked(shared).stage;
                 if matches!(current, Stage::Connecting | Stage::Listening) {
                     stage(shared, Stage::Connected, None);
                 }
-            } else if text.starts_with("PASS HOST:") || text.starts_with("PASS CONTROLLER:") {
+            } else if text.starts_with("PASS HOST:") || text.starts_with("PASS CONTROLLER:")
+                || text.starts_with("PASS HOST VIEW:") || text.starts_with("PASS CONTROLLER VIEW:") {
                 *pass = true;
             }
         }
@@ -153,10 +181,12 @@ fn handle_output(shared: &Mutex<Snapshot>, output: Output, pass: &mut bool, fail
 }
 fn supervise(
     mut child: ChildGuard, commands: Receiver<WorkerCommand>, shared: Arc<Mutex<Snapshot>>,
+    profile: Profile, host: bool,
 ) {
     let (tx, output) = mpsc::sync_channel(64);
     let overflow = Arc::new(AtomicBool::new(false));
     let mut stdin = child.0.stdin.take();
+    let mut approved = false;
     let Some(stdout) = child.0.stdout.take() else {
         stage(&shared, Stage::Failed, Some("Missing process stdout".into())); return;
     };
@@ -187,22 +217,25 @@ fn supervise(
             }
             Ok(WorkerCommand::Approve(peer)) => {
                 let snapshot = locked(&shared).clone();
-                if snapshot.stage != Stage::AwaitingApproval || !key_valid(&peer)
+                if approved || snapshot.stage != Stage::AwaitingApproval || !key_valid(&peer, profile)
                     || snapshot.local_key.as_deref() == Some(peer.as_str())
                 {
                     stage(&shared, Stage::Failed, Some("Invalid local approval state".into()));
                     return;
                 }
-                let Some(mut pipe) = stdin.take() else {
+                let Some(pipe) = stdin.as_mut() else {
                     stage(&shared, Stage::Failed, Some("Missing approval channel".into())); return;
                 };
                 // Only fixed-size validated public key and a fixed consent line.
                 // No arbitrary text, path, password or command is forwarded.
-                if writeln!(pipe, "{peer}\nALLOW DIAGNOSTIC").and_then(|_| pipe.flush()).is_err() {
+                if writeln!(pipe, "{peer}\n{}", profile.consent(host)).and_then(|_| pipe.flush()).is_err() {
                     stage(&shared, Stage::Failed, Some("Could not deliver local approval".into()));
                     return;
                 }
-                drop(pipe);
+                approved = true;
+                // Secure view child monitors the pipe for parent loss. Keep
+                // it open until the supervisor exits; the diagnostic does not.
+                if profile == Profile::Diagnostic { stdin.take(); }
                 stage(&shared, Stage::Connecting, None);
             }
             Err(TryRecvError::Empty) => {}
@@ -239,7 +272,7 @@ pub struct SessionManager {
 }
 impl SessionManager {
     fn snapshot(&self) -> Snapshot { locked(&self.shared).clone() }
-    fn prepare(&self, role: &str, address: &str, preview: bool) -> Result<Snapshot, String> {
+    fn prepare(&self, role: &str, address: &str, preview: bool, profile: Profile, display_id: Option<u32>) -> Result<Snapshot, String> {
         let addr = local_endpoint(address)?;
         let flag = match role { "host" => "--listen", "controller" => "--connect", _ => return Err("Unknown diagnostic role".into()) };
         let mut worker = locked(&self.worker);
@@ -247,9 +280,22 @@ impl SessionManager {
             return Err("A diagnostic session is already running".into());
         }
         if let Some(old) = worker.take() { let _ = old.join.join(); }
-        let mut command = Command::new(sidecar_path()?);
+        let host = role == "host";
+        let mut command = Command::new(sidecar_path(profile)?);
         command.arg(flag).arg(addr.to_string());
-        if preview && role == "controller" { command.arg("--preview"); }
+        match profile {
+            Profile::Diagnostic => {
+                if preview && !host { command.arg("--preview"); }
+            }
+            Profile::SecureTest => { command.arg("--test").arg("--desktop-session"); }
+            Profile::Screen => {
+                if host {
+                    let display = display_id.ok_or("Choose the specific display to share")?;
+                    command.arg("--screen").arg(display.to_string());
+                } else { command.arg("--view"); }
+                command.arg("--desktop-session");
+            }
+        }
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
@@ -257,17 +303,17 @@ impl SessionManager {
         }
         let child = command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped())
             .spawn().map_err(|e| format!("Cannot start native media diagnostic: {e}"))?;
-        *locked(&self.shared) = Snapshot { stage: Stage::Starting, active: true, local_key: None, detail: None };
+        *locked(&self.shared) = Snapshot { stage: Stage::Starting, active: true, local_key: None, detail: None, profile };
         let (tx, rx) = mpsc::sync_channel(4);
         let shared = self.shared.clone();
-        let join = thread::spawn(move || supervise(ChildGuard(child), rx, shared));
+        let join = thread::spawn(move || supervise(ChildGuard(child), rx, shared, profile, host));
         *worker = Some(Worker { tx, join });
         Ok(self.snapshot())
     }
     fn confirm(&self, peer_key: &str, approved: bool) -> Result<Snapshot, String> {
         let peer = peer_key.trim().to_ascii_lowercase();
         let snapshot = self.snapshot();
-        if !approved || snapshot.stage != Stage::AwaitingApproval || !key_valid(&peer)
+        if !approved || snapshot.stage != Stage::AwaitingApproval || !key_valid(&peer, snapshot.profile)
             || snapshot.local_key.as_deref() == Some(peer.as_str()) {
             return Err("Verify the other device's full public key and explicitly approve this diagnostic".into());
         }
@@ -297,8 +343,8 @@ pub fn lan_status(window: WebviewWindow, manager: State<'_, SessionManager>) -> 
     require_main(&window)?; Ok(manager.snapshot())
 }
 #[tauri::command]
-pub fn lan_prepare(window: WebviewWindow, manager: State<'_, SessionManager>, role: String, address: String, preview: bool) -> Result<Snapshot, String> {
-    require_main(&window)?; manager.prepare(&role, &address, preview)
+pub fn lan_prepare(window: WebviewWindow, manager: State<'_, SessionManager>, role: String, address: String, preview: bool, profile: String, display_id: Option<u32>) -> Result<Snapshot, String> {
+    require_main(&window)?; manager.prepare(&role, &address, preview, Profile::parse(&profile)?, display_id)
 }
 #[tauri::command]
 pub fn lan_confirm(window: WebviewWindow, manager: State<'_, SessionManager>, peer_key: String, approved: bool) -> Result<Snapshot, String> {
@@ -320,13 +366,16 @@ mod tests {
         assert!(local_endpoint("0.0.0.0:47821").is_err());
         assert!(local_endpoint("8.8.8.8:47821").is_err());
         assert!(local_endpoint("127.0.0.1:0").is_err());
-        assert!(key_valid(&"ab".repeat(32)));
-        assert!(!key_valid(&"00".repeat(32)));
-        assert!(!key_valid("x\nALLOW DIAGNOSTIC"));
+        assert!(key_valid(&"ab".repeat(32), Profile::Diagnostic));
+        assert!(!key_valid(&"00".repeat(32), Profile::Diagnostic));
+        assert!(!key_valid("x\nALLOW DIAGNOSTIC", Profile::Diagnostic));
+        assert!(key_valid(&"ab".repeat(64), Profile::Screen));
+        assert!(!key_valid(&"ab".repeat(32), Profile::Screen));
+        assert!(!key_valid(&("ab".repeat(32) + &"00".repeat(32)), Profile::Screen));
     }
     #[test]
     fn status_requires_valid_local_key_and_terminal_state() {
-        let shared = Mutex::new(Snapshot { stage: Stage::Starting, active: true, local_key: None, detail: None });
+        let shared = Mutex::new(Snapshot { stage: Stage::Starting, active: true, local_key: None, detail: None, profile: Profile::Diagnostic });
         let (mut pass, mut fail) = (false, None);
         handle_output(&shared, Output::Stdout(format!("KEY {}", "ab".repeat(32))), &mut pass, &mut fail);
         assert_eq!(locked(&shared).stage, Stage::AwaitingApproval);

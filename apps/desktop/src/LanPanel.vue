@@ -4,15 +4,20 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import type { TextKey } from "./i18n";
 
 type Stage = "idle" | "starting" | "awaiting_approval" | "connecting" | "listening" | "connected" | "passed" | "failed" | "canceled";
-type Snapshot = { stage: Stage; active: boolean; local_key: string | null; detail: string | null };
+type Profile = "diagnostic" | "secure_test" | "screen";
+type Display = { id: number; name: string; width: number; height: number; primary: boolean };
+type Snapshot = { stage: Stage; active: boolean; local_key: string | null; detail: string | null; profile: Profile };
 const props = defineProps<{ t: (key: TextKey) => string }>();
 const emit = defineEmits<{ active: [value: boolean] }>();
 const role = ref<"host" | "controller">("controller");
+const profile = ref<Profile>("screen");
+const displays = ref<Display[]>([]);
+const selectedDisplay = ref<number | null>(null);
 const address = ref("127.0.0.1:47821");
 const preview = ref(false);
 const peer = ref("");
 const confirmed = ref(false);
-const snapshot = ref<Snapshot>({ stage: "idle", active: false, local_key: null, detail: null });
+const snapshot = ref<Snapshot>({ stage: "idle", active: false, local_key: null, detail: null, profile: "diagnostic" });
 const busy = ref(false);
 const approvalSent = ref(false);
 const error = ref("");
@@ -26,9 +31,31 @@ const statusKeys: Record<Stage, TextKey> = {
   connecting: "lanConnecting", listening: "lanListening", connected: "lanConnected",
   passed: "lanPassed", failed: "lanFailed", canceled: "lanCanceled",
 };
-const statusLabel = computed(() => props.t(statusKeys[snapshot.value.stage]));
-const canApprove = computed(() => confirmed.value && /^[a-fA-F0-9]{64}$/.test(peer.value.trim())
+const statusLabel = computed(() => {
+  if (snapshot.value.profile !== "diagnostic" && snapshot.value.stage === "connected") return props.t("viewConnected");
+  if (snapshot.value.profile === "screen" && snapshot.value.stage === "passed") return props.t("viewEnded");
+  return props.t(statusKeys[snapshot.value.stage]);
+});
+const keyLength = computed(() => snapshot.value.profile === "diagnostic" ? 64 : 128);
+const canApprove = computed(() => confirmed.value && peer.value.trim().length === keyLength.value && /^[a-fA-F0-9]+$/.test(peer.value.trim())
   && peer.value.trim().toLowerCase() !== snapshot.value.local_key && !approvalSent.value);
+const canPrepare = computed(() => native && !busy.value && !snapshot.value.active && !!address.value.trim()
+  && (profile.value !== "screen" || role.value !== "host" || selectedDisplay.value !== null));
+const description = computed(() => props.t(profile.value === "diagnostic" ? "lanDescription" : profile.value === "secure_test" ? "secureTestDescription" : "viewDescription"));
+const consentLabel = computed(() => props.t(snapshot.value.profile === "diagnostic" ? "lanConsent" : snapshot.value.profile === "secure_test" ? "secureTestConsent" : role.value === "host" ? "viewHostConsent" : "viewControllerConsent"));
+async function loadDisplays() {
+  if (!native || busy.value || snapshot.value.active) return;
+  busy.value = true;
+  error.value = "";
+  selectedDisplay.value = null;
+  displays.value = [];
+  try {
+    displays.value = await invoke<Display[]>("list_displays");
+    if (!displays.value.length) error.value = props.t("noDisplays");
+  } catch (e) { error.value = String(e); }
+  finally { busy.value = false; }
+}
+watch([profile, role], () => { selectedDisplay.value = null; displays.value = []; });
 watch(() => snapshot.value.active || busy.value, value => emit("active", value), { immediate: true });
 watch(() => snapshot.value.stage, stage => {
   if (stage !== "awaiting_approval") { confirmed.value = false; peer.value = ""; approvalSent.value = false; }
@@ -56,7 +83,9 @@ function prepare() {
   peer.value = "";
   confirmed.value = false;
   approvalSent.value = false;
-  return action("lan_prepare", { role: role.value, address: address.value, preview: role.value === "controller" && preview.value });
+  return action("lan_prepare", { role: role.value, address: address.value,
+    preview: role.value === "controller" && preview.value,
+    profile: profile.value, displayId: profile.value === "screen" && role.value === "host" ? selectedDisplay.value : null });
 }
 function approve() {
   if (!canApprove.value || busy.value) return;
@@ -77,17 +106,37 @@ onBeforeUnmount(() => {
 <template>
   <section class="panel lan-panel">
     <header class="preview-head"><h2>{{ t("lanHeading") }}</h2><span class="status" aria-live="polite">{{ statusLabel }}</span></header>
-    <p>{{ t("lanDescription") }}</p>
+    <p>{{ description }}</p>
+    <div v-if="snapshot.active && snapshot.profile === 'screen'" class="view-notice" role="status">
+      {{ t(role === "host" ? "viewHostNotice" : "viewControllerNotice") }}
+    </div>
     <div class="field">
+      <label for="lan-profile">{{ t("sessionProfile") }}</label>
+      <select id="lan-profile" v-model="profile" :disabled="snapshot.active || busy">
+        <option value="screen">{{ t("screenView") }}</option>
+        <option value="secure_test">{{ t("secureTest") }}</option>
+        <option value="diagnostic">{{ t("lanHeading") }}</option>
+      </select>
       <label for="lan-role">{{ t("lanRole") }}</label>
       <select id="lan-role" v-model="role" :disabled="snapshot.active || busy">
         <option value="controller">{{ t("lanController") }}</option><option value="host">{{ t("lanHost") }}</option>
       </select>
       <label for="lan-address">{{ t("lanAddress") }}</label>
       <input id="lan-address" v-model="address" placeholder="192.168.1.10:47821" maxlength="64" :disabled="snapshot.active || busy" />
-      <label v-if="role === 'controller'" class="check-label"><input type="checkbox" v-model="preview" :disabled="snapshot.active || busy" />{{ t("lanPreview") }}</label>
+      <template v-if="profile === 'screen' && role === 'host'">
+        <label for="share-display">{{ t("display") }}</label>
+        <div class="actions">
+          <select id="share-display" v-model="selectedDisplay" :disabled="snapshot.active || busy">
+            <option :value="null" disabled>{{ t("select") }}</option>
+            <option v-for="display in displays" :key="display.id" :value="display.id">{{ display.name }} · {{ display.width }} × {{ display.height }}</option>
+          </select>
+          <button :disabled="snapshot.active || busy" @click="loadDisplays">{{ t("refresh") }}</button>
+        </div>
+        <p class="muted">{{ t("viewPermission") }}</p>
+      </template>
+      <label v-if="role === 'controller' && profile === 'diagnostic'" class="check-label"><input type="checkbox" v-model="preview" :disabled="snapshot.active || busy" />{{ t("lanPreview") }}</label>
       <div class="actions">
-        <button class="primary" :disabled="!native || busy || snapshot.active || !address.trim()" @click="prepare">{{ t("lanPrepare") }}</button>
+        <button class="primary" :disabled="!canPrepare" @click="prepare">{{ t(profile === "screen" ? "viewPrepare" : "lanPrepare") }}</button>
         <button :disabled="!snapshot.active || busy" @click="action('lan_disconnect')">{{ t("lanDisconnect") }}</button>
       </div>
     </div>
@@ -97,8 +146,8 @@ onBeforeUnmount(() => {
       <template v-if="snapshot.stage === 'awaiting_approval'">
         <p class="muted">{{ t("lanVerify") }}</p>
         <label for="peer-key">{{ t("lanPeerKey") }}</label>
-        <input id="peer-key" v-model="peer" maxlength="64" class="key-input" spellcheck="false" autocomplete="off" :disabled="busy || approvalSent" />
-        <label class="check-label"><input type="checkbox" v-model="confirmed" :disabled="busy || approvalSent" />{{ t("lanConsent") }}</label>
+        <input id="peer-key" v-model="peer"  :maxlength="keyLength" class="key-input" spellcheck="false" autocomplete="off" :disabled="busy || approvalSent" />
+        <label class="check-label"><input type="checkbox" v-model="confirmed" :disabled="busy || approvalSent" />{{ consentLabel }}</label>
         <div class="actions"><button class="primary" :disabled="busy || !canApprove" @click="approve">{{ t("lanApprove") }}</button></div>
       </template>
     </div>

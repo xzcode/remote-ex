@@ -25,6 +25,7 @@ struct Arguments {
     address: SocketAddr,
     profile: Profile,
     display: Option<u32>,
+    desktop_session: bool,
 }
 fn error<T: std::fmt::Debug>(e: T) -> String { format!("{e:?}") }
 fn out(line: &str) -> MediaResult<()> {
@@ -56,12 +57,22 @@ fn arguments() -> MediaResult<Arguments> {
         }
         _ => return Err(usage()),
     };
+    let desktop_session = match args.next().as_deref() {
+        None => false,
+        Some("--desktop-session") => true,
+        _ => return Err(usage()),
+    };
     if args.next().is_some() { return Err(usage()); }
-    // No unattended screen sharing. Test-only automation is separate.
-    if !profile.synthetic() && (!io::stdin().is_terminal() || !io::stdout().is_terminal()) {
-        return Err("Real screen sharing requires an interactive local terminal".into());
+    // The alternative to an interactive terminal is the supervised desktop
+    // process. Its local consent pipe must remain open for the whole session.
+    if desktop_session && (io::stdin().is_terminal() || io::stdout().is_terminal()) {
+        return Err("Desktop session requires a supervisor pipe".into());
     }
-    Ok(Arguments { mode, address, profile, display })
+    if !profile.synthetic() && !desktop_session
+        && (!io::stdin().is_terminal() || !io::stdout().is_terminal()) {
+        return Err("Real screen sharing requires an interactive terminal or the supervised desktop UI".into());
+    }
+    Ok(Arguments { mode, address, profile, display, desktop_session })
 }
 fn identities(args: &Arguments) -> MediaResult<(DeviceIdentity, NoiseIdentity, PublicKey, [u8;32])> {
     let id = DeviceIdentity::generate();
@@ -86,6 +97,17 @@ fn identities(args: &Arguments) -> MediaResult<(DeviceIdentity, NoiseIdentity, P
     };
     out(&format!("CONSENT (type {consent})"))?;
     if input()? != consent { return Err("Local consent denied".into()); }
+    if args.desktop_session {
+        // The parent holds stdin open. EOF, a read failure, or any subsequent
+        // line terminates this view-only process, even if a native capture is
+        // blocked. No system input is held by this process.
+        std::thread::spawn(|| {
+            use std::io::Read;
+            let mut byte = [0u8; 1];
+            let _ = io::stdin().lock().read(&mut byte);
+            std::process::exit(3);
+        });
+    }
     Ok((id, noise, peer, peer_noise))
 }
 fn gather(peer: &Peer) -> MediaResult<Vec<Candidate>> {

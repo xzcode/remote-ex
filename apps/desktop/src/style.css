@@ -54,3 +54,5 @@ label { font-weight: 600; user-select: none; }
 .lan-panel .check-label { display: flex; gap: 9px; align-items: center; font-weight: 400; line-height: 1.4; }
 .lan-panel input[type="checkbox"] { flex: 0 0 auto; width: 16px; height: 16px; accent-color: var(--accent); }
 .lan-panel select { max-width: 100%; }
+
+.view-notice { padding: 12px; border: 1px solid var(--accent); border-radius: 6px; line-height: 1.5; font-weight: 600; }

@@ -10,7 +10,7 @@ def spawn(exe, mode, address):
     import queue
     import subprocess
     import threading
-    proc = subprocess.Popen([exe, mode, address, "--test"], stdin=subprocess.PIPE,
+    proc = subprocess.Popen([exe, mode, address, "--test", "--desktop-session"], stdin=subprocess.PIPE,
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
     messages = queue.Queue()
     def reader():
