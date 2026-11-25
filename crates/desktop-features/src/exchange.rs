@@ -25,6 +25,11 @@ impl<W:Write> Receiver<W>{
         if !confirmed{return Err("Explicit receiver consent required".into());}
         offer.validate()?;Ok(Self{writer,offer,offset:0,hash:Sha256::new()})
     }
+    pub fn with_prefix(writer:W,offer:Offer,confirmed:bool,prefix:&[u8])->Result<Self,String>{
+        let mut receiver=Self::new(writer,offer,confirmed)?;
+        for chunk in prefix.chunks(CHUNK){receiver.push(receiver.offset(),chunk)?;}
+        Ok(receiver)
+    }
     pub fn offset(&self)->u64{self.offset}
     pub fn push(&mut self,offset:u64,data:&[u8])->Result<(),String>{
         if offset!=self.offset||data.is_empty()||data.len()>CHUNK||self.offset.checked_add(data.len() as u64).is_none_or(|end|end>self.offer.size){return Err("Invalid transfer chunk".into());}
