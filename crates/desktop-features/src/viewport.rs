@@ -39,8 +39,13 @@ mod tests{
         let content=Rect{x:120,y:0,width:720,height:540};
         assert!(map_pointer((500.,20.),fitted,(960,540),content).is_none());
         assert!(map_pointer((5.,400.),fitted,(960,540),content).is_none());
-        let (x,y)=map_pointer((500.,420.),fitted,(960,540),content).unwrap();
-        assert!((32000..34000).contains(&x)&&(32000..34000).contains(&y));
+        assert_eq!(fitted,Rect{x:0,y:159,width:1000,height:562});
+        let center=(f64::from(fitted.x)+f64::from(fitted.width)/2.0,
+            f64::from(fitted.y)+f64::from(fitted.height)/2.0);
+        let (x,y)=map_pointer(center,fitted,(960,540),content).unwrap();
+        assert!((32000..34000).contains(&x)&&(32000..34000).contains(&y),"{x},{y}");
+        assert!(map_pointer((125.,159.),fitted,(960,540),content).is_some());
+        assert!(map_pointer((875.,159.),fitted,(960,540),content).is_none());
         assert!(map_pointer((f64::NAN,0.),fitted,(960,540),content).is_none());
     }
     #[test]fn mosaic_is_bounded_and_nonoverlapping(){
