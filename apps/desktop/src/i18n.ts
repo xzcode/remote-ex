@@ -1,4 +1,11 @@
 export const en = {
+  controlMode: "Remote control (experimental)", controlDescription: "Explicitly authorize screen, keyboard and mouse control on a private LAN, limited to the primary display and 30 seconds. Keep the host application visible.",
+  controlHostConsent: "I verified the device and explicitly permit viewing the selected primary display and controlling keyboard and mouse for this session.",
+  controlControllerConsent: "I verified the host and authorize sending input from the focused control window.",
+  controlHostNotice: "Remote keyboard and mouse may be active. Keep this window visible. Disconnect revokes control.",
+  controlControllerNotice: "Input is sent only from the focused control window. Escape or Disconnect stops control.",
+  controlPermission: "Primary display only; grant Screen Recording and Accessibility permissions normally where required.",
+  controlPrepare: "Prepare remote control", controlConnected: "Authenticated control connected", controlStopping: "Stopping and releasing input…", controlEnded: "Control session ended", controlReleased: "Input release confirmed.",
   sessionProfile: "Session type", screenView: "Screen sharing (view only)", secureTest: "Encrypted test",
   viewDescription: "Share a selected display for up to 30 seconds over encrypted LAN. Both devices must confirm their keys. Keyboard and mouse control are disabled.",
   secureTestDescription: "Verify encrypted signaling and video with generated test frames; no desktop capture or system input.",
@@ -28,10 +35,17 @@ export const en = {
   capture: "Capture once", clear: "Clear preview", busy: "Working…", preview: "Local preview",
   previewEmpty: "No image captured", error: "Operation failed", noDisplays: "No available displays in the current desktop session.", browser: "Native desktop runtime is required.",
   language: "Language", appearance: "Appearance", system: "Follow system", light: "Light", dark: "Dark", black: "Pure black",
-  saved: "Preferences are stored on this device.", version: "M1 · Local capture preview", noRemote: "System input unavailable",
+  saved: "Preferences are stored on this device.", version: "M1 · Local capture preview", noRemote: "LAN development build",
 } as const;
 export type TextKey = keyof typeof en;
 export const zh: Record<TextKey, string> = {
+  controlMode: "远程控制（实验版）", controlDescription: "在私有局域网内明确授权屏幕、键盘和鼠标控制，暂限主显示器及30秒。被控端须保持应用可见。",
+  controlHostConsent: "我已核对设备，明确授权本次会话查看选定主显示器并控制键盘和鼠标。",
+  controlControllerConsent: "我已核对被控端，授权从聚焦的控制窗口发送键鼠操作。",
+  controlHostNotice: "远程键鼠可能正在控制本机。请保持此窗口可见，点击断开可撤销控制。",
+  controlControllerNotice: "仅聚焦控制窗口时发送输入，按 Esc 或点击断开可终止控制。",
+  controlPermission: "暂仅支持主显示器；请按系统正常流程授予屏幕录制及辅助功能权限。",
+  controlPrepare: "准备远程控制", controlConnected: "认证控制会话已建立", controlStopping: "正在断开并释放键鼠…", controlEnded: "控制会话已结束", controlReleased: "已确认键鼠释放。",
   sessionProfile: "会话类型", screenView: "真实屏幕共享（只读）", secureTest: "加密视频测试",
   viewDescription: "在加密局域网连接中分享指定显示器，最长30秒。双方必须核对设备公钥；不允许控制键盘或鼠标。",
   secureTestDescription: "通过生成的测试画面验证加密信令及视频传输，不采集桌面或操作系统输入。",
@@ -61,5 +75,5 @@ export const zh: Record<TextKey, string> = {
   capture: "采集一次", clear: "清除预览", busy: "处理中…", preview: "本地预览",
   previewEmpty: "尚未采集图像", error: "操作失败", noDisplays: "当前桌面会话没有可用显示器。", browser: "需要原生桌面运行环境。",
   language: "语言", appearance: "外观", system: "跟随系统", light: "浅色", dark: "深色", black: "纯黑",
-  saved: "偏好设置保存在当前设备。", version: "M1 · 本地采集预览", noRemote: "系统输入控制尚不可用",
+  saved: "偏好设置保存在当前设备。", version: "M1 · 本地采集预览", noRemote: "局域网开发版本",
 };
