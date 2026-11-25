@@ -107,3 +107,11 @@ crates/input 加入 portable workspace；Dispatcher 串行校验 SessionGate、�
 新增 lan_control 独立 profile，VIEW|INPUT 双方授权，Noise 信令、签名 SDP、真实视频与 SCTP 证书检查、可信 Ready；默认 --test 仅合成画面与 inert backend，真实 --control 必须在可见交互终端启动。Windows/macOS native-control feature：XCap 主屏、Enigo 普通权限输入、minifb 固定 native 窗口、等比 geometry、焦点及黑边判断、物理键映射。输入 dispatch 与资源释放同进程；不使用强制杀进程作为正常控制断开。30秒限制，心跳2秒、Ctrl-C、Escape、窗口关闭、传输失败结束。控制端关闭前 ReleaseAll，停止消息后被控端 Dispatcher::close，再发送释放回执。异常硬退出、阻塞原生采集、OS release 失败需要后续改进。只读 GUI 保持独立；真实控制仍未接到桌面会话管理。
 
 新增 Windows/macOS development-build workflow，官方 GStreamer 1.26.11 SDK + SHA256，构建 desktop 和媒体程序的同目录测试包；macOS ad-hoc 签名，Windows 无签名，GStreamer runtime 用户单独从官方安装。CI artifacts 并非正式 release。运行时打包/插件许可、稳定签名和安装器仍需完成。
+
+## ADR-015：M2.1 rendezvous 服务
+
+servers/signaling 加入 workspace，Axum 0.8、Tokio、WebSocket JSON v1；独立于 M1 本地媒体路径。开发二进制只允许 IPv4 loopback。每连接一次 Ed25519 challenge、full SHA-256 公钥指纹作为设备路由 ID；内存在线表、每设备一个路由会话，明确 host 请求/许可/拒绝、两端 nonce、SDP offer/answer/proof/ICE 角色与顺序约束、连接/队列/长度/速率/有效期限制、断开清理。服务器只路由协商消息，不代表对端认证或实际桌面权限，不转发媒体/输入。注册凭证须在未来经可信 WSS 验证服务器身份；此开发版 ephemeral server id 不替代 TLS。设备持久身份、客户端接入、端到端加密协商、生产防滥用、TURN 和部署仍待。首版 64 hex 完整 ID 并非最终用户易用展示码；不作短 ID 或密码设计承诺。
+
+## ADR-016：开发包平台运行修复
+
+官方 GStreamer 1.26.11 SDK 下 Windows/macOS native-control release 已编译；macOS 运行时报缺失 LC_RPATH，build.rs 将官方 framework 的固定 lib 路径链接进媒体二进制。开发包改为 Remote EX.app，固定 sidecars 位于 Contents/MacOS，plutil/codesign 校验、ad-hoc签名；依旧外部官方运行时，非 notarized installer。Windows nonblocking listener accept 后恢复 bounded blocking TCP 模式；保留原超时，加跨平台信令单测。修复待完整运行复验。开发包包括 BUILD_INFO；不取消已开始的上一个跨平台 build，最新提交单独排队。

@@ -73,3 +73,9 @@ Rust 核心 CI 通过：[45564676252](https://github.com/xzcode/remote-ex/action
 - #45572463267 Windows/macOS 原生输入适配编译与 inert 测试全部通过，#45572297978 桌面增量 CI 与 #45572298025 媒体集成 CI 成功（上一轮）。
 - #45574557958 Core CI 成功（本轮控制几何协议与原有单测）；Native media engine #45574557992 仍需核对新 encrypted control/inert integration 的结果。
 - 开发构建使用官方 GStreamer 1.26.11 SDK，Windows MSVC x64 MSI、macOS universal PKG。CI 校验官方 SHA256 文件并构建 native-control；尚未证实跨平台 native-control 整体编译或包生成。不得将 inert 测试当作 OS input/真实桌面验收。
+
+## 第十二批实际结果
+
+- #45576282390：M1 正常结束、主控端授权管道关闭、被控端授权管道关闭的 inert 输入释放集成测试通过。#45575817861 Windows/macOS 最新桌面 CI 全部通过。
+- #45576059718：Windows 和 macOS 均成功安装 SDK、编译 desktop Release、编译 native-control media Release 并通过原生输入单元测试；运行控制测试失败。macOS 日志 dyld @rpath/libgstapp-1.0.0.dylib 无 LC_RPATH；Windows 10035 WouldBlock 后断开，接受的非阻塞 socket 未恢复。85acd0b 与 ed2aca9 分别修复。最新开发包 #45577251479 待验证，无正式包或真实设备测试。
+- #45577085766 Core CI 成功：M2.1 新增两个 Hub unit tests 与两个实际 WebSocket integration tests（身份注册/错误签名/拒绝、授权/随机数/顺序/会话隔离/路由/关闭）通过。测试仅 loopback，未实现真实客户端或公网。

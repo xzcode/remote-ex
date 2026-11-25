@@ -2,7 +2,7 @@
 
 跨平台、可私有化部署的远程桌面工具。Remote EX 自主研发客户端、服务端和业务协议，使用成熟底层库，不基于 RustDesk 等完整产品进行 fork。
 
-**当前状态：Windows/macOS 基础桌面与输入适配 CI、同/跨进程 WebRTC、加密只读与加密控制（模拟输入）集成测试通过。桌面实验控制模式、独立采集线程与正常撤销已编写，增量桌面 CI、原生开发包及真实设备验收待完成。尚无正式发行包。**
+**当前状态：M1 Windows/macOS 桌面与原生输入适配 CI、同/跨进程 WebRTC、加密控制及双向撤销模拟输入测试通过；完整 native-control Release 两平台已编译，运行环境问题已修复待复验，尚无正式包或真实设备验收。M2.1 Axum 设备认证与会话路由服务的本地 WebSocket 测试通过，暂不开放公网。**
 
 ## 目标
 
@@ -32,6 +32,8 @@
 - [M1 第九批交接](docs/M1_CONTROL_HANDOFF.md)
 - [M1 第十批交接](docs/M1_CONTROL_GUI_HANDOFF.md)
 - [M1 第十一批交接](docs/M1_REVOCATION_HANDOFF.md)
+- [M1/M2 第十二批交接](docs/M2_RENDEZVOUS_HANDOFF.md)
+- [M2.1 信令服务](servers/signaling/README.md)
 - [物理设备验收清单](docs/M1_DEVICE_ACCEPTANCE.md)
 - [开发测试包说明](docs/DEV_BUILD.md)
 - [输入适配说明](crates/input/README.md)
