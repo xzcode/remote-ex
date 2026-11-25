@@ -38,6 +38,7 @@ pub enum Message {
     Proof { session: [u8; 16], signature: String },
     Candidates { session: [u8; 16], items: Vec<Candidate> },
     ViewProfile { session: [u8; 16], synthetic: bool },
+    ControlGeometry { session: [u8;16], x: u32, y: u32, width: u32, height: u32 },
     Ready { session: [u8; 16] },
     Heartbeat { session: [u8; 16], sequence: u32 },
     Finished { session: [u8; 16] },
@@ -57,7 +58,7 @@ impl Message {
             Self::Request { session, .. } | Self::Accept { session, .. }
             | Self::Offer { session, .. } | Self::Answer { session, .. }
             | Self::Proof { session, .. } | Self::Candidates { session, .. }
-            | Self::ViewProfile { session, .. } | Self::Ready { session } | Self::Heartbeat { session, .. }
+            | Self::ViewProfile { session, .. } | Self::ControlGeometry { session, .. } | Self::Ready { session } | Self::Heartbeat { session, .. }
             | Self::Finished { session } => *session,
         }
     }
@@ -73,6 +74,9 @@ impl Message {
             Self::Offer { sdp, .. } | Self::Answer { sdp, .. }
                 if sdp.is_empty() || sdp.len() > MAX_SDP || sdp.contains('\0')
                 => Err(invalid("Invalid SDP")),
+            Self::ControlGeometry { x, y, width, height, .. }
+                if *width < 2 || *height < 2 || x.checked_add(*width).is_none_or(|n| n > 960) || y.checked_add(*height).is_none_or(|n| n > 540)
+                => Err(invalid("Invalid control geometry")),
             Self::Proof { signature, .. } => decode_hex::<64>(signature).map(|_| ()),
             Self::Candidates { items, .. } => {
                 if items.len() > MAX_CANDIDATES || items.iter().any(|c|
