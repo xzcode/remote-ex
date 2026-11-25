@@ -266,9 +266,10 @@ fn host(mut wire: SecureWire, identity: DeviceIdentity, expected: PublicKey, arg
         }
     }
     gate.close();
-    // Stop the native sender before acknowledging session end.
-    drop(peer);
+    // No new pixels are captured after closing the gate. Keep the connection
+    // alive for the controller's final decode/finish, then stop the pipeline.
     if recv(&mut wire, Some(session))? != (Message::Finished { session }) { return Err("Expected end of view".into()); }
+    drop(peer);
     out(&format!("PASS HOST VIEW: view-only, sent_frames={count}"))
 }
 fn controller(mut wire: SecureWire, identity: DeviceIdentity, expected: PublicKey, args: Arguments) -> MediaResult<()> {

@@ -46,3 +46,7 @@ crates/signaling 定义 4 字节 big-endian 长度、版本 1、256 KiB frame、
 ## M1 第六批桌面集成
 
 桌面会话入口仅限 main window、固定媒体子进程、单活动会话、显式具体本地地址和双方完整临时公钥核对、明确同意后发送固定两行本地批准；没有任意命令、任意 sidecar 路径或凭据/远程数据透传。原生监督器不依赖 UI 轮询来执行超时和退出清理，进程输出仅解析已知标记。桌面授权仅适用于合成诊断，不代表真实屏幕或系统输入授权。正式发布前仍需签名并校验媒体组件、保护进程 IPC、解决信令身份与实际 DTLS 绑定评审、持久信任、正式权限及撤销策略。禁止将诊断监听对公网暴露。
+
+## M1 第七批：加密只读会话
+
+独立 secure::SecureWire 使用 Noise KK，双方预先在可信渠道核对完整 X25519+Ed25519 公钥 bundle。Noise transport records 16-bit length，最大 65535 bytes；发送和接收限时，任何错误使通道永久失败。只读 CLI 额外校验双方相同 profile、VIEW-only grant、双方随机数和原始 SDP 的 Ed25519 transcript；在已连接的实际视频 transceiver sender/receiver DTLS transport 中读取 remote-certificate，对 PEM leaf DER 做 SHA-256，与所有已签名 SDP fingerprint 一致校验；缺失或冲突拒绝。若启用数据通道，通用 certificate helper 也检查 SCTP transport，当前只读 CLI 不创建数据通道。必须由两个交互式终端本地批准真实屏幕，只有指定显示器，在加密 Ready 与本地 gate 激活后采集；心跳中断、权限错误或截止停止新帧，进程退出释放 pipeline。无输入/无人值守功能。此实现待实际 GStreamer 证书属性集成测试、安全审查及跨平台验证；严禁把核心 Noise 单测通过当成完整真实屏幕认证已验证。

@@ -91,3 +91,7 @@ lan_diagnostic 两端各自生成临时密钥，双方在可信途径确认完�
 ## ADR-010：桌面诊断会话进程隔离
 
 桌面采用固定名称、与自身可执行文件同目录的可信本地构建 lan_diagnostic（Windows .exe）作为诊断媒体子进程；不从 PATH 查找，不提供用户任意程序路径或 shell。Tauri main window 仅暴露 prepare/status/confirm/disconnect 四个受限命令，后端校验具体私网/loopback 地址、公钥长度、显式确认、单活动会话。子进程输出解析固定里程碑，输出/命令有界；监督线程负责180秒截止、取消、退出和 kill/wait，主窗口关闭/应用退出清理。此设计隔离媒体原生依赖，但不是已签名或打包的 sidecar；缺失文件会明确提示。UI 支持双端公钥核对、本地授权、真实连接状态、主动断开、成功/失败与可选合成视频原生窗口，连接进行中禁止切换导航。正式版本需要经过签名的媒体组件打包、进程 IPC 审查、持久密钥、加密信令及真实权限集成。
+
+## ADR-011：独立加密只读屏幕路径
+
+生产候选安全通道采用 Snow 的 Noise KK (X25519/ChaChaPoly/BLAKE2s) 双方预先核对完整临时公钥，原始诊断 TCP framing 不再承载真实桌面会话。独立 lan_view CLI 在两端交互确认、Noise 信令加密、Ed25519 双签名绑定 SDP、实际视频 DTLS 证书 SHA-256 校验、双端 Ready 后，才允许 appsrc 获得 XCap 真实屏幕像素。单视频 m-line、view-only、固定显示器、有界帧与 10fps/960×540 letterbox、30秒会话期限、加密 heartbeat、无远程系统输入/无人值守/文件/剪贴板。无自动升级诊断权限；--test 与真实屏幕 profile 必须一致。当前 CLI 不替换桌面诊断界面、不使用未签名 GUI sidecar 做实际屏幕共享。依赖雪库、GStreamer、XCap 及跨平台运行时需要审计、锁定和实机验证。正式连续采集、持久身份、撤销 UI、更多能力、生产信令/发布均未实现。
