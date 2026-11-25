@@ -383,7 +383,7 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
     let url=a.next().ok_or("Missing WSS URL")?;
     let pin=decode_hex::<32>(&a.next().ok_or("Missing server ID")?).map_err(error)?;
     let endpoint=Endpoint::secure(&url,pin)?;
-    let mut ca=None;let mut relay_only=false;let mut profile=Profile::Test;let mut display=None;let mut supervised=false;let mut persistent=false;let mut defer_test_registration=false;let mut quality="compat".to_owned();let mut exchange_path=None;let mut volume=75u8;let mut extra_displays=Vec::new();
+    let mut ca=None;let mut relay_only=false;let mut profile=Profile::Test;let mut display=None;let mut supervised=false;let mut persistent=false;let mut defer_test_registration=false;let mut quality="compat".to_owned();let mut exchange_path=None;let mut volume=75u8;let mut extra_displays=Vec::new();let mut identity_slot=None;
     while let Some(arg)=a.next(){match arg.as_str(){
         "--ca" if ca.is_none()=>ca=Some(a.next().ok_or("Missing CA path")?),
         "--relay-only" if !relay_only=>relay_only=true,
@@ -391,6 +391,10 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
         "--desktop-session" if !supervised=>supervised=true,
         "--defer-test-registration" if !native_allowed&&!defer_test_registration=>defer_test_registration=true,
         "--persistent" if !persistent=>persistent=true,
+        "--identity-slot" if identity_slot.is_none()=>{
+            let n=a.next().ok_or("Missing identity slot")?.parse::<u8>().map_err(error)?;
+            remote_ex_security::identity_store::credential_name(n)?;identity_slot=Some(n);
+        },
         "--audio" if native_allowed&&profile==Profile::Test=>profile=Profile::Audio(false),
         "--audio-test" if !native_allowed&&profile==Profile::Test=>profile=Profile::Audio(true),
         "--volume"=>{volume=a.next().ok_or("Missing volume")?.parse().map_err(error)?;if volume>100{return Err("Volume out of range".into());}},
@@ -407,6 +411,7 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
         "--control" if native_allowed&&profile==Profile::Test=>{profile=Profile::Control;if host{display=Some(a.next().ok_or("Select display ID")?.parse::<u32>().map_err(error)?);}},
         _=>return Err("Unexpected argument".into()),
     }}
+    if identity_slot.is_some()&&!persistent{return Err("Identity slot requires explicit persistent storage opt-in".into());}
     if defer_test_registration&&(!supervised||persistent||profile!=Profile::Test){return Err("Test registration barrier requires synthetic temporary supervised mode".into());}
     if native_allowed&&profile==Profile::Test{return Err("Choose a separate view, control or exchange profile".into());}
     if let Profile::Audio(test)=profile{
@@ -428,7 +433,7 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
             if input()? !="STORE IDENTITY"{return Err("Persistent identity declined".into());}
         }
         #[cfg(all(feature="native-control",any(target_os="windows",target_os="macos")))]
-        {remote_ex_security::identity_store::native::open()?}
+        {remote_ex_security::identity_store::native::open_slot(identity_slot.unwrap_or(0))?}
         #[cfg(not(all(feature="native-control",any(target_os="windows",target_os="macos"))))]
         {return Err("Persistent identity unavailable".into());}
     }else{DeviceIdentity::generate()};

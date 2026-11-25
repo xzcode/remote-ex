@@ -14,6 +14,8 @@ const extraDisplays=ref<number[]>([]);
 const isExchange=computed(()=>["file","text","png"].includes(mode.value));
 const isDisplay=computed(()=>mode.value==="view"||mode.value==="control");
 const url=ref(""),serverId=ref(""),ca=ref(""),relay=ref(false),persistent=ref(false);
+const enrollment=ref<{device_id:string;public_key:string}|null>(null);
+watch(persistent,value=>{if(!value)enrollment.value=null;});
 const displays=ref<Display[]>([]),displayId=ref<number|null>(null),trusted=ref<Device[]>([]),chosen=ref(""),peerId=ref(""),peerKey=ref("");
 const approved=ref(false),submitted=ref(false),busy=ref(false),error=ref("");
 const saveHistory=ref(false),invitation=ref(""),quality=ref("compat");
@@ -41,6 +43,12 @@ async function command(name:string,args:Record<string,unknown>={}){
  if(!native||busy.value)return;busy.value=true;revision++;error.value="";
  try{snapshot.value=await invoke<Snapshot>(name,{...args,slot:props.slot});}
  catch(e){error.value=String(e);submitted.value=false;}finally{busy.value=false;}
+}
+async function prepareSlotIdentity(){
+ if(!native||busy.value||snapshot.value.active||!persistent.value)return;
+ busy.value=true;error.value="";
+ try{enrollment.value=await invoke("routed_identity_info",{slot:props.slot,confirmed:true});}
+ catch(e){error.value=String(e);}finally{busy.value=false;}
 }
 async function chooseTransferFile(){
  if(!native||busy.value||snapshot.value.active||mode.value!=="file")return;
@@ -99,6 +107,8 @@ onBeforeUnmount(()=>{disposed=true;if(timer!==undefined)window.clearInterval(tim
   <label>{{ t("qualityPreset") }}</label><select v-model="quality" :disabled="busy||snapshot.active"><option value="compat">540p · 10 fps</option><option value="low">480p · 15 fps</option><option value="balanced">720p · 30 fps</option><option value="high">1080p · 30 fps</option><option value="qhd">1440p · 30 fps</option><option value="uhd">2160p · 30 fps</option></select><p class="muted">{{ t("qualityNotice") }}</p>
   <label class="check-label"><input type="checkbox" v-model="relay" :disabled="busy||snapshot.active"/>{{ t("routedRelay") }}</label>
   <label class="check-label"><input type="checkbox" v-model="persistent" :disabled="busy||snapshot.active"/>{{ t("presenceStorageConsent") }}</label>
+  <button v-if="persistent" :disabled="busy||snapshot.active||!native" @click="prepareSlotIdentity">{{ t("identityPrepare") }}</button>
+  <template v-if="enrollment&&persistent"><label>{{ t("identityEnrollment") }}</label><input readonly :value="enrollment.device_id" class="key-input"/><label>{{ t("trustPublicKey") }}</label><input readonly :value="enrollment.public_key" class="key-input"/></template>
   <label class="check-label"><input type="checkbox" v-model="saveHistory" :disabled="busy||snapshot.active"/>{{ t("deviceSaveHistory") }}</label>
   <div class="actions"><button class="primary" :disabled="!canPrepare" @click="prepare">{{ t("routedPrepare") }}</button><button :disabled="busy||!snapshot.active||snapshot.stage==='stopping'" @click="command('routed_disconnect')">{{ t("lanDisconnect") }}</button></div>
  </div>

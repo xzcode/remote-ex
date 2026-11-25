@@ -20,6 +20,7 @@ fn main() {
             lan::routed_prepare,
             lan::routed_confirm,
             lan::routed_status,
+            lan::routed_identity_info,
             lan::routed_disconnect,
             lan::routed_transfer_pause,
             lan::routed_audio_volume,
