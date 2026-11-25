@@ -19,3 +19,30 @@
 ## 记录模板
 
 记录 commit SHA、Actions run、OS/arch、屏幕/DPI、GStreamer/coturn 版本、两端网络拓扑（不要记录实际个人连接信息）、是否 direct/relay、实际测试步骤和 PASS/FAIL/BLOCKED。记录必要的非敏感错误，不保存密钥、媒体、输入内容或 TURN 密码。M2 不允许仅凭核心单测或代码存在标记完成。当前未配置实际公网服务器或可供验收的两台授权图形桌面，物理测试待办。
+
+## 第十六批：自动化验收实证（2026-11-25）
+
+此记录区分自动化通过和真实设备/生产网络验收，不改变 B01–B11 的完整退出条件。
+
+| 项目 | 实际状态 | 证据或剩余项 |
+|---|---|---|
+| B01 | 自动化 PASS | Core CI #45584030066：真实 TLS 注册、错误证书/主机名/server ID、错误注册证明、准入、会话隔离及顺序、有效期 |
+| B02 | 部分 PASS | 持久身份内存后端重读与损坏检查通过；Windows/macOS 系统存储重启、SQLite trust 实际平台测试仍待 |
+| B03 | 自动化 PASS | #45584030116：真实本地 WSS 服务及两个媒体进程；30 帧解码、签名 SDP、实际 video/SCTP DTLS、inert input release |
+| B04 | 部分 PASS | 同一 CI 主机 direct ICE 实际媒体成功；不同物理 NAT/公网直连与选中 candidate pair 未实测 |
+| B05 | 部分 PASS | #45584030116：真实 coturn 短期凭据 + 强制 relay，30 帧解码与释放回执；不同物理网络待 |
+| B06 | 待验证 | bb65000 新增隔离双 NAT 测试：网关仅允许访问 WSS、TURN listener，ICE All 自动 fallback 与 Relay 两种路径；#45585068195 待结果 |
+| B07 | 部分 PASS | 实际 TLS/allowlist 与协议边界测试通过，部署配置未执行；网络隔离、正式运营和防滥用审查仍待 |
+| B08 | BLOCKED | 当前无已授权两台物理 Windows/macOS 图形桌面，未读取实际屏幕或执行实际键鼠 |
+| B09 | 部分 PASS | LAN synthetic 正常结束、双方监督管道撤销，inert backend 释放验证；routed direct/relay 正常结束与 ACK；真实路由撤销/焦点/权限未实测 |
+| B10 | 自动化 PASS（在线恢复） | #45584030066：实际 WebSocket 断开后同一设备身份重新注册；不恢复系统输入授权 |
+| B11 | 未完成 | 旧 M2 package #45583806921 两平台因 SQLite 类型错误失败；e2869fc 已修，#45584544562 桌面重验、#45585068172 最新 M2 完整开发构建待结果。M1 旧包仍可用，但不含 M2 |
+
+双 NAT lab 只在明确 opt-in 的 GitHub-hosted Linux Runner 上运行。独立 namespaces 中建立 lab bridge、两个 NAT gateway 与两个 peer namespace，禁止直接媒体流和外网路径；只允许 WSS/turn listener。临时测试证书、密钥、准入名单和 relay secret 均为当次生成，不写入仓库。实际服务通过 explicit TLS + allowlist bind 启动，诊断程序仅合成视频与 inert input。全部 namespaces 和进程在测试后清理。该测试仍是单一虚拟机内的隔离网络实验，不是跨公网、物理设备验收。
+
+验收批次代码源 bb65000d467ef893683aae441602d2512d087b2e。没有启动或修改用户服务器，没有部署或发行。以下 CI 在记录时尚未结束，必须检查实际结论：
+- [最新核心 #45585068192](https://github.com/xzcode/remote-ex/actions/runs/45585068192)
+- [双 NAT/媒体 #45585068195](https://github.com/xzcode/remote-ex/actions/runs/45585068195)
+- [桌面重验 #45584544562](https://github.com/xzcode/remote-ex/actions/runs/45584544562)
+- [新 M2 开发包 #45585068172](https://github.com/xzcode/remote-ex/actions/runs/45585068172)
+
