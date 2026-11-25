@@ -38,6 +38,7 @@ def main():
     if exchange_sender not in (None,"host","controller"):raise RuntimeError("Invalid file sender role")
     pause_test="--file-pause" in sys.argv[3:]
     if pause_test and not exchange_sender:raise RuntimeError("Pause test needs file transfer")
+    manage_test="--manage-test" in sys.argv[3:]
     catalog_test="--catalog-test" in sys.argv[3:]
     if catalog_test and exchange_sender:raise RuntimeError("Choose a separate catalog test")
     directory_test="--directory-exchange" in sys.argv[3:]
@@ -101,6 +102,11 @@ def main():
             payload=bytes(range(256))*(32768 if checkpoint_test else 257)
             host_flags=list(flags);controller_flags=list(flags)
             if "--shared-controller" in sys.argv[3:]:controller_flags.append("--shared-controller")
+            if manage_test:
+                os.mkdir(source)
+                with open(os.path.join(source,"a.txt"),"wb") as stream:stream.write(b"alpha")
+                with open(os.path.join(source,"b.txt"),"wb") as stream:stream.write(b"beta")
+                host_flags.extend(["--desktop-session","--manage",source]);controller_flags.extend(["--desktop-session","--manage"])
             if catalog_test:
                 os.mkdir(source);os.mkdir(os.path.join(source,"nested"))
                 with open(os.path.join(source,"nested","sample.bin"),"wb") as stream:stream.write(payload)
@@ -144,6 +150,19 @@ def main():
                 for role,pair,key in (("host",host,ck),("controller",controller,hk)):
                     consent=("ALLOW SEND " if role==exchange_sender else "ALLOW RECEIVE ")+("DIRECTORY" if directory_test else "FILE")
                     pair[0].stdin.write(key+"\n"+consent+"\n");pair[0].stdin.flush()
+            elif manage_test:
+                for pair,key,consent in ((host,ck,"ALLOW REVIEW FILE CHANGES"),(controller,hk,"ALLOW PROPOSE FILE CHANGES")):
+                    pair[0].stdin.write(key+"\n"+consent+"\n");pair[0].stdin.flush()
+                expect(controller,"CATALOG_READY ",deadline)
+                plan={"changes":[{"op":"create_folder","parent":None,"name":"new-dir"},{"op":"create_file","parent":None,"name":"empty.txt"},{"op":"rename","index":0,"name":"renamed.txt"},{"op":"recycle","index":1}]}
+                controller[0].stdin.write("PLAN "+json.dumps(plan,separators=(",",":"))+"\n");controller[0].stdin.flush()
+                review=expect(host,"MANAGE_REVIEW ",deadline)
+                token,review_json=review.split(" ",1)
+                reviewed=json.loads(review_json)
+                if len(token)!=64 or len(reviewed["items"])!=4:raise RuntimeError("Incorrect review")
+                if sorted(os.listdir(source))!=["a.txt","b.txt"]:raise RuntimeError("Directory changed before host approval")
+                host[0].stdin.write("APPROVE "+token+"\n");host[0].stdin.flush()
+                if expect(controller,"MANAGE_APPLIED ",deadline)!="4":raise RuntimeError("Missing complete change receipt")
             elif catalog_test:
                 for pair,key,consent in ((host,ck,"ALLOW LIST AND DOWNLOAD SELECTED ROOT"),(controller,hk,"ALLOW BROWSE AND RECEIVE ONE FILE")):
                     pair[0].stdin.write(key+"\n"+consent+"\n");pair[0].stdin.flush()
@@ -194,6 +213,15 @@ def main():
             expect(controller,"PASS ROUTED CONTROLLER:",deadline)
             for proc,_ in peers[-2:]:
                 if proc.wait(timeout=5)!=0:raise RuntimeError("peer exited unsuccessfully")
+            if manage_test:
+                if not os.path.isdir(os.path.join(source,"new-dir")) or os.path.getsize(os.path.join(source,"empty.txt"))!=0:raise RuntimeError("New entries missing")
+                with open(os.path.join(source,"renamed.txt"),"rb") as stream:
+                    if stream.read()!=b"alpha":raise RuntimeError("Renamed content mismatch")
+                with open(os.path.join(source,reviewed["recovery"],"3-b.txt"),"rb") as stream:
+                    if stream.read()!=b"beta":raise RuntimeError("Recovery content mismatch")
+                if os.path.exists(os.path.join(source,"a.txt")) or os.path.exists(os.path.join(source,"b.txt")):raise RuntimeError("Original name remained")
+                print("PASS: host-reviewed four file changes, no mutation before approval, renamed and recovered bytes verified",flush=True)
+                return
             if catalog_test:
                 with open(target,"rb") as stream:
                     if stream.read()!=payload:raise RuntimeError("Catalog selected file mismatch")

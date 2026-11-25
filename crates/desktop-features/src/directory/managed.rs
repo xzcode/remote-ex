@@ -37,8 +37,9 @@ fn safe_name(s:&str)->bool{
         &&!s.chars().any(|c|matches!(c,'\u{202a}'..='\u{202e}'|'\u{2066}'..='\u{2069}'|'\u{200e}'|'\u{200f}'))
 }
 fn key(p:&[String])->String{p.iter().map(|s|s.to_lowercase()).collect::<Vec<_>>().join("/")}
+fn visible_component(s:&str)->bool{component(s)&&!s.chars().any(|c|matches!(c,'\u{202a}'..='\u{202e}'|'\u{2066}'..='\u{2069}'|'\u{200e}'|'\u{200f}'))}
 fn path_allowed(parts:&[String])->bool{
-    !parts.is_empty()&&parts.len()<=MAX_DEPTH&&parts.iter().all(|s|component(s)&&!s.to_ascii_lowercase().starts_with(&RECOVERY_PREFIX.to_ascii_lowercase()))
+    !parts.is_empty()&&parts.len()<=MAX_DEPTH&&parts.iter().all(|s|visible_component(s)&&!s.to_ascii_lowercase().starts_with(&RECOVERY_PREFIX.to_ascii_lowercase()))
         &&parts.iter().map(String::len).sum::<usize>()+parts.len()<=768
 }
 impl Plan{

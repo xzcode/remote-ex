@@ -5,7 +5,7 @@ import type {TextKey} from "./i18n";
 import {getCurrentWebview} from "@tauri-apps/api/webview";
 type Stage="idle"|"starting"|"awaiting_approval"|"connecting"|"listening"|"connected"|"stopping"|"passed"|"failed"|"canceled";
 type CatalogEntry={parts:string[];directory:boolean;size:number};
-type Change={op:'create_folder'|'create_file';parent:number|null;name:string}|{op:'rename';index:number;name:string}|{op:'recycle';index:number};
+type Change={op:'create_folder';parent:number|null;name:string}|{op:'create_file';parent:number|null;name:string}|{op:'rename';index:number;name:string}|{op:'recycle';index:number};
 type FileReview={items:{operation:string;source:string[]|null;destination:string[]}[];recovery:string|null};
 type Snapshot={stage:Stage;active:boolean;local_key:string|null;device_id:string|null;detail:string|null;profile:string;input_released:boolean;decoded_fps?:number|null;decoded_bps?:number|null;transfer_done?:number|null;transfer_total?:number|null;transfer_verified?:boolean;transfer_paused?:boolean;checkpoint_saved?:number|null;directory_entries?:number|null;clipboard_sent?:number|null;clipboard_received?:number|null;catalog?:CatalogEntry[];catalog_ready?:boolean;catalog_selected?:number|null;manage_review?:FileReview|null;manage_token?:string|null;manage_submitted?:boolean;manage_approved?:boolean;manage_applied?:number|null;resume_offset?:number|null;audio_volume?:number|null;network_bps?:number|null;rtt_ms?:number|null;loss_pct?:number|null;route_type?:string|null};
 type Device={device_id:string;public_key:string;label:string};
@@ -20,15 +20,17 @@ const catalogQuery=ref(""),catalogChoice=ref<number|null>(null);
 const changes=ref<Change[]>([]),operation=ref<"create_folder"|"create_file"|"rename"|"recycle">("create_folder"),newName=ref(""),parentIndex=ref<number|null>(null),fileIndex=ref<number|null>(null),reviewConfirmed=ref(false),planConfirmed=ref(false);
 const managedEditable=computed(()=>mode.value==="manage"&&role.value==="controller"&&snapshot.value.catalog_ready&&snapshot.value.stage==="connected"&&!snapshot.value.manage_submitted);
 const manageFile=computed(()=>operation.value==="rename"||operation.value==="recycle");
-const actionName=(op:string)=>({create_folder:"manageCreateFolder",create_file:"manageCreateFile",rename:"manageRename",recycle:"manageRecycle"}[op]??"manageUnknown") as TextKey;
+const actionNames:Record<string,TextKey>={create_folder:"manageCreateFolder",create_file:"manageCreateFile",rename:"manageRename",recycle:"manageRecycle"};
+const actionName=(op:string):TextKey=>actionNames[op]??"manageUnknown";
 function appendChange(){
  if(!managedEditable.value||changes.value.length>=4)return;
  if(manageFile.value){if(fileIndex.value===null)return;changes.value.push(operation.value==="rename"?{op:"rename",index:fileIndex.value,name:newName.value.trim()}:{op:"recycle",index:fileIndex.value});}
- else if(operation.value==="create_folder"||operation.value==="create_file"){changes.value.push({op:operation.value,parent:parentIndex.value,name:newName.value.trim()});}
+ else if(operation.value==="create_folder"){changes.value.push({op:"create_folder",parent:parentIndex.value,name:newName.value.trim()});}
+ else if(operation.value==="create_file"){changes.value.push({op:"create_file",parent:parentIndex.value,name:newName.value.trim()});}
  newName.value="";planConfirmed.value=false;
 }
 function describeChange(c:Change){const row=snapshot.value.catalog??[];if(c.op==="rename"||c.op==="recycle"){const src=row[c.index]?.parts.join("/")??"?";return c.op==="rename"?`${src} → ${c.name}`:src;}return `${c.parent===null?"":(row[c.parent]?.parts.join("/")??"?")+"/"}${c.name}`;}
-watch(()=>snapshot.value.manage_token,()=>{reviewConfirmed.value=false;});
+
 const catalogRows=computed(()=> (snapshot.value.catalog??[]).map((entry,index)=>({entry,index})).filter(({entry})=>entry.parts.join("/").toLowerCase().includes(catalogQuery.value.toLowerCase())));
 const resumeFrom=ref(""),checkpointPath=ref("");
 const fileReceiver=computed(()=>mode.value==="file"&&role.value!==sender.value);
@@ -49,6 +51,7 @@ const approved=ref(false),submitted=ref(false),busy=ref(false),error=ref("");
 const saveHistory=ref(false),invitation=ref(""),quality=ref("compat");
 type Invitation={url:string;server_id:string;device_id:string;public_key:string;mode:"test"|"view"|"control"|"av_view"|"av_control";expires_at:number};
 const snapshot=ref<Snapshot>({stage:"idle",active:false,local_key:null,device_id:null,detail:null,profile:"routed_test",input_released:false});
+watch(()=>snapshot.value.manage_token,()=>{reviewConfirmed.value=false;});
 let timer:number|undefined,disposed=false,polling=false,revision=0;
 const statuses:Record<Stage,TextKey>={idle:"lanIdle",starting:"lanStarting",awaiting_approval:"lanAwaiting",connecting:"lanConnecting",listening:"lanListening",connected:"routedConnected",stopping:"controlStopping",passed:"controlEnded",failed:"lanFailed",canceled:"lanCanceled"};
 const status=computed(()=>props.t(statuses[snapshot.value.stage]));
