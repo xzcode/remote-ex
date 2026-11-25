@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { en, zh, type TextKey } from "./i18n";
+import LanPanel from "./LanPanel.vue";
 
 type Language = "system" | "en" | "zh";
 type Theme = "system" | "light" | "dark" | "black";
@@ -18,6 +19,7 @@ function preference<T extends string>(key: string, values: readonly T[], fallbac
 const language = ref<Language>(preference("remote-ex.language", ["system", "en", "zh"], "system"));
 const theme = ref<Theme>(preference("remote-ex.theme", ["system", "light", "dark", "black"], "system"));
 const active = ref<Page>("remote");
+const lanActive = ref(false);
 const native = isTauri();
 const systemLanguage = navigator.language.toLowerCase().startsWith("zh") ? "zh" : "en";
 const locale = computed(() => language.value === "system" ? systemLanguage : language.value);
@@ -85,7 +87,7 @@ function imageLoaded(event: Event) {
   previewSize.value = image.naturalWidth + " × " + image.naturalHeight;
 }
 function navigate(page: Page) {
-  if (busy.value) return;
+  if (busy.value || lanActive.value) return;
   if (active.value === "diagnostics" && page !== "diagnostics") clearPreview();
   error.value = "";
   active.value = page;
@@ -101,24 +103,17 @@ const pages: { key: Page; symbol: string }[] = [
       <header class="brand"><span class="brand-icon">▣</span><div><strong>Remote EX</strong><small>{{ t("development") }}</small></div></header>
       <nav aria-label="Navigation">
         <button v-for="page in pages" :key="page.key" class="nav-item" :class="{ active: active === page.key }"
-          :aria-current="active === page.key ? 'page' : undefined" :disabled="busy" @click="navigate(page.key)">
+          :aria-current="active === page.key ? 'page' : undefined" :disabled="busy || (lanActive && page.key !== active)" @click="navigate(page.key)">
           <span aria-hidden="true" class="nav-icon">{{ page.symbol }}</span>{{ t(page.key) }}
         </button>
       </nav>
       <div class="side-foot"><i class="dot"></i>{{ t("localOnly") }}</div>
     </aside>
     <main class="content">
-      <header class="topbar"><h1>{{ t(active) }}</h1><span class="status">{{ t("unavailable") }}</span></header>
+      <header class="topbar"><h1>{{ t(active) }}</h1><span class="status">{{ t(lanActive ? "lanActive" : "unavailable") }}</span></header>
       <div class="body">
         <template v-if="active === 'remote'">
-          <section class="panel">
-            <h2>{{ t("remoteHeading") }}</h2>
-            <p>{{ t("remoteDescription") }}</p>
-            <button class="primary" @click="navigate('diagnostics')">{{ t("openDiagnostics") }}</button>
-          </section>
-          <section class="panel">
-            <h2>{{ t("incoming") }}</h2><p class="muted">{{ t("incomingOff") }}</p>
-          </section>
+          <LanPanel :t="t" @active="lanActive = $event" />
         </template>
         <template v-else-if="active === 'diagnostics'">
           <section class="panel">

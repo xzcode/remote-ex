@@ -24,3 +24,11 @@ For compile-only checks: npm run build, then cargo check --manifest-path src-tau
 5. Verify invalid/disconnected display and denied permission errors, no background capture, and language/theme persistence.
 
 Headless runners can compile/test, but cannot establish that a real display or permissions work. Wayland and secure desktops are not claimed supported. The temporary square icon is for development builds only.
+
+## LAN diagnostic in the desktop UI
+
+The development desktop supervises the exact native `lan_diagnostic` executable next to its own executable (on Windows, `lan_diagnostic.exe`). Build it on the same platform with GStreamer 1.22+ using the instructions in `crates/media/README.md`, then copy it alongside the Tauri development binary (typically `apps/desktop/src-tauri/target/debug/`). Install required native GStreamer runtime libraries and plugins. No media binary is bundled by default; if it is absent, Prepare reports that requirement instead of pretending to connect.
+
+Choose host/controller and a specific private IP:port (or loopback), prepare each application, independently verify the two ephemeral public keys, and explicitly approve the diagnostic (host first). The controller may select a native synthetic-video preview window; the diagnostic exchanges only generated test media and a fixed simulated input sequence. The UI shows actual process milestones and the outcome, and provides Disconnect. It never launches automatically, never reads real desktop pixels in this session and never executes OS input. The desktop supervisor terminates its direct child on disconnect, expiry or window/application exit. Unencrypted diagnostic signaling is unsuitable for production use.
+
+The sidecar is a development-only trusted local build, not signed/packaged yet. Do not substitute untrusted binaries. Native preview and actual two-machine behavior still need physical-machine verification.

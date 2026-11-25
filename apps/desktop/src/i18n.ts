@@ -1,4 +1,12 @@
 export const en = {
+  lanHeading: "LAN connection diagnostic", lanDescription: "Synthetic video and test input only. No real screen sharing or system control. Use a trusted local network; diagnostic signaling is not encrypted.",
+  lanRole: "Role", lanHost: "Host (listen)", lanController: "Controller (connect)", lanAddress: "Host IP address and port",
+  lanPrepare: "Prepare diagnostic", lanDisconnect: "Disconnect", lanLocalKey: "This session's public key", lanPeerKey: "Other device's public key",
+  lanVerify: "Exchange and compare the complete public keys through a separate trusted channel. Approve the host first.",
+  lanConsent: "I verified the other device and approve synthetic video and simulated input only.", lanApprove: "Approve diagnostic",
+  lanPreview: "Open native synthetic video preview", lanIdle: "Idle", lanStarting: "Starting media engine", lanAwaiting: "Waiting for local approval",
+  lanConnecting: "Negotiating connection", lanListening: "Waiting for one connection", lanConnected: "Diagnostic connected", lanPassed: "Diagnostic passed",
+  lanFailed: "Diagnostic failed", lanCanceled: "Disconnected", lanActive: "Diagnostic active",
   remote: "Remote control", diagnostics: "Local diagnostics", preferences: "Preferences",
   development: "Development build", unavailable: "Not connected", localOnly: "Local diagnostic only",
   remoteHeading: "Connect to a remote device", remoteDescription: "The network session and remote input are not implemented yet. Local display diagnostics are available.",
@@ -14,6 +22,14 @@ export const en = {
 } as const;
 export type TextKey = keyof typeof en;
 export const zh: Record<TextKey, string> = {
+  lanHeading: "局域网连接诊断", lanDescription: "仅传输合成测试视频和模拟输入，不共享真实桌面、不控制系统。请使用可信局域网；诊断信令尚未加密。",
+  lanRole: "连接角色", lanHost: "被控端（监听）", lanController: "主控端（连接）", lanAddress: "被控端 IP 地址和端口",
+  lanPrepare: "准备连接诊断", lanDisconnect: "断开连接", lanLocalKey: "本次会话公钥", lanPeerKey: "对方设备公钥",
+  lanVerify: "请通过独立可信渠道交换并核对完整公钥，先确认被控端，再确认主控端。",
+  lanConsent: "我已核对对方设备，并仅授权合成视频和模拟输入诊断。", lanApprove: "确认并连接",
+  lanPreview: "打开原生测试视频预览", lanIdle: "空闲", lanStarting: "启动媒体引擎", lanAwaiting: "等待本机确认",
+  lanConnecting: "正在协商", lanListening: "等待单次连接", lanConnected: "诊断连接已建立", lanPassed: "诊断通过",
+  lanFailed: "诊断失败", lanCanceled: "已断开", lanActive: "诊断进行中",
   remote: "远程控制", diagnostics: "本地诊断", preferences: "偏好设置",
   development: "开发版本", unavailable: "未连接", localOnly: "仅本地诊断",
   remoteHeading: "连接远程设备", remoteDescription: "网络会话及远程输入尚未实现，当前可以使用本地屏幕诊断。",
