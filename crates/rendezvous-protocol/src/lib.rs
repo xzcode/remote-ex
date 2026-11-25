@@ -41,6 +41,7 @@ pub enum Signal {
     Sealed { packet: String },
     Geometry { x:u32,y:u32,width:u32,height:u32 },
     Quality { preset:String },
+    ViewLayout { count:u8 },
 }
 
 /// Bounded non-trickle candidate exchange after both session proofs.
@@ -111,6 +112,7 @@ impl Signal {
                     && !i.candidate.contains(['\r','\n','\0'])) => Ok(()),
             Self::Geometry{x,y,width,height} if *width>=2&&*height>=2
                 &&x.checked_add(*width).is_some_and(|n|n<=3840)&&y.checked_add(*height).is_some_and(|n|n<=2160)=>Ok(()),
+            Self::ViewLayout{count} if (1..=4).contains(count)=>Ok(()),
             Self::Quality{preset} if matches!(preset.as_str(),"compat"|"low"|"balanced"|"high"|"qhd"|"uhd")=>Ok(()),
             Self::NoiseHandshake { step:1, packet } if packet.len()==64 && hex_packet(packet) => Ok(()),
             Self::NoiseHandshake { step:2, packet } if packet.len()==96 && hex_packet(packet) => Ok(()),

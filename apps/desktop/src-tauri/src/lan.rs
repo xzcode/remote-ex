@@ -405,7 +405,7 @@ impl SessionManager {
         }
         self.spawn(command,profile,host,None)
     }
-    fn prepare_routed(&self,role:&str,url:&str,server_id:&str,profile:Profile,display_id:Option<u32>,relay_only:bool,persistent:bool,storage_consent:bool,ca_path:Option<String>,history_path:Option<PathBuf>,quality:&str,transfer_path:Option<String>,volume:u8)->Result<Snapshot,String>{
+    fn prepare_routed(&self,role:&str,url:&str,server_id:&str,profile:Profile,display_id:Option<u32>,relay_only:bool,persistent:bool,storage_consent:bool,ca_path:Option<String>,history_path:Option<PathBuf>,quality:&str,transfer_path:Option<String>,volume:u8,extra_displays:Vec<u32>)->Result<Snapshot,String>{
         if !profile.routed()||url.len()>512{return Err("Invalid routed session configuration".into());}
         if persistent&&!storage_consent{return Err("Persistent routed identity requires explicit native storage consent".into());}
         let pin=remote_ex_signaling::decode_hex::<32>(server_id).map_err(|_|"Invalid expected server ID")?;
@@ -417,7 +417,13 @@ impl SessionManager {
             Profile::RoutedTest=>{},
             Profile::RoutedView|Profile::RoutedControl=>{
                 command.arg(if profile==Profile::RoutedView{"--view"}else{"--control"});
-                if host{command.arg(display_id.ok_or("Choose primary display")?.to_string());}
+                if host{
+                    let main=display_id.ok_or("Choose a display")?;
+                    command.arg(main.to_string());
+                    if profile==Profile::RoutedControl&&!extra_displays.is_empty(){return Err("Control requires only the primary display".into());}
+                    if extra_displays.len()>3||extra_displays.iter().enumerate().any(|(i,d)|*d==main||extra_displays[..i].contains(d)){return Err("Select up to four distinct displays".into());}
+                    for d in extra_displays{command.arg("--view-extra").arg(d.to_string());}
+                }else if !extra_displays.is_empty(){return Err("Only the host can authorize additional displays".into());}
             },
             Profile::RoutedAudio=>{
                 if host&&!cfg!(windows){return Err("System audio source requires Windows WASAPI loopback".into());}
@@ -582,7 +588,7 @@ pub async fn select_transfer_file(window:WebviewWindow,receive:bool)->Result<Opt
     {let _=receive;Err("Native file selection unavailable".into())}
 }
 #[tauri::command]
-pub fn routed_prepare(window:WebviewWindow,manager:State<'_,SessionManager>,managers:State<'_,RoutedManagers>,slot:Option<u8>,role:String,url:String,server_id:String,mode:String,display_id:Option<u32>,relay_only:bool,persistent:bool,storage_consent:bool,ca_path:Option<String>,save_history:Option<bool>,quality:Option<String>,sender:Option<String>,transfer_path:Option<String>,volume:Option<u8>)->Result<Snapshot,String>{
+pub fn routed_prepare(window:WebviewWindow,manager:State<'_,SessionManager>,managers:State<'_,RoutedManagers>,slot:Option<u8>,role:String,url:String,server_id:String,mode:String,display_id:Option<u32>,relay_only:bool,persistent:bool,storage_consent:bool,ca_path:Option<String>,save_history:Option<bool>,quality:Option<String>,sender:Option<String>,transfer_path:Option<String>,volume:Option<u8>,extra_displays:Option<Vec<u32>>)->Result<Snapshot,String>{
     require_main(&window)?;
     let profile=match (mode.as_str(),sender.as_deref()){
         ("test",_)=>Profile::RoutedTest,("view",_)=>Profile::RoutedView,("control",_)=>Profile::RoutedControl,("audio",_)=>Profile::RoutedAudio,
@@ -601,7 +607,7 @@ pub fn routed_prepare(window:WebviewWindow,manager:State<'_,SessionManager>,mana
         if exclusive||slots.exclusive[n]{return Err("Host and content-sharing sessions require exclusive access".into());}
         if persistent&&slots.persistent[n]{return Err("Only one slot can use the persistent identity; other slots require independently enrolled temporary identities".into());}
     }
-    let result=slots.sessions[i].prepare_routed(&role,url.trim(),server_id.trim(),profile,display_id,relay_only,persistent,storage_consent,ca_path,history,quality.as_deref().unwrap_or("compat"),transfer_path,volume.unwrap_or(75))?;
+    let result=slots.sessions[i].prepare_routed(&role,url.trim(),server_id.trim(),profile,display_id,relay_only,persistent,storage_consent,ca_path,history,quality.as_deref().unwrap_or("compat"),transfer_path,volume.unwrap_or(75),extra_displays.unwrap_or_default())?;
     slots.exclusive[i]=exclusive;slots.persistent[i]=persistent;Ok(result)
 }
 #[tauri::command]

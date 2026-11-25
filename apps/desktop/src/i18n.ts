@@ -1,4 +1,5 @@
 export const en = {
+  extraDisplays:"Additional approved displays (up to three)",extraDisplaysNotice:"Only these selected displays may be switched or combined in this view-only session. No other screen is shared.",multiDisplayConsent:"I explicitly allow this verified peer to view and switch among all selected displays, including a combined view. No system input is authorized.",
   deviceRefreshStatus:"Check online status (first 32 matches)",deviceUnknown:"Unknown",deviceBusy:"In session",
   sessionTab:"Session",multiSessionNotice:"Up to three independent controller sessions. Only one persistent identity; each temporary identity must be separately enrolled. Host, audio and content exchange are exclusive.",networkStats:"Connection statistics",networkBitrate:"Reported bitrate estimate",networkLoss:"Packet loss",networkRoute:"Selected route",
   audioMode:"System audio (experimental)",audioVolume:"Playback volume",audioNotice:"Windows host system-audio loopback; Windows/macOS playback. Separate audio session, not microphone capture.",audioSendConsent:"I explicitly authorize sharing my current system output audio with this verified device.",audioPlayConsent:"I explicitly authorize playback of audio from this verified device.",
@@ -68,6 +69,7 @@ export const en = {
 } as const;
 export type TextKey = keyof typeof en;
 export const zh: Record<TextKey, string> = {
+  extraDisplays:"额外授权显示器（最多三块）",extraDisplaysNotice:"本次只读会话仅允许切换或拼接已选屏幕，不会共享其他显示器。",multiDisplayConsent:"我明确授权此已核对设备查看、切换和拼接所有选定显示器，不授权系统键鼠操作。",
   deviceRefreshStatus:"查询在线状态（前32条）",deviceUnknown:"未知",deviceBusy:"会话中",
   sessionTab:"会话",multiSessionNotice:"最多三个独立主控会话。仅一个会话使用持久身份，其他临时身份需分别登记。被控、音频及内容交换会话独占。",networkStats:"连接统计",networkBitrate:"统计码率估算",networkLoss:"丢包率",networkRoute:"选中线路",
   audioMode:"系统声音（实验版）",audioVolume:"播放音量",audioNotice:"Windows 被控端系统声音回录，Windows/macOS 播放。独立音频会话，不采集麦克风。",audioSendConsent:"我明确授权向此已核对设备发送当前系统输出声音。",audioPlayConsent:"我明确授权播放此已核对设备发送的声音。",

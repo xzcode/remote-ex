@@ -9,7 +9,6 @@ use softbuffer::Surface;
 use std::{collections::BTreeSet,num::NonZeroU32,rc::Rc};
 use winit::{application::ApplicationHandler,dpi::{LogicalSize,PhysicalSize},event::{ElementState,MouseButton,MouseScrollDelta,WindowEvent},event_loop::{ActiveEventLoop,ControlFlow,EventLoop},keyboard::{KeyCode as K,PhysicalKey},window::{Fullscreen,Window,WindowId}};
 
-const SWITCH_VIEW:&[u8]=b"remote-ex-view/next/v1";
 const MAX_WINDOW_PIXELS:u64=32_000_000;
 fn hid(k:K)->Option<u16>{
     // Explicit key mapping; no assumption about enum discriminants.
@@ -23,7 +22,7 @@ fn hid(k:K)->Option<u16>{
 }
 struct Viewer<'a>{
     peer:&'a Peer,channel:&'a ControlChannel,session:[u8;16],geometry:Rect,
-    allow_input:bool,input_enabled:bool,screens:u8,
+    allow_input:bool,input_enabled:bool,screens:u8,view_index:Option<u8>,switch_pending:bool,
     window:Option<Rc<Window>>,surface:Option<Surface<Rc<Window>,Rc<Window>>>,
     size:PhysicalSize<u32>,toolbar:u32,scale:u32,fit:Option<Rect>,last_cursor:Option<(f64,f64)>,
     focused:bool,armed:bool,physical_keys:BTreeSet<u16>,physical_buttons:BTreeSet<u8>,
@@ -82,14 +81,23 @@ impl Viewer<'_>{
             0=>el.exit(),
             1=>if let Some(w)=&self.window{w.set_fullscreen(if w.fullscreen().is_some(){None}else{Some(Fullscreen::Borderless(w.current_monitor()))});},
             2 if self.allow_input=>self.input_enabled=!self.input_enabled,
-            3 if !self.allow_input&&self.screens>1=>self.channel.send(SWITCH_VIEW)?,
+            3 if !self.allow_input&&self.screens>1&&!self.switch_pending=>{self.channel.send(SWITCH_VIEW)?;self.switch_pending=true;},
             _=>{},
         }
         Ok(())
     }
     fn poll(&mut self,el:&ActiveEventLoop)->MediaResult<()>{
         if canceled()||self.started.elapsed()>=Duration::from_secs(28){el.exit();return Ok(());}
-        if poll_release(self.channel)?{self.released=true;el.exit();return Ok(());}
+        for _ in 0..4{
+            match self.channel.receive()?{
+                None=>break,
+                Some(b) if b==ACK=>{self.released=true;el.exit();return Ok(());}
+                Some(b) if !self.allow_input&&b.len()==3&&b[0]==VIEW_LAYOUT_ACK&&b[2]==self.screens&&b[1]<=self.screens=>{
+                    self.view_index=Some(b[1]);self.switch_pending=false;
+                },
+                Some(_)=>return Err("Unexpected viewer control response".into()),
+            }
+        }
         connected(self.peer,self.channel)?;
         if self.heartbeat.elapsed()>=Duration::from_millis(300){self.channel.send(HEARTBEAT)?;self.heartbeat=Instant::now();}
         if let Some(sample)=self.peer.pull_frame(Duration::ZERO)?{
@@ -126,13 +134,13 @@ impl Viewer<'_>{
                 }
             }
         }
-        let labels=["Disconnect","Fullscreen",if !self.allow_input{"View only"}else if self.input_enabled{"Pause input"}else{"Enable input"},if self.screens>1{"Next screen"}else{""}];
+        let labels=["Disconnect","Fullscreen",if !self.allow_input{"View only"}else if self.input_enabled{"Pause input"}else{"Enable input"},if self.screens>1{if self.switch_pending{"Switching..."}else{"Next screen"}}else{""}];
         for(i,label)in labels.iter().enumerate(){
             let x=i as u32*cell;if x>=w||label.is_empty(){continue;}
             for y in 0..self.toolbar{for xx in x..(x+cell-1).min(w){buffer[(y*w+xx)as usize]=if i==0{0x742d32}else{0x263441};}}
             draw_text(&mut buffer,w,h,x+5*scale,9*scale,label,scale);
         }
-        let summary=format!("{:.0} fps",self.fps);
+        let summary=if let Some(i)=self.view_index{if i==self.screens{format!("All | {:.0} fps",self.fps)}else{format!("{}/{} | {:.0} fps",i+1,self.screens,self.fps)}}else{format!("{:.0} fps",self.fps)};
         if 4*cell<w{draw_text(&mut buffer,w,h,4*cell+5*scale,9*scale,&summary,scale);}
         buffer.present().map_err(error)
     }
@@ -184,7 +192,8 @@ impl ApplicationHandler for Viewer<'_>{
                             if state==ElementState::Pressed&&button==MouseButton::Left&&self.focused&&x>=0.0{
                                 self.local_action((x as u32)/(112*self.scale),el)?;
                             }
-                            if state==ElementState::Released{self.physical_buttons.clear();}
+                            let code=match button{MouseButton::Left=>1,MouseButton::Middle=>2,MouseButton::Right=>3,_=>0};
+                            if code!=0{if state==ElementState::Pressed{self.physical_buttons.insert(code);}else{self.physical_buttons.remove(&code);}}
                             return Ok(());
                         }
                     }
@@ -231,7 +240,7 @@ pub(super) fn run(peer:&Peer,channel:&ControlChannel,session:[u8;16],geometry:Ge
     let c=peer.config();let now=Instant::now();
     let event_loop=EventLoop::new().map_err(error)?;
     let mut v=Viewer{peer,channel,session,geometry:Rect{x:geometry.x,y:geometry.y,width:geometry.width,height:geometry.height},
-        allow_input,input_enabled:allow_input,screens,window:None,surface:None,size:PhysicalSize::new(0,0),
+        allow_input,input_enabled:allow_input,screens,view_index:None,switch_pending:false,window:None,surface:None,size:PhysicalSize::new(0,0),
         toolbar:0,scale:1,fit:None,last_cursor:None,focused:false,armed:false,physical_keys:BTreeSet::new(),physical_buttons:BTreeSet::new(),
         sent_keys:BTreeSet::new(),sent_buttons:BTreeSet::new(),previous:None,seq:0,pixels:vec![0;(c.width*c.height)as usize],
         frames:0,metric_frames:0,metric_bytes:0,last_metric:now,last_frame:now,stats:Default::default(),started:now,

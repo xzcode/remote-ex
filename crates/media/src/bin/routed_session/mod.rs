@@ -35,6 +35,8 @@ impl Profile{
     }}
 }
 const HEARTBEAT:&[u8]=b"remote-ex-routed/heartbeat/v1";
+const SWITCH_VIEW:&[u8]=b"remote-ex-view/next/v1";
+const VIEW_LAYOUT_ACK:u8=0xD1;
 #[derive(Clone,Copy,Debug)]
 struct Geometry{x:u32,y:u32,width:u32,height:u32}
 impl Geometry{
@@ -175,7 +177,7 @@ async fn finish(conn:&mut Connection,session:&str)->MediaResult<()>{
     }
 }
 
-async fn host(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey,relay_only:bool,profile:Profile,display:Option<u32>,quality:&str,exchange_path:Option<&std::path::Path>,volume:u8)->MediaResult<()>{
+async fn host(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey,relay_only:bool,profile:Profile,display:Option<u32>,extra_displays:Vec<u32>,quality:&str,exchange_path:Option<&std::path::Path>,volume:u8)->MediaResult<()>{
     let grant=profile.grant();
     let Server::Incoming{session,controller,controller_key,requested,controller_nonce}=recv(conn).await?
         else{return Err("Expected incoming device request".into());};
@@ -197,7 +199,9 @@ async fn host(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey,relay_o
     let ice_config=conn.request_ice(&session).await?;
     let mut peer=Peer::sender(config,Source::NativeRgba)?;
     peer.configure_ice(&ice_config,relay_only)?;drop(ice_config);
-    peer.start()?;peer.push_rgba(frame(0,config))?;
+    peer.start()?;
+    // Never show a synthetic desktop pattern as the initial native frame.
+    if matches!(profile,Profile::View|Profile::Control){let mut black=vec![0;config.rgba_bytes()];for p in black.chunks_exact_mut(4){p[3]=255;}peer.push_rgba(black)?;}else{peer.push_rgba(frame(0,config))?;}
     let channel=peer.create_control_channel()?;
     let offer=offer(&peer)?;
     peer.set_description(true,&offer)?;
@@ -225,9 +229,9 @@ async fn host(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey,relay_o
     }
     if profile!=Profile::Test{
         #[cfg(all(feature="native-control",any(target_os="windows",target_os="macos")))]
-        {return native::host(&peer,&channel,conn,&mut cipher,&session,gate(&proof)?,profile,display.ok_or("Select a primary display")?).await;}
+        {return native::host(&peer,&channel,conn,&mut cipher,&session,gate(&proof)?,profile,display.ok_or("Select a display")?,extra_displays).await;}
         #[cfg(not(all(feature="native-control",any(target_os="windows",target_os="macos"))))]
-        {let _=display;return Err("Native routed mode unavailable".into());}
+        {let _=(display,extra_displays);return Err("Native routed mode unavailable".into());}
     }
     let backend=Inert::default();let log=backend.events.clone();
     let mut dispatcher=Dispatcher::new(gate(&proof)?,backend,DisplayArea{x:0,y:0,width:config.width,height:config.height})?;
@@ -324,9 +328,12 @@ async fn controller(mut owned:Connection,id:&DeviceIdentity,expected:PublicKey,r
             let Signal::Geometry{x,y,width,height}=cipher.receive(conn).await? else{return Err("Missing authorized display geometry".into());};
             let geometry=Geometry{x,y,width,height};
             if x.checked_add(width).is_none_or(|n|n>config.width)||y.checked_add(height).is_none_or(|n|n>config.height){return Err("Geometry exceeds negotiated canvas".into());}
+            let screens=if profile==Profile::View{
+                match cipher.receive(conn).await?{Signal::ViewLayout{count} if (1..=4).contains(&count)=>count,_=>return Err("Missing approved display list".into())}
+            }else{1};
             channel.send(READY)?;
             wait_data(&peer,&channel,conn,READY_ACK).await?;
-            return native::controller(&peer,&channel,owned,session,sid,geometry,profile).await;
+            return native::controller(&peer,&channel,owned,session,sid,geometry,profile,screens).await;
         }
         #[cfg(not(all(feature="native-control",any(target_os="windows",target_os="macos"))))]
         {return Err("Native routed mode unavailable".into());}
@@ -376,7 +383,7 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
     let url=a.next().ok_or("Missing WSS URL")?;
     let pin=decode_hex::<32>(&a.next().ok_or("Missing server ID")?).map_err(error)?;
     let endpoint=Endpoint::secure(&url,pin)?;
-    let mut ca=None;let mut relay_only=false;let mut profile=Profile::Test;let mut display=None;let mut supervised=false;let mut persistent=false;let mut defer_test_registration=false;let mut quality="compat".to_owned();let mut exchange_path=None;let mut volume=75u8;
+    let mut ca=None;let mut relay_only=false;let mut profile=Profile::Test;let mut display=None;let mut supervised=false;let mut persistent=false;let mut defer_test_registration=false;let mut quality="compat".to_owned();let mut exchange_path=None;let mut volume=75u8;let mut extra_displays=Vec::new();
     while let Some(arg)=a.next(){match arg.as_str(){
         "--ca" if ca.is_none()=>ca=Some(a.next().ok_or("Missing CA path")?),
         "--relay-only" if !relay_only=>relay_only=true,
@@ -393,6 +400,10 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
             if mode.kind==remote_ex_desktop_features::exchange::Kind::File{exchange_path=Some(std::path::PathBuf::from(a.next().ok_or("Select explicit local file path")?));}
         },
         "--view" if native_allowed&&profile==Profile::Test=>{profile=Profile::View;if host{display=Some(a.next().ok_or("Select display ID")?.parse::<u32>().map_err(error)?);}},
+        "--view-extra" if native_allowed&&host&&profile==Profile::View=>{
+            let d=a.next().ok_or("Missing additional display ID")?.parse::<u32>().map_err(error)?;
+            if extra_displays.len()>=3||display==Some(d)||extra_displays.contains(&d){return Err("Select up to four distinct displays".into());}extra_displays.push(d);
+        },
         "--control" if native_allowed&&profile==Profile::Test=>{profile=Profile::Control;if host{display=Some(a.next().ok_or("Select display ID")?.parse::<u32>().map_err(error)?);}},
         _=>return Err("Unexpected argument".into()),
     }}
@@ -457,7 +468,7 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
         });
     }
     if host{
-        let result=self::host(&mut conn,&id,expected,relay_only,profile,display,&quality,exchange_path.as_deref(),volume).await;
+        let result=self::host(&mut conn,&id,expected,relay_only,profile,display,extra_displays,&quality,exchange_path.as_deref(),volume).await;
         let close=conn.close().await;result?;close
     }else{controller(conn,&id,expected,relay_only,profile,&quality,exchange_path.as_deref(),volume).await}
 }

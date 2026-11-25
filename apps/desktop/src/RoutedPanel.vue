@@ -10,6 +10,7 @@ const props=defineProps<{t:(key:TextKey)=>string;slot:number}>();
 const emit=defineEmits<{active:[value:boolean]}>();
 const native=isTauri(),role=ref<"host"|"controller">("controller"),mode=ref<"test"|"view"|"control"|"file"|"text"|"png"|"audio">("test");
 const sender=ref<"host"|"controller">("controller"),transferPath=ref(""),volume=ref(75);
+const extraDisplays=ref<number[]>([]);
 const isExchange=computed(()=>["file","text","png"].includes(mode.value));
 const isDisplay=computed(()=>mode.value==="view"||mode.value==="control");
 const url=ref(""),serverId=ref(""),ca=ref(""),relay=ref(false),persistent=ref(false);
@@ -24,7 +25,8 @@ const status=computed(()=>props.t(statuses[snapshot.value.stage]));
 const validHex=(s:string)=>/^[a-fA-F0-9]{64}$/.test(s.trim());
 const canPrepare=computed(()=>native&&!busy.value&&!snapshot.value.active&&url.value.trim().startsWith("wss://")&&validHex(serverId.value)&&(!isDisplay.value||role.value==="controller"||displayId.value!==null)&&(mode.value!=="file"||!!transferPath.value.trim()));
 const canConfirm=computed(()=>!busy.value&&snapshot.value.stage==="awaiting_approval"&&!!snapshot.value.device_id&&validHex(peerId.value)&&validHex(peerKey.value)&&approved.value&&!submitted.value&&peerKey.value.trim().toLowerCase()!==snapshot.value.local_key);
-watch([role,mode],()=>{displayId.value=null;displays.value=[];approved.value=false;});
+watch([role,mode],()=>{displayId.value=null;extraDisplays.value=[];displays.value=[];approved.value=false;});
+watch(displayId,()=>{extraDisplays.value=[];});
 watch(serverId,()=>{trusted.value=[];chosen.value="";peerId.value="";peerKey.value="";approved.value=false;});
 watch(chosen,id=>{if(id){peerId.value=id;peerKey.value=trusted.value.find(x=>x.device_id===id)?.public_key??"";}approved.value=false;});
 watch([peerId,peerKey],()=>{approved.value=false;});
@@ -48,7 +50,7 @@ async function chooseTransferFile(){
 }
 async function loadDisplays(){
  if(busy.value||snapshot.value.active)return;busy.value=true;error.value="";
- try{displays.value=(await invoke<Display[]>("list_displays")).filter(d=>mode.value==="view"||d.primary);displayId.value=null;if(!displays.value.length)error.value=props.t("noDisplays");}
+ try{displays.value=(await invoke<Display[]>("list_displays")).filter(d=>mode.value==="view"||d.primary);displayId.value=null;extraDisplays.value=[];if(!displays.value.length)error.value=props.t("noDisplays");}
  catch(e){error.value=String(e);}finally{busy.value=false;}
 }
 async function loadTrusted(){
@@ -70,7 +72,7 @@ async function makeInvitation(){
 function prepare(){
  approved.value=false;submitted.value=false;
  return command("routed_prepare",{role:role.value,mode:mode.value,url:url.value.trim(),serverId:serverId.value.trim(),
- displayId:role.value==="host"&&isDisplay.value?displayId.value:null,relayOnly:relay.value,persistent:persistent.value,storageConsent:persistent.value,caPath:ca.value.trim()||null,saveHistory:saveHistory.value,quality:quality.value,sender:isExchange.value?sender.value:null,transferPath:mode.value==="file"?transferPath.value.trim():null,volume:volume.value});
+ displayId:role.value==="host"&&isDisplay.value?displayId.value:null,relayOnly:relay.value,persistent:persistent.value,storageConsent:persistent.value,caPath:ca.value.trim()||null,saveHistory:saveHistory.value,quality:quality.value,sender:isExchange.value?sender.value:null,transferPath:mode.value==="file"?transferPath.value.trim():null,volume:volume.value,extraDisplays:role.value==="host"&&mode.value==="view"?extraDisplays.value:[]});
 }
 function confirm(){if(!canConfirm.value)return;submitted.value=true;return command("routed_confirm",{deviceId:peerId.value.trim(),peerKey:peerKey.value.trim(),approved:true});}
 onMounted(()=>{void poll();timer=window.setInterval(poll,400);});
@@ -90,6 +92,7 @@ onBeforeUnmount(()=>{disposed=true;if(timer!==undefined)window.clearInterval(tim
   <label>{{ t("lanRole") }}</label><select v-model="role" :disabled="busy||snapshot.active"><option value="controller">{{ t("lanController") }}</option><option value="host">{{ t("lanHost") }}</option></select>
   <template v-if="role==='host'&&isDisplay">
    <label>{{ t("display") }}</label><div class="actions"><select v-model="displayId" :disabled="busy||snapshot.active"><option :value="null" disabled>{{ t("select") }}</option><option v-for="d in displays" :key="d.id" :value="d.id">{{ d.name }} · {{ d.width }} × {{ d.height }}</option></select><button :disabled="busy||snapshot.active" @click="loadDisplays">{{ t("refresh") }}</button></div>
+   <template v-if="mode==='view'&&displayId!==null"><label>{{ t("extraDisplays") }}</label><label v-for="d in displays.filter(x=>x.id!==displayId)" :key="d.id" class="check-label"><input type="checkbox" v-model="extraDisplays" :value="d.id" :disabled="busy||snapshot.active||(extraDisplays.length>=3&&!extraDisplays.includes(d.id))"/>{{ d.name }} · {{ d.width }} × {{ d.height }}</label><p class="muted">{{ t("extraDisplaysNotice") }}</p></template>
   </template>
   <template v-if="isExchange"><label>{{ t("exchangeSender") }}</label><select v-model="sender" :disabled="busy||snapshot.active"><option value="controller">{{ t("lanController") }}</option><option value="host">{{ t("lanHost") }}</option></select><template v-if="mode==='file'"><label>{{ t(role===sender?"exchangeSource":"exchangeDestination") }}</label><div class="actions"><input v-model="transferPath" maxlength="2048" :disabled="busy||snapshot.active"/><button :disabled="busy||snapshot.active||!native" @click="chooseTransferFile">{{ t("exchangeChooseFile") }}</button></div></template><p class="muted">{{ t("exchangeNotice") }}</p></template>
   <template v-if="mode==='audio'"><label>{{ t("audioVolume") }}: {{ volume }}%</label><input type="range" v-model.number="volume" min="0" max="100" :disabled="busy||snapshot.active"/><p class="muted">{{ t("audioNotice") }}</p></template>
@@ -105,7 +108,7 @@ onBeforeUnmount(()=>{disposed=true;if(timer!==undefined)window.clearInterval(tim
   <label>{{ t("routedPeerId") }}</label><input v-model="peerId" maxlength="64" class="key-input" :disabled="busy||submitted||!!chosen"/>
   <label>{{ t("lanPeerKey") }}</label><input v-model="peerKey" maxlength="64" class="key-input" :disabled="busy||submitted||!!chosen"/>
   <p class="muted">{{ t("routedVerify") }}</p>
-  <label class="check-label"><input type="checkbox" v-model="approved" :disabled="busy||submitted"/>{{ t(mode==="audio"?(role==="host"?"audioSendConsent":"audioPlayConsent"):isExchange?(role===sender?"exchangeSendConsent":"exchangeReceiveConsent"):mode==="test"?"routedTestConsent":mode==="view"?(role==="host"?"viewHostConsent":"viewControllerConsent"):(role==="host"?"controlHostConsent":"controlControllerConsent")) }}</label>
+  <label class="check-label"><input type="checkbox" v-model="approved" :disabled="busy||submitted"/>{{ t(mode==="audio"?(role==="host"?"audioSendConsent":"audioPlayConsent"):isExchange?(role===sender?"exchangeSendConsent":"exchangeReceiveConsent"):mode==="test"?"routedTestConsent":mode==="view"?(role==="host"?(extraDisplays.length?"multiDisplayConsent":"viewHostConsent"):"viewControllerConsent"):(role==="host"?"controlHostConsent":"controlControllerConsent")) }}</label>
   <button class="primary" :disabled="!canConfirm" @click="confirm">{{ t("lanApprove") }}</button>
  </div>
  <div v-if="snapshot.stage==='connected'&&isDisplay" class="field"><label>{{ t("networkStats") }}</label><p class="muted">{{ t("networkBitrate") }}: {{ snapshot.network_bps==null?"—":(snapshot.network_bps/1000000).toFixed(2)+" Mb/s" }} · RTT: {{ snapshot.rtt_ms==null?"—":snapshot.rtt_ms+" ms" }} · {{ t("networkLoss") }}: {{ snapshot.loss_pct==null?"—":snapshot.loss_pct.toFixed(2)+"%" }} · {{ t("networkRoute") }}: {{ snapshot.route_type==="relay"?"TURN":snapshot.route_type==="direct"?"P2P":"—" }}</p></div>

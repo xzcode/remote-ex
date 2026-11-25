@@ -39,7 +39,7 @@ mod tests{
         let content=Rect{x:120,y:0,width:720,height:540};
         assert!(map_pointer((500.,20.),fitted,(960,540),content).is_none());
         assert!(map_pointer((5.,400.),fitted,(960,540),content).is_none());
-        let (x,y)=map_pointer((500.,440.),fitted,(960,540),content).unwrap();
+        let (x,y)=map_pointer((500.,420.),fitted,(960,540),content).unwrap();
         assert!((32000..34000).contains(&x)&&(32000..34000).contains(&y));
         assert!(map_pointer((f64::NAN,0.),fitted,(960,540),content).is_none());
     }
