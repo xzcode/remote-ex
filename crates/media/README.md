@@ -54,3 +54,15 @@ python3 scripts/test_secure_view.py crates/media/target/debug/lan_view
 On two owned, authorized desktop machines with GStreamer and platform capture prerequisites, build with `--features local-screen`. The host runs `lan_view --listen PRIVATE_IP:PORT --screen DISPLAY_ID`; the controller runs `lan_view --connect PRIVATE_IP:PORT --view`. The host explicitly chooses a display ID from local diagnostics. Both exchange and independently verify the whole 128-character public key bundle and type the exact consent phrase displayed in each visible interactive terminal. Approve the host first. The host may only share the selected display for up to 30 seconds, requires ordinary OS screen-recording permission, and stops when the heartbeat, media connection, or deadline fails. Ctrl-C or closing the terminal stops the process. The controller uses a native video window. Screen pixels never traverse Tauri IPC. Diagnostic mode cannot be upgraded to screen mode over the wire. This is a limited development prototype, not signed or installed, not an unattended service, and not ready for Internet deployment. XCap repeated capture at up to 10 fps with letterboxing is a temporary baseline, not a high-performance production capture engine. Real display capture and native video rendering require separate physical-device validation; the test profile never captures a screen.
 
 The desktop supervisor can launch the same trusted lan_view binary with --desktop-session. This mode requires piped stdin/stdout, the same full-key comparison and profile-specific consent, and a retained stdin pipe. EOF or additional input after consent exits the view-only child. The encrypted synthetic CI harness now exercises this mode. Normal real CLI usage continues to require interactive terminals.
+
+## M2.3 routed diagnostic
+
+The separate routed_diagnostic program is WSS-only and always uses synthetic video and an inert backend. It registers with the rendezvous service, requires independently verified peer Ed25519 public keys and explicit test consent, derives the target device ID from its fingerprint, and routes request/decision, exact signed SDP and bounded ICE batches. Both actual video and SCTP DTLS certificates are checked; readiness and fixed simulated input travel directly on the data channel. No screen capture or OS input mode exists in this executable. The server remains loopback-only, and SDP/ICE are not opaque to the signaling server.
+
+The integration harness starts the real local TLS server and two independent diagnostic processes, uses a temporary test-only certificate, verifies decoded video, simulated input release and explicit session closure:
+```sh
+cargo build -p remote-ex-rendezvous
+cargo build --manifest-path crates/media/Cargo.toml --bin routed_diagnostic
+python3 scripts/test_routed_diagnostic.py target/debug/remote-ex-rendezvous crates/media/target/debug/routed_diagnostic
+``
+Requires OpenSSL and the existing GStreamer development dependencies. Run only in an authorized test environment. Not a production remote access client. CI status must be checked before claiming validation.

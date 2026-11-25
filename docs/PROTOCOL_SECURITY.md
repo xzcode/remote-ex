@@ -66,3 +66,7 @@ UI 区分加密真实共享、加密合成测试和历史明文合成诊断；�
 ## M2.2 注册传输安全
 
 客户端须先完成 WSS TLS 正常证书链、域名及有效期校验，并核对独立配置的 server ID，再签署 per-socket challenge；server ID 是部署标识而非 TLS 替代或设备权限。无自动明文降级；明确本机开发只允许 numeric IPv4 loopback 与临时身份。GUI 默认临时身份，持久身份需显式勾选系统凭据存储许可；密钥不可读或不合法即失败，不覆写、不退回临时身份。协议对 server frame 也进行字段/长度校验，设备 ID 必须匹配本机公钥指纹。上线预览只发送 Ping，确认 Pong 超时失败，拒绝全部 Incoming，不建立真实远控会话；关闭/退出停止。真正 peer 公钥信任与双方签名/DTLS 验证仍待集成。服务端仍 loopback-only，不部署公网。
+
+## M2.3 路由诊断增量
+
+每次 outgoing 本地 fresh nonce 在 request 之前生成，服务器 session ID 只能一次性绑定，不可覆盖 nonce 或刷新有效期。双方预先独立核对完整设备公钥；服务器路由及 grant 不构成真实授权。WSS 服务端测试使用临时本机证书，真实客户端保留证书链/hostname/server ID 校验。两端签名绑定角色、会话、key、双方 nonce、grant、原始 SDP；验证后交换有界 ICE batch，检查实际 WebRTC 视频与 SCTP DTLS certificate，再直接交换 readiness。固定 synthetic 画面与 inert input，未接入 OS 捕获/输入。现阶段 WSS 保护客户端与服务端链路，但服务端可读取 SDP/ICE，不宣称信令对服务器端到端保密；恶意服务器仍可拒绝/干扰协商。后续需要端到端加密协商与明确安全评审。CLI 不可切换真实模式，桌面 presence 仍拒绝所有请求；服务端仍 loopback-only。

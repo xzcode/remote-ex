@@ -18,3 +18,6 @@ cargo run -p remote-ex-rendezvous-client --bin register_device -- --wss wss://lo
 ```
 
 The CLI registers, heartbeats and declines all incoming requests for up to 30 seconds. It does not initiate a remote session. On Windows/macOS only, build with `--features persistent` and add `--persistent` to the WSS command to explicitly opt into OS-protected persistent device identity. The local consent prompt is mandatory; there is no startup credential access, automatic enrollment, seed export or fallback to an ephemeral identity after storage failure. Linux persistent store and desktop integration are pending. Default CLI identity remains temporary. Persistent ID is a routing identifier, not remote control authorization. The TLS integration test uses a generated test certificate and checks trusted CA/hostname, wrong server ID, duplicate registration and heartbeat.
+
+
+M2.3 adds an optional non-trickle IceBatch message, allowed once per participant after both proofs; the existing single ICE message remains supported for development. The new synthetic media integration exercises the actual TLS service, independent pinned endpoint keys, registered device-ID routing and WebRTC certificate verification. See crates/media/README.md. Neither the service nor presence GUI enables real remote control.

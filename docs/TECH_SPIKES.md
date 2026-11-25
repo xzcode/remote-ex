@@ -85,3 +85,9 @@ Rust 核心 CI 通过：[45564676252](https://github.com/xzcode/remote-ex/action
 - M1 #45577251490 与 #45577702520 媒体集成成功；#45577251526 / #45577702536 核心成功，#45577702523 native input 成功。跨平台开发包 #45577182682 仍运行（较早仅 macOS rpath 修复），#45577251479 等待；无可下载产物。
 - 91781d6 共享协议/WSS client/可选 identity store；#45577702536 core CI 通过（含内存存储重复加载与损坏检查、端点限制），并非系统凭据库实测。
 - f122a79、27d1c3a、d45b19b WSS 服务及真实 TLS 测试、注册管理、双语 GUI。#45577808339/#45577983637 测试因 std listener 未 nonblocking 被 Tokio 拒绝，c0091bb 修复生产入口/测试入口并新增实际 presence 心跳、拒绝和取消测试。#45578147785 核心、#45578147789 桌面增量待结果。未声称 TLS 测试通过或 GUI 实机。
+
+## 第十四批实际结果
+
+- #45578147789 Windows/macOS 桌面 CI 全部通过（M2.2 设备注册界面及后端）；#45578147785 WSS/身份/心跳核心通过。#45577182682 旧包的 macOS rpath 加载已修复，但两端仍因未含 accepted socket blocking 修复而失败。
+- #45577251479 Windows x64 job 成功：SDK、desktop 与 native-control Release、TCP/Noise、原生输入单元及三种合成控制撤销测试、产物上传均通过。artifact 15005652383（Remote-EX-dev-Windows-X64，ed2aca9，4,413,956 bytes，有效至2026-12-09）。macOS 同 run 编译和链接检查通过，最终测试记录时执行中。真实设备未验收。
+- #45579568307 Core CI 通过（OutgoingPairing 与 IceBatch 路由）；#45579568305 Native input checks 通过。10ef04e 新三进程 WSS 媒体集成 #45579708756 待验证，不能称为已运行通过。

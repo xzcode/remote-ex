@@ -2,7 +2,7 @@
 
 跨平台、可私有化部署的远程桌面工具。Remote EX 自主研发客户端、服务端和业务协议，使用成熟底层库，不基于 RustDesk 等完整产品进行 fork。
 
-**当前状态：M1 桌面与原生输入适配 CI、加密视频/控制与双向撤销模拟测试通过；两平台 native-control Release 已编译，运行环境修复后开发包待复验与实机。M2.1 本地信令服务测试通过；M2.2 共享协议、WSS 服务/客户端、可选持久身份及桌面注册页已编写，最新 TLS/桌面 CI 待复验；尚无公网远程桌面或正式发行包。**
+**当前状态：M1 Windows x64 开发包已生成（#45577251479，ed2aca9，外部 GStreamer runtime），macOS 开发包运行测试待完成；真实设备验收仍待。M2.1/2 本地信令、WSS 注册与 Windows/macOS 桌面 CI 通过；M2.3 已编写经设备 ID 路由的 WSS + 签名 SDP + WebRTC 合成视频/模拟输入集成，待运行验证。无公网远程桌面或正式发行包。**
 
 ## 目标
 
@@ -34,6 +34,7 @@
 - [M1 第十一批交接](docs/M1_REVOCATION_HANDOFF.md)
 - [M1/M2 第十二批交接](docs/M2_RENDEZVOUS_HANDOFF.md)
 - [M2 第十三批交接](docs/M2_PRESENCE_HANDOFF.md)
+- [M2 第十四批交接](docs/M2_ROUTED_MEDIA_HANDOFF.md)
 - [M2.1 信令服务](servers/signaling/README.md)
 - [物理设备验收清单](docs/M1_DEVICE_ACCEPTANCE.md)
 - [开发测试包说明](docs/DEV_BUILD.md)

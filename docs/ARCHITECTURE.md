@@ -119,3 +119,7 @@ servers/signaling 加入 workspace，Axum 0.8、Tokio、WebSocket JSON v1；独�
 ## ADR-017：M2.2 显式注册与持久身份
 
 共享 crates/rendezvous-protocol，server 保留 re-export；crates/rendezvous-client 使用 tokio-tungstenite/rustls，验证 CA、证书与主机名，另校验配置的非零 server ID（部署标识，不是独立密码学证书）；明文只允许明确选择的数字 IPv4 回环开发。WSS 无降级，自签/私有 CA 必须由 CLI 显式提供信任根，GUI 当前使用 WebPKI roots。服务端 axum-server 0.8 可选 cert/key/server ID 全量配置，仍只绑定 IPv4 loopback，缺项失败。私钥由 OS 凭据库 keyring 3.6.3 可选保存（Windows/macOS），显式同意后访问，默认临时身份、无启动访问；私钥不经 WebView IPC，不自动替换不可读/损坏记录。协作实例通过本地文件锁串行创建，锁文件无私钥。后端取消可阻止后续网络注册，但已启动的系统凭据操作可能仍需完成；实际系统存储待实机。桌面服务器连接页展示 ID、上线/下线、心跳次数与拒绝请求计数，最长5分钟预览，所有远程请求均拒绝，无重连/远程媒体/系统输入。真正会话 owner 和可信设备记录待 M2.3；生产注册与网络安全评审尚未完成。
+
+## ADR-018：M2.3 WSS 路由与端点身份绑定
+
+OutgoingPairing 在服务器分配 session ID 之前生成本机随机 nonce，随后一次性绑定返回的 session ID，不重置本地有效期；预期公钥独立取得，路由 ID 从 SHA-256 指纹推导，不能仅凭服务器提供的公钥获得信任。共享 wire profile 新增有界 IceBatch（1–128 条，总候选正文不超过16KiB，一方仅一批，要求双方 Proof 已经转发）。routed_diagnostic 只接受 WSS，使用已验证服务器 CA/hostname + 配置 ID，双方独立核对完整 Ed25519 key 并批准固定合成测试；真实设备请求/批准、双 nonce、准确原始 SDP、双方签名、实际 video/SCTP DTLS、直接 data channel Ready/ACK。只有这些检查后才执行固定 synthetic/inert 流程，SessionGate/Dispatcher 检查输入及释放，服务器只转发协商，媒体/模拟输入经 WebRTC。信令关闭或传输异常停止，正常完成须双方收到路由 Closed。仍需实际集成测试、生产端到端协商保密与授权状态机、持久信任、ICE/STUN/TURN/跨网验证、GUI 整合。routed_diagnostic 不编入已发布的 M1 开发包，且没有原生控制模式。
