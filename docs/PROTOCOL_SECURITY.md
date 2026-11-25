@@ -1,0 +1,32 @@
+# 协议与安全设计 v0.1
+
+状态：设计约束，不是已实现/已审计的协议。
+
+## 威胁模型
+不可信互联网、恶意信令/中继、ID 枚举、口令猜测、会话重放、身份替换、越权、恶意文件名及媒体/消息资源耗尽。受控端本机用户应始终知道连接并拥有撤销权限。已被恶意软件完全控制的本机不在可保证安全的范围内。
+
+## 身份与配对
+每个安装生成独立设备签名密钥（候选 Ed25519，使用审查过的库），设备 ID 仅作路由标识。注册通过服务端随机挑战及签名证明持有密钥，不接受自行声明在线身份。首次连接默认由本机用户确认，双方通过可信途径比较由双方公钥与会话握手上下文绑定的短认证码；后续连接校验固定公钥。密钥变更要求重新验证，不自动接受。可选临时密码及无人值守固定密码需要经过成熟 PAKE 实现与安全审查；不得直接传输、记录密码或设计可离线猜测的自制握手。未完成前只开放明确确认配对与已授权密钥认证。
+
+## 信令与会话
+信令版本字段、请求 ID、session ID、双方 ID、挑战随机数、超时、能力范围；限长、限速、检查发件人身份、收件人和会话归属。注册 -> 在线 -> 请求 -> 用户批准并确认身份 -> 签名绑定媒体 DTLS 指纹、双方身份、角色、随机数、授权与会话标识 -> 协商 -> connected -> closing/closed。SDP/ICE 消息只在归属的活跃会话内转发；早期 ICE 缓存有界。握手消息规范化编码须有确定性，避免歧义；协议字段及签名 transcript 在实现 ADR 评审后锁定。DTLS/SRTP 保障传输机密性；不能用仅有 WSS 或设备 ID 替代对端验证。协商或指纹校验失败，禁止开始采集与输入。
+
+## 逻辑消息
+| 类别 | 消息候选 |
+|---|---|
+| 信令 | register_challenge, register_proof, presence, connect_request, connect_decision, offer, answer, ice_candidate, disconnect |
+| 会话控制 | capability_offer, capability_grant, capability_revoke, display_list, select_display, quality_request, ping, close |
+| 输入 | pointer_move, pointer_button, wheel, key_down, key_up, release_all |
+| 扩展 | clipboard_offer, clipboard_data, file_offer, file_accept, file_chunk, file_cancel, file_complete |
+| 错误 | version_mismatch, permission_denied, timeout, resource_limit, unsupported |
+
+控制与授权消息可靠有序；鼠标移动可以使用单独低延迟通道，按键与按钮可靠有序；对过期移动事件丢弃。媒体使用 WebRTC 媒体轨；文件传输独立通道并节流，避免输入拥塞。所有消息验证版本、边界、会话状态、权限和速率。协议 schema 的具体字段编号在 M1/M2 实现时版本化，不以本表充当现成 wire 协议。
+
+## 权限模型
+view / input / clipboard-read / clipboard-write / file-send / file-receive / audio / power 分离；默认 view 与 input 也必须明确同意。被控端是最终裁决者，未知权限拒绝。撤销立即生效；会话断开、超时或应用退出时释放所有远程按下的键/按钮，停止采集和输入。无人值守默认关闭，仅用户主动绑定的设备获得指定能力，提供立即撤销与关闭入口。无自动提升权限、无绕过 OS 授权。
+
+## 文件、日志和服务
+文件接收根目录由本地用户选择；拒绝绝对路径、路径遍历、危险链接及越界写入；临时文件、大小配额、冲突询问、哈希校验后原子落盘。日志只记录时间、对端 ID、能力与状态，不记录密码、会话密钥、媒体或剪贴板正文。TURN 临时凭据短有效期，限制配额及不允许转发到私有管理网络。密钥与敏感配置不得上传仓库。服务以最小权限运行，IPC 校验本地调用者；托盘/会话提示常驻可见。安装包和更新必须校验发布签名。
+
+## 必须验证
+拒绝/撤销、重放、篡改对端指纹、密钥变化、猜测限流、越权、会话隔离、断开清理、路径逃逸及过大消息。未经验证的安全功能标明不可用于生产。 
