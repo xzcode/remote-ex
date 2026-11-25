@@ -22,6 +22,9 @@ const language = ref<Language>(preference("remote-ex.language", ["system", "en",
 const theme = ref<Theme>(preference("remote-ex.theme", ["system", "light", "dark", "black"], "system"));
 const active = ref<Page>("remote");
 const lanActive = ref(false);
+const currentSlot=ref(0),slotActive=ref([false,false,false]);
+const routedActive=computed(()=>slotActive.value.some(Boolean));
+const sessionActive=computed(()=>lanActive.value||routedActive.value);
 const presenceActive = ref(false);
 const native = isTauri();
 const systemLanguage = navigator.language.toLowerCase().startsWith("zh") ? "zh" : "en";
@@ -90,7 +93,7 @@ function imageLoaded(event: Event) {
   previewSize.value = image.naturalWidth + " × " + image.naturalHeight;
 }
 function navigate(page: Page) {
-  if (busy.value || lanActive.value || presenceActive.value) return;
+  if (busy.value || sessionActive.value || presenceActive.value) return;
   if (active.value === "diagnostics" && page !== "diagnostics") clearPreview();
   error.value = "";
   active.value = page;
@@ -106,20 +109,22 @@ const pages: { key: Page; symbol: string }[] = [
       <header class="brand"><span class="brand-icon">▣</span><div><strong>Remote EX</strong><small>{{ t("development") }}</small></div></header>
       <nav aria-label="Navigation">
         <button v-for="page in pages" :key="page.key" class="nav-item" :class="{ active: active === page.key }"
-          :aria-current="active === page.key ? 'page' : undefined" :disabled="busy || ((lanActive || presenceActive) && page.key !== active)" @click="navigate(page.key)">
+          :aria-current="active === page.key ? 'page' : undefined" :disabled="busy || ((sessionActive || presenceActive) && page.key !== active)" @click="navigate(page.key)">
           <span aria-hidden="true" class="nav-icon">{{ page.symbol }}</span>{{ t(page.key) }}
         </button>
       </nav>
       <div class="side-foot"><i class="dot"></i>{{ t("localOnly") }}</div>
     </aside>
     <main class="content">
-      <header class="topbar"><h1>{{ t(active) }}</h1><span class="status">{{ t(lanActive ? "lanActive" : presenceActive ? "presenceActive" : "unavailable") }}</span></header>
+      <header class="topbar"><h1>{{ t(active) }}</h1><span class="status">{{ t(sessionActive ? "lanActive" : presenceActive ? "presenceActive" : "unavailable") }}</span></header>
       <div class="body">
         <template v-if="active === 'remote'">
           <LanPanel :t="t" @active="lanActive = $event" />
         </template>
         <template v-else-if="active === 'routed'">
-          <RoutedPanel :t="t" @active="lanActive = $event" />
+          <div class="actions session-tabs"><button v-for="n in 3" :key="n" :class="{primary:currentSlot===n-1}" @click="currentSlot=n-1">{{ t("sessionTab") }} {{ n }}<span v-if="slotActive[n-1]"> ●</span></button></div>
+          <p class="muted">{{ t("multiSessionNotice") }}</p>
+          <RoutedPanel v-for="n in 3" v-show="currentSlot===n-1" :key="n" :slot="n-1" :t="t" @active="slotActive[n-1]=$event" />
         </template>
         <template v-else-if="active === 'server'">
           <PresencePanel :t="t" @active="presenceActive = $event" />

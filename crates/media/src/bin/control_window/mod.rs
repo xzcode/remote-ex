@@ -39,6 +39,7 @@ pub fn run(peer:&Peer,channel:&ControlChannel,session:[u8;16],geometry:Geometry,
     let mut armed=false;let mut previous=None;let mut last_frame=Instant::now();
     let mut heartbeat=Instant::now()-Duration::from_secs(1);let started=Instant::now();
     let mut peer_released=false;
+    let mut stats=remote_ex_media::stats::Sampler::default();
     let mut metric_at=Instant::now();let mut metric_frames=0u32;let mut metric_bytes=0u64;
     let result: MediaResult<u32>=(||{
         while window.is_open()&&!canceled()&&started.elapsed()<Duration::from_secs(28){
@@ -55,6 +56,7 @@ pub fn run(peer:&Peer,channel:&ControlChannel,session:[u8;16],geometry:Geometry,
                 count+=1;metric_frames+=1;metric_bytes+=data.len() as u64;last_frame=Instant::now();
             }
             window.update_with_buffer(&buffer,w,h).map_err(|e|e.to_string())?;
+            if let Some(sample)=stats.poll(peer){println!("{}",sample.line());}
             if metric_at.elapsed()>=Duration::from_secs(1){
                 let seconds=metric_at.elapsed().as_secs_f64();
                 let fps=metric_frames as f64/seconds;

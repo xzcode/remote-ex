@@ -9,6 +9,7 @@ use tauri::Manager;
 fn main() {
     tauri::Builder::default()
         .manage(lan::SessionManager::default())
+        .manage(lan::RoutedManagers::default())
         .manage(presence::PresenceManager::default())
         .invoke_handler(tauri::generate_handler![
             capture::capture_permission,
@@ -18,6 +19,8 @@ fn main() {
             lan::lan_prepare,
             lan::routed_prepare,
             lan::routed_confirm,
+            lan::routed_status,
+            lan::routed_disconnect,
             lan::lan_status,
             lan::lan_confirm,
             lan::lan_disconnect,
@@ -37,6 +40,7 @@ fn main() {
         .on_window_event(|window, event| {
             if window.label() == "main" && matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
                 window.state::<presence::PresenceManager>().request_stop();
+                window.state::<lan::RoutedManagers>().shutdown();
                 window.state::<lan::SessionManager>().shutdown();
             }
         })
@@ -45,6 +49,7 @@ fn main() {
         .run(|app, event| {
             if matches!(event, tauri::RunEvent::Exit) {
                 app.state::<presence::PresenceManager>().request_stop();
+                app.state::<lan::RoutedManagers>().shutdown();
                 app.state::<lan::SessionManager>().shutdown();
             }
         });

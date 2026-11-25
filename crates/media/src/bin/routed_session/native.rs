@@ -55,6 +55,8 @@ fn capture(display:u32,area:DisplayArea,geometry:Geometry,input:bool,config:Vide
 async fn serve<B:Backend>(peer:&Peer,channel:&ControlChannel,conn:&mut Connection,session:&str,
     mut dispatcher:Dispatcher<B>,capture:Capture,input:bool)->MediaResult<()>{
     let started=Instant::now();let mut last=started;let mut last_frame=started;
+    let mut stats=remote_ex_media::stats::Sampler::default();
+    let mut bitrate=peer.config().bitrate;let ceiling=bitrate;let floor=(ceiling/4).max(100_000);let mut good=0u8;
     let result:MediaResult<()> = async{
         loop{
             if canceled(){return Ok(());}
@@ -73,6 +75,15 @@ async fn serve<B:Backend>(peer:&Peer,channel:&ControlChannel,conn:&mut Connectio
                 Ok(frame)=>{if canceled(){return Ok(());}peer.push_rgba(frame?)?;last_frame=Instant::now();},
                 Err(TryRecvError::Empty)=>{},
                 Err(TryRecvError::Disconnected)=>return Err("Capture worker stopped".into()),
+            }
+            if let Some(sample)=stats.poll(peer){
+                out(&sample.line())?;
+                if let Some(loss)=sample.loss_pct{
+                    let old=bitrate;
+                    if loss>5.0{bitrate=(bitrate*3/4).max(floor);good=0;}
+                    else if loss<1.0{good=good.saturating_add(1);if good>=3{bitrate=(bitrate+ceiling/10).min(ceiling);good=0;}}else{good=0;}
+                    if bitrate!=old{peer.set_video_bitrate(bitrate)?;}
+                }
             }
             tick(conn).await?;
         }

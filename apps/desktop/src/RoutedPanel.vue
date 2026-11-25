@@ -3,10 +3,10 @@ import {computed,ref,watch,onMounted,onBeforeUnmount,nextTick} from "vue";
 import {invoke,isTauri} from "@tauri-apps/api/core";
 import type {TextKey} from "./i18n";
 type Stage="idle"|"starting"|"awaiting_approval"|"connecting"|"listening"|"connected"|"stopping"|"passed"|"failed"|"canceled";
-type Snapshot={stage:Stage;active:boolean;local_key:string|null;device_id:string|null;detail:string|null;profile:string;input_released:boolean;decoded_fps?:number|null;decoded_bps?:number|null;transfer_done?:number|null;transfer_total?:number|null;transfer_verified?:boolean};
+type Snapshot={stage:Stage;active:boolean;local_key:string|null;device_id:string|null;detail:string|null;profile:string;input_released:boolean;decoded_fps?:number|null;decoded_bps?:number|null;transfer_done?:number|null;transfer_total?:number|null;transfer_verified?:boolean;network_bps?:number|null;rtt_ms?:number|null;loss_pct?:number|null;route_type?:string|null};
 type Device={device_id:string;public_key:string;label:string};
 type Display={id:number;name:string;width:number;height:number;primary:boolean};
-const props=defineProps<{t:(key:TextKey)=>string}>();
+const props=defineProps<{t:(key:TextKey)=>string;slot:number}>();
 const emit=defineEmits<{active:[value:boolean]}>();
 const native=isTauri(),role=ref<"host"|"controller">("controller"),mode=ref<"test"|"view"|"control"|"file"|"text"|"png"|"audio">("test");
 const sender=ref<"host"|"controller">("controller"),transferPath=ref(""),volume=ref(75);
@@ -32,12 +32,12 @@ watch(()=>snapshot.value.stage,s=>{if(s!=="awaiting_approval"){approved.value=fa
 watch(()=>busy.value||snapshot.value.active,v=>emit("active",v),{immediate:true});
 async function poll(){
  if(!native||disposed||busy.value||polling)return;polling=true;const stamp=revision;
- try{const s=await invoke<Snapshot>("lan_status");if(!disposed&&revision===stamp&&s.profile.startsWith("routed_"))snapshot.value=s;}
+ try{const s=await invoke<Snapshot>("routed_status",{slot:props.slot});if(!disposed&&revision===stamp&&s.profile.startsWith("routed_"))snapshot.value=s;}
  catch(e){if(!disposed)error.value=String(e);}finally{polling=false;}
 }
 async function command(name:string,args:Record<string,unknown>={}){
  if(!native||busy.value)return;busy.value=true;revision++;error.value="";
- try{snapshot.value=await invoke<Snapshot>(name,args);}
+ try{snapshot.value=await invoke<Snapshot>(name,{...args,slot:props.slot});}
  catch(e){error.value=String(e);submitted.value=false;}finally{busy.value=false;}
 }
 async function loadDisplays(){
@@ -68,7 +68,7 @@ function prepare(){
 }
 function confirm(){if(!canConfirm.value)return;submitted.value=true;return command("routed_confirm",{deviceId:peerId.value.trim(),peerKey:peerKey.value.trim(),approved:true});}
 onMounted(()=>{void poll();timer=window.setInterval(poll,400);});
-onBeforeUnmount(()=>{disposed=true;if(timer!==undefined)window.clearInterval(timer);if(native&&snapshot.value.active)void invoke("lan_disconnect").catch(()=>{});});
+onBeforeUnmount(()=>{disposed=true;if(timer!==undefined)window.clearInterval(timer);if(native&&snapshot.value.active)void invoke("routed_disconnect",{slot:props.slot}).catch(()=>{});});
 </script>
 <template>
 <section class="panel lan-panel">
@@ -91,7 +91,7 @@ onBeforeUnmount(()=>{disposed=true;if(timer!==undefined)window.clearInterval(tim
   <label class="check-label"><input type="checkbox" v-model="relay" :disabled="busy||snapshot.active"/>{{ t("routedRelay") }}</label>
   <label class="check-label"><input type="checkbox" v-model="persistent" :disabled="busy||snapshot.active"/>{{ t("presenceStorageConsent") }}</label>
   <label class="check-label"><input type="checkbox" v-model="saveHistory" :disabled="busy||snapshot.active"/>{{ t("deviceSaveHistory") }}</label>
-  <div class="actions"><button class="primary" :disabled="!canPrepare" @click="prepare">{{ t("routedPrepare") }}</button><button :disabled="busy||!snapshot.active||snapshot.stage==='stopping'" @click="command('lan_disconnect')">{{ t("lanDisconnect") }}</button></div>
+  <div class="actions"><button class="primary" :disabled="!canPrepare" @click="prepare">{{ t("routedPrepare") }}</button><button :disabled="busy||!snapshot.active||snapshot.stage==='stopping'" @click="command('routed_disconnect')">{{ t("lanDisconnect") }}</button></div>
  </div>
  <div v-if="snapshot.local_key" class="field"><label>{{ t("lanLocalKey") }}</label><input readonly :value="snapshot.local_key" class="key-input"/><label v-if="snapshot.device_id">{{ t("presenceDeviceId") }}</label><input v-if="snapshot.device_id" readonly :value="snapshot.device_id" class="key-input"/></div>
  <div v-if="snapshot.stage==='awaiting_approval'&&snapshot.device_id" class="field">
@@ -102,6 +102,7 @@ onBeforeUnmount(()=>{disposed=true;if(timer!==undefined)window.clearInterval(tim
   <label class="check-label"><input type="checkbox" v-model="approved" :disabled="busy||submitted"/>{{ t(mode==="audio"?(role==="host"?"audioSendConsent":"audioPlayConsent"):isExchange?(role===sender?"exchangeSendConsent":"exchangeReceiveConsent"):mode==="test"?"routedTestConsent":mode==="view"?(role==="host"?"viewHostConsent":"viewControllerConsent"):(role==="host"?"controlHostConsent":"controlControllerConsent")) }}</label>
   <button class="primary" :disabled="!canConfirm" @click="confirm">{{ t("lanApprove") }}</button>
  </div>
+ <div v-if="snapshot.stage==='connected'&&isDisplay" class="field"><label>{{ t("networkStats") }}</label><p class="muted">{{ t("networkBitrate") }}: {{ snapshot.network_bps==null?"—":(snapshot.network_bps/1000000).toFixed(2)+" Mb/s" }} · RTT: {{ snapshot.rtt_ms==null?"—":snapshot.rtt_ms+" ms" }} · {{ t("networkLoss") }}: {{ snapshot.loss_pct==null?"—":snapshot.loss_pct.toFixed(2)+"%" }} · {{ t("networkRoute") }}: {{ snapshot.route_type==="relay"?"TURN":snapshot.route_type==="direct"?"P2P":"—" }}</p></div>
  <p v-if="snapshot.decoded_fps!=null" class="muted">{{ t("decodedFps") }}: {{ snapshot.decoded_fps.toFixed(1) }} · {{ t("decodedThroughput") }}: {{ ((snapshot.decoded_bps??0)/1000000).toFixed(1) }} Mb/s</p>
  <div v-if="snapshot.transfer_total!=null" class="field"><label>{{ t("exchangeProgress") }}: {{ snapshot.transfer_done??0 }} / {{ snapshot.transfer_total }} B</label><progress :max="Math.max(1,snapshot.transfer_total)" :value="snapshot.transfer_done??0"/></div><p v-if="snapshot.transfer_verified" class="muted">{{ t("exchangeVerified") }}</p>
  <p v-if="snapshot.input_released" class="muted">{{ t("controlReleased") }}</p>

@@ -44,10 +44,14 @@ pub struct Snapshot {
     transfer_done: Option<u64>,
     transfer_total: Option<u64>,
     transfer_verified: bool,
+    network_bps: Option<u64>,
+    rtt_ms: Option<u32>,
+    loss_pct: Option<f64>,
+    route_type: Option<String>,
 }
 impl Default for Snapshot {
     fn default() -> Self {
-        Self { stage: Stage::Idle, active: false, local_key: None, detail: None, profile: Profile::Diagnostic, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false }
+        Self { stage: Stage::Idle, active: false, local_key: None, detail: None, profile: Profile::Diagnostic, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None }
     }
 }
 
@@ -216,6 +220,15 @@ fn handle_output(shared: &Mutex<Snapshot>, output: Output, pass: &mut bool, fail
                 if let (Some(fps),Some(bps),None)=(fields.next().and_then(|s|s.parse::<f64>().ok()),fields.next().and_then(|s|s.parse::<u64>().ok()),fields.next()) {
                     if fps.is_finite()&&(0.0..=120.0).contains(&fps)&&bps<=20_000_000_000 {let mut snap=locked(shared);snap.decoded_fps=Some(fps);snap.decoded_bps=Some(bps);}
                 }
+            } else if let Some(metrics)=text.strip_prefix("NET_STATS ") {
+                let fields:Vec<_>=metrics.split_ascii_whitespace().collect();
+                if fields.len()==4{
+                    let mut snap=locked(shared);
+                    snap.network_bps=fields[0].parse::<u64>().ok().filter(|v|*v<=100_000_000_000);
+                    snap.rtt_ms=fields[1].parse::<u32>().ok().filter(|v|*v<=120_000);
+                    snap.loss_pct=fields[2].parse::<f64>().ok().filter(|v|v.is_finite()&&(0.0..=100.0).contains(v));
+                    snap.route_type=match fields[3]{"direct"|"relay"=>Some(fields[3].into()),_=>None};
+                }
             } else if let Some(progress)=text.strip_prefix("TRANSFER_PROGRESS ") {
                 let mut fields=progress.split_ascii_whitespace();
                 if let (Some(done),Some(total),None)=(fields.next().and_then(|s|s.parse::<u64>().ok()),fields.next().and_then(|s|s.parse::<u64>().ok()),fields.next()){
@@ -353,6 +366,7 @@ pub struct SessionManager {
 }
 impl SessionManager {
     fn snapshot(&self) -> Snapshot { locked(&self.shared).clone() }
+    fn busy(&self)->bool{locked(&self.worker).as_ref().is_some_and(|w|!w.join.is_finished())}
     fn prepare(&self, role: &str, address: &str, preview: bool, profile: Profile, display_id: Option<u32>) -> Result<Snapshot, String> {
         let addr = local_endpoint(address)?;
         let flag = match role { "host" => "--listen", "controller" => "--connect", _ => return Err("Unknown diagnostic role".into()) };
@@ -439,7 +453,7 @@ impl SessionManager {
         }
         let child = command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped())
             .spawn().map_err(|e| format!("Cannot start native media diagnostic: {e}"))?;
-        *locked(&self.shared) = Snapshot { stage: Stage::Starting, active: true, local_key: None, detail: None, profile, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false };
+        *locked(&self.shared) = Snapshot { stage: Stage::Starting, active: true, local_key: None, detail: None, profile, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None };
         let (tx, rx) = mpsc::sync_channel(4);
         let shared = self.shared.clone();
         let stop = Arc::new(AtomicBool::new(false));
@@ -500,11 +514,42 @@ pub fn lan_status(window: WebviewWindow, manager: State<'_, SessionManager>) -> 
     require_main(&window)?; Ok(manager.snapshot())
 }
 #[tauri::command]
-pub fn lan_prepare(window: WebviewWindow, manager: State<'_, SessionManager>, role: String, address: String, preview: bool, profile: String, display_id: Option<u32>) -> Result<Snapshot, String> {
-    require_main(&window)?; manager.prepare(&role, &address, preview, Profile::parse(&profile)?, display_id)
+pub fn lan_prepare(window: WebviewWindow, manager: State<'_, SessionManager>, managers:State<'_,RoutedManagers>, role: String, address: String, preview: bool, profile: String, display_id: Option<u32>) -> Result<Snapshot, String> {
+    require_main(&window)?;
+    // Hold the routed registry lock across the LAN start to prevent races.
+    let slots=locked(&managers.slots);
+    if slots.sessions.iter().any(SessionManager::busy){return Err("Finish routed sessions first".into());}
+    manager.prepare(&role, &address, preview, Profile::parse(&profile)?, display_id)
+}
+// Independent bounded controller slots. Host/capture, clipboard, file and
+// audio sessions are exclusive; separate identities remain separate devices.
+// The signaling server still refuses duplicate registrations of one key.
+#[derive(Default)]
+struct Slots{sessions:[SessionManager;3],exclusive:[bool;3],persistent:[bool;3]}
+#[derive(Default)]
+pub struct RoutedManagers{slots:Mutex<Slots>}
+fn slot_index(slot:Option<u8>)->Result<usize,String>{
+    let i=usize::from(slot.unwrap_or(0));if i>=3{return Err("Invalid session slot".into());}Ok(i)
+}
+impl RoutedManagers{
+    pub fn any_busy(&self)->bool{locked(&self.slots).sessions.iter().any(SessionManager::busy)}
+    pub fn shutdown(&self){
+        let slots=locked(&self.slots);
+        for manager in &slots.sessions{manager.request_stop();}
+        for manager in &slots.sessions{manager.shutdown();}
+    }
+}
+impl Drop for RoutedManagers{fn drop(&mut self){self.shutdown();}}
+#[tauri::command]
+pub fn routed_status(window:WebviewWindow,managers:State<'_,RoutedManagers>,slot:Option<u8>)->Result<Snapshot,String>{
+    require_main(&window)?;Ok(locked(&managers.slots).sessions[slot_index(slot)?].snapshot())
 }
 #[tauri::command]
-pub fn routed_prepare(window:WebviewWindow,manager:State<'_,SessionManager>,role:String,url:String,server_id:String,mode:String,display_id:Option<u32>,relay_only:bool,persistent:bool,storage_consent:bool,ca_path:Option<String>,save_history:Option<bool>,quality:Option<String>,sender:Option<String>,transfer_path:Option<String>,volume:Option<u8>)->Result<Snapshot,String>{
+pub fn routed_disconnect(window:WebviewWindow,managers:State<'_,RoutedManagers>,slot:Option<u8>)->Result<Snapshot,String>{
+    require_main(&window)?;let slots=locked(&managers.slots);let manager=&slots.sessions[slot_index(slot)?];manager.request_stop();Ok(manager.snapshot())
+}
+#[tauri::command]
+pub fn routed_prepare(window:WebviewWindow,manager:State<'_,SessionManager>,managers:State<'_,RoutedManagers>,slot:Option<u8>,role:String,url:String,server_id:String,mode:String,display_id:Option<u32>,relay_only:bool,persistent:bool,storage_consent:bool,ca_path:Option<String>,save_history:Option<bool>,quality:Option<String>,sender:Option<String>,transfer_path:Option<String>,volume:Option<u8>)->Result<Snapshot,String>{
     require_main(&window)?;
     let profile=match (mode.as_str(),sender.as_deref()){
         ("test",_)=>Profile::RoutedTest,("view",_)=>Profile::RoutedView,("control",_)=>Profile::RoutedControl,("audio",_)=>Profile::RoutedAudio,
@@ -514,7 +559,17 @@ pub fn routed_prepare(window:WebviewWindow,manager:State<'_,SessionManager>,role
         _=>return Err("Invalid routed mode or direction".into()),
     };
     let history=if save_history.unwrap_or(false){Some(crate::trust::database_path(&window)?)}else{None};
-    manager.prepare_routed(&role,url.trim(),server_id.trim(),profile,display_id,relay_only,persistent,storage_consent,ca_path,history,quality.as_deref().unwrap_or("compat"),transfer_path,volume.unwrap_or(75))
+    let i=slot_index(slot)?;
+    let mut slots=locked(&managers.slots);
+    if manager.busy(){return Err("Finish the LAN session first".into());}
+    let exclusive=role=="host"||profile.exchange().is_some()||profile==Profile::RoutedAudio;
+    for (n,other) in slots.sessions.iter().enumerate(){
+        if n==i||!other.busy(){continue;}
+        if exclusive||slots.exclusive[n]{return Err("Host and content-sharing sessions require exclusive access".into());}
+        if persistent&&slots.persistent[n]{return Err("Only one slot can use the persistent identity; other slots require independently enrolled temporary identities".into());}
+    }
+    let result=slots.sessions[i].prepare_routed(&role,url.trim(),server_id.trim(),profile,display_id,relay_only,persistent,storage_consent,ca_path,history,quality.as_deref().unwrap_or("compat"),transfer_path,volume.unwrap_or(75))?;
+    slots.exclusive[i]=exclusive;slots.persistent[i]=persistent;Ok(result)
 }
 #[tauri::command]
 pub fn lan_confirm(window: WebviewWindow, manager: State<'_, SessionManager>, peer_key: String, approved: bool) -> Result<Snapshot, String> {
@@ -523,8 +578,9 @@ pub fn lan_confirm(window: WebviewWindow, manager: State<'_, SessionManager>, pe
     manager.confirm(&peer_key, approved)
 }
 #[tauri::command]
-pub fn routed_confirm(window:WebviewWindow,manager:State<'_,SessionManager>,device_id:String,peer_key:String,approved:bool)->Result<Snapshot,String>{
+pub fn routed_confirm(window:WebviewWindow,managers:State<'_,RoutedManagers>,slot:Option<u8>,device_id:String,peer_key:String,approved:bool)->Result<Snapshot,String>{
     require_main(&window)?;
+    let slots=locked(&managers.slots);let manager=&slots.sessions[slot_index(slot)?];
     if !manager.snapshot().profile.routed(){return Err("No routed session to confirm".into());}
     let key=remote_ex_signaling::decode_hex::<32>(peer_key.trim()).map_err(|_|"Invalid peer key")?;
     let expected=remote_ex_signaling::hex(&remote_ex_security::fingerprint(&key));
@@ -558,7 +614,7 @@ mod tests {
     fn control_requires_distinct_consent_and_release_marker() {
         assert_eq!(Profile::Control.consent(true), "ALLOW SCREEN AND INPUT");
         assert_eq!(Profile::Control.consent(false), "ALLOW REMOTE INPUT");
-        let shared = Mutex::new(Snapshot { stage: Stage::Connected, active: true, local_key: None, detail: None, profile: Profile::Control, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false });
+        let shared = Mutex::new(Snapshot { stage: Stage::Connected, active: true, local_key: None, detail: None, profile: Profile::Control, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None });
         let (mut pass, mut failure) = (false, None);
         stage(&shared, Stage::Stopping, None);
         assert!(locked(&shared).active);
@@ -568,7 +624,7 @@ mod tests {
     }
     #[test]
     fn status_requires_valid_local_key_and_terminal_state() {
-        let shared = Mutex::new(Snapshot { stage: Stage::Starting, active: true, local_key: None, detail: None, profile: Profile::Diagnostic, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false });
+        let shared = Mutex::new(Snapshot { stage: Stage::Starting, active: true, local_key: None, detail: None, profile: Profile::Diagnostic, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None });
         let (mut pass, mut fail) = (false, None);
         handle_output(&shared, Output::Stdout(format!("KEY {}", "ab".repeat(32))), &mut pass, &mut fail);
         assert_eq!(locked(&shared).stage, Stage::AwaitingApproval);

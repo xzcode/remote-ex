@@ -8,6 +8,7 @@ use gstreamer_app as app;
 use gstreamer_sdp as sdp;
 use gstreamer_webrtc as rtc;
 pub mod certificate;
+pub mod stats;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     mpsc::{self, Receiver, SyncSender, TrySendError},
@@ -256,6 +257,14 @@ impl Peer {
     }
 
     pub fn config(&self)->VideoConfig{self.config}
+    pub fn request_transport_stats(&self)->std::sync::mpsc::Receiver<Option<stats::Counters>>{
+        let(tx,rx)=std::sync::mpsc::sync_channel(1);
+        let promise=gst::Promise::with_change_func(move|reply|{
+            let stats=reply.ok().flatten().map(stats::parse);
+            let _=tx.try_send(stats);
+        });
+        self.webrtc.emit_by_name::<()>("get-stats", &[&None::<gst::Pad>,&promise]);rx
+    }
     pub fn set_video_bitrate(&self,bitrate:u32)->MediaResult<()> {
         if !(100_000..=self.config.bitrate).contains(&bitrate){return Err("Invalid adaptive bitrate".into());}
         let encoder=named(&self.pipeline,"encoder")?;
