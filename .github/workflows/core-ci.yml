@@ -1,0 +1,31 @@
+name: Core CI
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'crates/**'
+      - '.github/workflows/core-ci.yml'
+  pull_request:
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'crates/**'
+      - '.github/workflows/core-ci.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: core-ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  core:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust toolchain
+        run: rustup update stable && rustup default stable
+      - name: Core tests
+        run: cargo test --workspace

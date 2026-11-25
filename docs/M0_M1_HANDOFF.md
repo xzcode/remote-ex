@@ -10,13 +10,13 @@
 - Python GStreamer 合成画面 VP8 编解码诊断；只测试合成视频，不读取真实桌面、不开放网络服务。插件发现不等同 WebRTC 已验证。
 
 ## 验证状态
-本次检查本地 Linux 环境和授权首尔服务器，均未找到可直接使用的 rustc/cargo 或 GStreamer 工具。未修改首尔系统、未安装工具链、未部署服务。Rust 构建、依赖锁定、媒体 pipeline 和真实设备测试均待执行；代码不能宣称已经可运行。CI 如具备权限，将执行 cargo test。当前版本范围仅初始候选，不代表安全审计或依赖许可冻结。
+本次检查本地 Linux 环境和授权首尔服务器，均未找到可直接使用的 rustc/cargo 或 GStreamer 工具。未修改首尔系统、未安装工具链、未部署服务。Rust 构建、依赖锁定、媒体 pipeline 和真实设备测试均待执行；代码不能宣称已经可运行。新增最小 CI 工作流在 Ubuntu 上执行 cargo test；结果以 Actions 实际日志为准。当前版本范围仅初始候选，不代表安全审计或依赖许可冻结。
 
 ## 操作
 在具备 Rust stable 的环境运行：
 ```sh
 cargo test --workspace
-cargo fmt --all -- --check
+cargo fmt --all
 ```
 在安装 GStreamer 及相应插件的环境运行：
 ```sh
