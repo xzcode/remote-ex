@@ -169,11 +169,19 @@ impl Wire {
         }
         Self::new(TcpStream::connect_timeout(&address, IO_BUDGET)?)
     }
-    pub fn accept(address: SocketAddr) -> io::Result<Self> {
-        if !local_address(address) || address.port() == 0 {
+    pub fn bind(address: SocketAddr) -> io::Result<TcpListener> {
+        if !local_address(address) || (address.port() == 0 && !address.ip().is_loopback()) {
             return Err(invalid("Use a specific private or loopback bind address"));
         }
-        let listener = TcpListener::bind(address)?;
+        TcpListener::bind(address)
+    }
+    pub fn accept(address: SocketAddr) -> io::Result<Self> {
+        Self::accept_listener(Self::bind(address)?)
+    }
+    pub fn accept_listener(listener: TcpListener) -> io::Result<Self> {
+        if !local_address(listener.local_addr()?) {
+            return Err(invalid("Non-local listener"));
+        }
         listener.set_nonblocking(true)?;
         let deadline = Instant::now() + Duration::from_secs(30);
         loop {

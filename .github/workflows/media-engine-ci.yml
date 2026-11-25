@@ -2,9 +2,9 @@ name: Native media engine
 on:
   push:
     branches: [master]
-    paths: ['crates/media/**', '.github/workflows/media-engine-ci.yml']
+    paths: ['crates/media/**', 'crates/signaling/**', 'crates/security/**', 'crates/core/**', 'crates/protocol/**', 'scripts/test_lan_diagnostic.py', '.github/workflows/media-engine-ci.yml']
   pull_request:
-    paths: ['crates/media/**', '.github/workflows/media-engine-ci.yml']
+    paths: ['crates/media/**', 'crates/signaling/**', 'crates/security/**', 'crates/core/**', 'crates/protocol/**', 'scripts/test_lan_diagnostic.py', '.github/workflows/media-engine-ci.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -27,3 +27,7 @@ jobs:
         run: timeout 75s cargo run --manifest-path crates/media/Cargo.toml --bin loopback
       - name: Native RGBA input loopback
         run: timeout 75s cargo run --manifest-path crates/media/Cargo.toml --bin loopback -- --native-pattern
+      - name: Independent-process LAN video and control diagnostic
+        run: |
+          cargo build --manifest-path crates/media/Cargo.toml --bin lan_diagnostic
+          timeout 80s python3 scripts/test_lan_diagnostic.py crates/media/target/debug/lan_diagnostic

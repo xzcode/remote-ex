@@ -92,6 +92,7 @@ pub struct Peer {
     events: Receiver<Event>,
     overflow: Arc<AtomicBool>,
     running: bool,
+    data_enabled: bool,
 }
 
 fn queue_event(sender: &SyncSender<Event>, overflow: &AtomicBool, event: Event) {
@@ -217,7 +218,7 @@ impl Peer {
                 None
             });
         }
-        Ok(Self { pipeline, webrtc, input, output, config, events: rx, overflow, running: false })
+        Ok(Self { pipeline, webrtc, input, output, config, events: rx, overflow, running: false, data_enabled: false })
     }
 
     pub fn start(&mut self) -> MediaResult<()> {
@@ -305,9 +306,33 @@ impl Peer {
 
     pub fn add_ice(&self, ice: &IceCandidate) -> MediaResult<()> {
         if !self.running { return Err("Peer is not running".into()); }
-        validate_ice(ice)?;
+        validate_ice(ice, if self.data_enabled { 1 } else { 0 })?;
         self.webrtc.emit_by_name::<()>("add-ice-candidate", &[&ice.mline, &ice.candidate]);
         Ok(())
+    }
+
+    /// Exactly one externally negotiated, reliable ordered binary channel.
+    /// Both endpoints must create it before the initial SDP negotiation.
+    /// The owner must withhold all sensitive messages until identity/consent
+    /// and actual WebRTC connection have been checked.
+    pub fn create_control_channel(&mut self) -> MediaResult<ControlChannel> {
+        if !self.running || self.data_enabled { return Err("Invalid control channel state".into()); }
+        let options = gst::Structure::builder("application/data-channel")
+            .field("ordered", true)
+            .field("negotiated", true)
+            .field("id", 0i32)
+            .field("protocol", "remote-ex-input-v1")
+            .build();
+        let channel = self.webrtc.emit_by_name::<Option<rtc::WebRTCDataChannel>>(
+            "create-data-channel", &[&"remote-ex-control", &options]
+        ).ok_or("Cannot create control data channel")?;
+        self.data_enabled = true;
+        Ok(ControlChannel::new(channel))
+    }
+
+    pub fn ice_complete(&self) -> bool {
+        self.webrtc.property::<rtc::WebRTCICEGatheringState>("ice-gathering-state")
+            == rtc::WebRTCICEGatheringState::Complete
     }
 
     /// Accepts a frame owned by the native capture adapter, with tight RGBA stride.
@@ -344,8 +369,70 @@ impl Peer {
     }
 }
 
-fn validate_ice(ice: &IceCandidate) -> MediaResult<()> {
-    if ice.mline != 0 || ice.candidate.len() > ICE_LIMIT {
+const MAX_CONTROL_BYTES: usize = 1024;
+const MAX_CONTROL_BUFFER: u64 = 64 * 1024;
+
+pub struct ControlChannel {
+    channel: rtc::WebRTCDataChannel,
+    messages: Receiver<Vec<u8>>,
+    failed: Arc<AtomicBool>,
+}
+impl ControlChannel {
+    fn new(channel: rtc::WebRTCDataChannel) -> Self {
+        let (tx, messages) = mpsc::sync_channel(64);
+        let failed = Arc::new(AtomicBool::new(false));
+        let bad = failed.clone();
+        channel.connect_on_message_data(move |_, bytes| {
+            match bytes {
+                Some(bytes) if !bytes.is_empty() && bytes.len() <= MAX_CONTROL_BYTES => {
+                    if tx.try_send(bytes.as_ref().to_vec()).is_err() {
+                        bad.store(true, Ordering::Release);
+                    }
+                }
+                _ => bad.store(true, Ordering::Release),
+            }
+        });
+        let bad = failed.clone();
+        channel.connect_on_error(move |_, _| bad.store(true, Ordering::Release));
+        let bad = failed.clone();
+        channel.connect("on-message-string", false, move |_| {
+            bad.store(true, Ordering::Release);
+            None
+        });
+        Self { channel, messages, failed }
+    }
+    pub fn is_open(&self) -> bool {
+        self.channel.ready_state() == rtc::WebRTCDataChannelState::Open
+    }
+    pub fn check_health(&self) -> MediaResult<()> {
+        if self.failed.load(Ordering::Acquire)
+            || matches!(self.channel.ready_state(), rtc::WebRTCDataChannelState::Closing | rtc::WebRTCDataChannelState::Closed)
+        { return Err("Control channel failed or closed".into()); }
+        Ok(())
+    }
+    pub fn send(&self, data: &[u8]) -> MediaResult<()> {
+        self.check_health()?;
+        if !self.is_open() || data.is_empty() || data.len() > MAX_CONTROL_BYTES
+            || self.channel.buffered_amount().saturating_add(data.len() as u64) > MAX_CONTROL_BUFFER
+        { return Err("Control channel unavailable or buffer limit exceeded".into()); }
+        let bytes = gst::glib::Bytes::from(data);
+        self.channel.send_data_full(Some(&bytes)).map_err(|e| e.to_string())
+    }
+    pub fn receive(&self) -> MediaResult<Option<Vec<u8>>> {
+        self.check_health()?;
+        match self.messages.try_recv() {
+            Ok(bytes) => Ok(Some(bytes)),
+            Err(mpsc::TryRecvError::Empty) => Ok(None),
+            Err(mpsc::TryRecvError::Disconnected) => Err("Control channel receiver closed".into()),
+        }
+    }
+}
+impl Drop for ControlChannel {
+    fn drop(&mut self) { self.channel.close(); }
+}
+
+fn validate_ice(ice: &IceCandidate, max_mline: u32) -> MediaResult<()> {
+    if ice.mline > max_mline || ice.candidate.len() > ICE_LIMIT {
         return Err(format!("Invalid ICE bounds: mline={}, bytes={}", ice.mline, ice.candidate.len()));
     }
     // Empty (or NULL normalized to empty) explicitly marks gathering complete.
@@ -366,10 +453,10 @@ mod tests {
     use super::*;
     #[test]
     fn ice_completion_and_bounds() {
-        assert!(validate_ice(&IceCandidate { mline: 0, candidate: String::new() }).is_ok());
-        assert!(validate_ice(&IceCandidate { mline: 1, candidate: String::new() }).is_err());
-        assert!(validate_ice(&IceCandidate { mline: 0, candidate: "x".repeat(ICE_LIMIT + 1) }).is_err());
-        assert!(validate_ice(&IceCandidate { mline: 0, candidate: "bad\nline".into() }).is_err());
+        assert!(validate_ice(&IceCandidate { mline: 0, candidate: String::new() }, 0).is_ok());
+        assert!(validate_ice(&IceCandidate { mline: 1, candidate: String::new() }, 0).is_err());
+        assert!(validate_ice(&IceCandidate { mline: 0, candidate: "x".repeat(ICE_LIMIT + 1) }, 0).is_err());
+        assert!(validate_ice(&IceCandidate { mline: 0, candidate: "bad\nline".into() }, 0).is_err());
     }
     #[test]
     fn config_bounds() {
