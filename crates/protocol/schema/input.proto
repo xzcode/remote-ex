@@ -1,0 +1,21 @@
+syntax = "proto3";
+package remote_ex.v1;
+
+// Reliable ordered input channel for M1 only. No authentication in this message.
+message InputEnvelope {
+  uint32 version = 1;
+  bytes session_id = 2;
+  uint64 sequence = 3;
+  oneof event {
+    PointerMove pointer_move = 10;
+    PointerButton pointer_button = 11;
+    Key key = 12;
+    Scroll scroll = 13;
+    ReleaseAll release_all = 14;
+  }
+}
+message PointerMove { uint32 x = 1; uint32 y = 2; } // normalized 0..65535
+message PointerButton { uint32 button = 1; bool down = 2; } // 1..5
+message Key { uint32 usage = 1; bool down = 2; } // USB HID keyboard page
+message Scroll { sint32 x = 1; sint32 y = 2; }
+message ReleaseAll {}

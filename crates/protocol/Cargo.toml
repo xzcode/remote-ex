@@ -1,0 +1,8 @@
+[package]
+name = "remote-ex-protocol"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+prost.workspace = true

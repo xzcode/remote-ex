@@ -1,0 +1,11 @@
+[package]
+name = "remote-ex-core"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+remote-ex-protocol = { path = "../protocol" }
+
+[dev-dependencies]
+prost.workspace = true
