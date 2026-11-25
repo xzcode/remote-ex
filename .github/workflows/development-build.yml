@@ -64,6 +64,9 @@ jobs:
             otool -l "$bin" | grep -F "path $root "
             codesign --force --sign - "$bin"
           done
+      - name: Test native TCP signaling and Noise
+        shell: bash
+        run: cargo test -p remote-ex-signaling
       - name: Check native input
         shell: bash
         run: cargo test -p remote-ex-input --features native

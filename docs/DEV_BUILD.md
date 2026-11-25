@@ -18,3 +18,5 @@ Windows PowerShell: use .\lan_control.exe instead. Select the host primary displ
 CI verifies synthetic/inert tests only. Actual physical-device display capture, GUI, key mapping/DPI, and native input behavior still require authorized local testing. The Windows binaries are unsigned, macOS binaries only ad-hoc signed; no notarization or release. Do not bypass OS security policies. Development build uses GStreamer 1.26.11 SDK for reproducible testing, not a security-audited frozen release configuration.
 
 The macOS development app embeds the official framework's standard runtime search path in the media executables. It does not bundle or install the framework; use the official GStreamer package. The app is ad-hoc signed only and is not notarized. A successful package verification does not replace launch, TCC, or two-machine testing.
+
+LAN signaling explicitly restores blocking mode on an accepted TCP stream before applying its bounded read/write deadlines. This corrects the Windows Winsock inherited nonblocking-mode failure observed in the first full native build. The new development build must pass the actual encrypted control tests before publishing artifacts.

@@ -207,6 +207,10 @@ impl Wire {
         if !local_address(stream.peer_addr()?) || !local_address(stream.local_addr()?) {
             return Err(invalid("Non-local endpoint"));
         }
+        // Winsock can inherit the listening socket's nonblocking mode on
+        // accept. Our bounded read/write helpers deliberately use blocking
+        // sockets with explicit per-operation deadlines on every platform.
+        stream.set_nonblocking(false)?;
         stream.set_nodelay(true)?;
         Ok(Self { stream, deadline: Instant::now() + Duration::from_secs(110) })
     }
@@ -259,6 +263,21 @@ mod tests {
         let mut wire = Wire::connect(address).unwrap();
         wire.send(Message::Finished { session: ID }).unwrap();
         assert!(wire.recv(Some(ID)).is_err());
+        host.join().unwrap();
+    }
+
+    #[test]
+    fn nonblocking_listener_handoff_restores_bounded_blocking_reads() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let host = std::thread::spawn(move || {
+            let mut wire = Wire::accept_listener(listener).unwrap();
+            assert_eq!(wire.recv(Some(ID)).unwrap(), Message::Ready { session: ID });
+        });
+        let mut wire = Wire::connect(address).unwrap();
+        // Force the accepted socket to read before the first byte arrives.
+        std::thread::sleep(Duration::from_millis(100));
+        wire.send(Message::Ready { session: ID }).unwrap();
         host.join().unwrap();
     }
 
