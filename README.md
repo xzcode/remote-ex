@@ -2,7 +2,7 @@
 
 跨平台、可私有化部署的远程桌面工具。Remote EX 自主研发客户端、服务端和业务协议，使用成熟底层库，不基于 RustDesk 等完整产品进行 fork。
 
-**当前状态：M2 开发包与自动化验证通过，物理设备验收待。M3 已推进设备、窗口/全屏、多屏只读、画质、会话、文件/剪贴板/音频与统计。fe04f85 双平台桌面和完整媒体 CI 通过，包含双 NAT、双向文件、暂停恢复和合成音频；原生开发包 04b1cfd 两平台编译完成，运行测试中。本批新增显式文件断点、受限目录传输、拖拽选择和限时双向文本剪贴板同步，核心 CI 已通过，新增集成/桌面与实机验收待结果。无正式 Release。**
+**当前状态：M2 开发包及自动化通过，实机待。M3 第二批双平台完整开发包通过；第三批断点、目录、合成双向剪贴板、桌面 CI 通过。第四批新增同一设备 ID 的独立主控连接、授权根目录的只读文件列表/选定下载，待最新完整媒体、桌面及原生构建。仍有音视频、多屏控制和真实设备验收缺口，无正式 Release。**
 
 ## 目标
 
@@ -63,3 +63,7 @@ Rust + Tauri 2 + Vue 3/TypeScript；WebRTC/ICE/STUN/TURN；Rust/Axum 信令服�
 ## M2 开发包（临时 Actions artifacts）
 
 [Windows x64](https://github.com/xzcode/remote-ex/actions/runs/45585068172/artifacts/15008819036) · [macOS ARM64](https://github.com/xzcode/remote-ex/actions/runs/45585068172/artifacts/15008019517)。源提交 bb65000，2026-12-09 到期，外部官方 GStreamer 1.26.11 runtime；非正式发行、不含 M3。真实设备验收未完成。
+
+## M3 第二批开发包（临时 Actions artifacts）
+
+[Windows x64](https://github.com/xzcode/remote-ex/actions/runs/45599629435/artifacts/15015038862) · [macOS ARM64](https://github.com/xzcode/remote-ex/actions/runs/45599629435/artifacts/15015092228)。源 04b1cfd，2026-12-09 到期，需官方 GStreamer 1.26.11 runtime；不含第三/四批新增功能。最新代码需新构建。

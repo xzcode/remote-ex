@@ -74,3 +74,20 @@
 ### 最新任务
 - [Core #45601036492](https://github.com/xzcode/remote-ex/actions/runs/45601036492)、[Media #45601036641](https://github.com/xzcode/remote-ex/actions/runs/45601036641)、[Desktop #45600808563](https://github.com/xzcode/remote-ex/actions/runs/45600808563) 记录时排队/进行中。先按真实结果修复，再构建最新版并核对实际 artifact。
 - 仍需真正同一设备身份多会话复用（当前每槽位单独登记）、非主屏键鼠、完整远程目录浏览/管理、断点同身份实机重连与异常强杀恢复、macOS 系统声音、音视频同会话和同步、长期/实机验收。当前文本同步与文件/音频都是单独独占会话，不自动与真实控制合并。用户未指定服务器部署、域名或签名/许可证；未改用户主机、未部署或发布 Release。
+
+## 第四轮收尾（共享主控设备 ID、远程文件列表）
+
+### 已确认的上一批证据
+- #45601036641 (b35a17e) 完整媒体 CI success，日志实际包括 interrupted 6144 bytes checkpoint / destination absent、两端 resume offset 12345 / 65792、目录含空目录 65792 bytes、synthetic text clipboard 双向各发送接收一次且无初始内容及回声、音频、双 NAT 与旧功能回归。#45601036492 core 和 #45600808563 Windows/macOS desktop success。
+- #45599629435 (04b1cfd) 两平台完整 native Release 与合成控制、文件暂停恢复、合成音频测试成功；[Windows x64](https://github.com/xzcode/remote-ex/actions/runs/45599629435/artifacts/15015038862) 11,817,822 bytes，[macOS ARM64](https://github.com/xzcode/remote-ex/actions/runs/45599629435/artifacts/15015092228) 12,482,224 bytes，2026-12-09 到期，需 GStreamer 1.26.11 runtime。旧包不含第三/四批新功能，不代表实机全屏、多屏、系统音频。
+
+### 本轮实现
+- 7cf03b6：独立 RegisterController proof domain，正常 host/presence 注册仍独占；同 ID 最多3个显式主控 socket，不能作为 incoming target。Hub 以 connection ID 为 session 两端唯一所有者，逐连接清理、关闭、ICE 与信令路由，在线状态按设备 ID 聚合。#45613668112 / #45613831317 Core CI success（含真实 TLS WSS 同 ID 三连接、第四拒绝、普通注册互斥、不能被呼叫、跨会话 signal/close 拒绝、单连接断开隔离）。不共享控制授权。
+- b689923：桌面各主控槽位显式共享原 slot1 持久 identity（旧 key 不变），独立 ID 方案仍保留；同 identity 槽位混用 scoped/unscoped 阻止；新 WSS client 及 --shared-controller，仅 outgoing test/view/control。诊断端同样可测试 scoped registration。不启用未经确认的 persistent storage。服务端普通注册不降级或覆盖。
+- 5d6e367 / 9073e78：Profile15 scoped catalog，host 本机预选 root 且明确授权给验证后的对端（列出相对目录及一个文件下载），controller 预选新的本机目标后主动选择清单中的 file index。复用有界 manifest、拒绝 symlink/reparse/special names/escape、只读、无覆盖、下载校验完整 SHA-256；不支持远程任意路径、删除、改名或远端写入。GUI 搜索与单选、固定本机 SELECT IPC、可见断开/超时，最多256条、8层、64MiB。测试仅临时 fixture，目录名不进入持久日志。新增实际加密 media scoped registration/catalog 下载集成步骤。
+- 最新新功能待完整复验；启动本轮开发包，不将前一版本冒充最新。不部署公网服务/不改用户服务器/不发行正式 Release。
+
+### 剩余缺口
+- 同 ID 多主控的真实同时视频/输入、三个槽位物理测试；当前 host/内容独占，普通在线状态服务不能与同 ID shared controller 同时注册。不是单 WebSocket 多路复用。服务器需更新。
+- 远程文件管理现为只读授权列表与单次下载，既有双向单文件和整目录传输独立；非完整远程写入、删除/改名或多文件并发管理。断点与合成 clipboard 最新原生构建、实机操作仍待。
+- macOS 系统输出声音采集、音视频同会话/A-V 同步、非主屏键鼠、长会话稳定性、高画质/动态分辨率、真实跨公网/设备验收。当前无已授权真实图形桌面，不把 CI 当物理验收。下一批优先根据最新失败日志修复、交付实际新 artifact，再推进音视频，不重复无用构建。
