@@ -42,6 +42,8 @@ def main():
     resume_test="--file-resume" in sys.argv[3:]
     if resume_test and not exchange_sender:raise RuntimeError("Resume test requires file mode")
     if directory_test and (not exchange_sender or resume_test or pause_test):raise RuntimeError("Choose a separate directory transfer test")
+    clipboard_test="--clipboard-sync-test" in sys.argv[3:]
+    if clipboard_test and exchange_sender:raise RuntimeError("Choose one test profile")
     audio_test="--audio-test" in sys.argv[3:]
     if audio_test and exchange_sender:raise RuntimeError("Choose one test profile")
     peers=[]
@@ -93,6 +95,8 @@ def main():
             source=os.path.join(directory,"source.bin");target=os.path.join(directory,"received.bin")
             payload=bytes(range(256))*257
             host_flags=list(flags);controller_flags=list(flags)
+            if clipboard_test:
+                host_flags.extend(["--clipboard-sync-test","--desktop-session"]);controller_flags.extend(["--clipboard-sync-test","--desktop-session"])
             if audio_test:
                 host_flags.extend(["--audio-test","--desktop-session"]);controller_flags.extend(["--audio-test","--desktop-session"])
             if exchange_sender:
@@ -126,6 +130,9 @@ def main():
                 for role,pair,key in (("host",host,ck),("controller",controller,hk)):
                     consent=("ALLOW SEND " if role==exchange_sender else "ALLOW RECEIVE ")+("DIRECTORY" if directory_test else "FILE")
                     pair[0].stdin.write(key+"\n"+consent+"\n");pair[0].stdin.flush()
+            elif clipboard_test:
+                for pair,key in ((host,ck),(controller,hk)):
+                    pair[0].stdin.write(key+"\nALLOW TEST CLIPBOARD SYNC\n");pair[0].stdin.flush()
             elif audio_test:
                 for pair,key in ((host,ck),(controller,hk)):
                     pair[0].stdin.write(key+"\nALLOW TEST AUDIO\n");pair[0].stdin.flush()
@@ -147,6 +154,9 @@ def main():
             expect(controller,"PASS ROUTED CONTROLLER:",deadline)
             for proc,_ in peers[-2:]:
                 if proc.wait(timeout=5)!=0:raise RuntimeError("peer exited unsuccessfully")
+            if clipboard_test:
+                print("PASS: synthetic bidirectional text clipboard sync, baseline and echo suppression",flush=True)
+                return
             if audio_test:
                 print("PASS: synthetic audio transport and verified sample count",flush=True)
                 return

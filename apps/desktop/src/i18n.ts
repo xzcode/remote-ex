@@ -1,4 +1,5 @@
 export const en = {
+  clipboardSync:"Live text clipboard sync (30 seconds)",clipboardSyncNotice:"Both users explicitly opt in. Only subsequent text changes (up to 8 KiB) are synchronized; existing initial content and images are not sent. Avoid copying secrets during this visible session. Disconnect stops access.",clipboardSyncConsent:"I explicitly authorize bidirectional synchronization of subsequent clipboard text changes with this verified device for this visible session.",clipboardSyncCounts:"Clipboard updates sent / received",
   exchangeDirectory:"Directory transfer",directorySource:"Local source directory",directoryDestination:"New local directory path",directoryChoose:"Choose directory",directoryEntries:"Directory entries",directoryNotice:"Up to 256 entries, depth 8, total bundle 64 MiB; no symbolic links or overwriting. Receiver chooses a new folder; an interrupted extraction may leave an incomplete folder.",dropSingle:"Drop one local source file or folder here to select it; nothing is sent automatically.",
   resumeExisting:"Existing checkpoint (optional)",resumeSave:"Save checkpoint to a new file on interruption (optional)",resumeNotice:"Both endpoints must re-authorize the same verified identities and source. A checkpoint contains partial file data; keep it private. Choose an unused output path. Persistent identities are recommended.",resumeOffset:"Resumed from",resumeSaved:"Partial data saved to selected checkpoint",
   extraDisplays:"Additional approved displays (up to three)",extraDisplaysNotice:"Only these selected displays may be switched or combined in this view-only session. No other screen is shared.",multiDisplayConsent:"I explicitly allow this verified peer to view and switch among all selected displays, including a combined view. No system input is authorized.",
@@ -71,6 +72,7 @@ export const en = {
 } as const;
 export type TextKey = keyof typeof en;
 export const zh: Record<TextKey, string> = {
+  clipboardSync:"实时文本剪贴板同步（30秒）",clipboardSyncNotice:"双方主动授权，仅同步此后复制的文本（最多8 KiB）；不发送开始时已有内容，不同步图片。同步期间请勿复制敏感信息，断开即停止读取。",clipboardSyncConsent:"我明确授权与此已核对设备在本次可见会话中双向同步后续文本剪贴板变更。",clipboardSyncCounts:"剪贴板更新发送 / 接收次数",
   exchangeDirectory:"目录传输",directorySource:"本机源目录",directoryDestination:"本机新目录路径",directoryChoose:"选择目录",directoryEntries:"目录条目数",directoryNotice:"最多256个条目、8层目录、64 MiB目录包；不跟随符号链接、不覆盖。接收端选择新目录，提取中断可能留下不完整目录。",dropSingle:"拖入一个本机源文件或目录即可选定，不会自动发送。",
   resumeExisting:"已有断点文件（可选）",resumeSave:"中断时保存到新断点文件（可选）",resumeNotice:"双方须重新授权同一已核对身份及源文件。断点含部分文件内容，请妥善保管；输出路径必须未使用。建议使用持久设备身份。",resumeOffset:"已从断点继续",resumeSaved:"已将部分数据保存到选定断点文件",
   extraDisplays:"额外授权显示器（最多三块）",extraDisplaysNotice:"本次只读会话仅允许切换或拼接已选屏幕，不会共享其他显示器。",multiDisplayConsent:"我明确授权此已核对设备查看、切换和拼接所有选定显示器，不授权系统键鼠操作。",

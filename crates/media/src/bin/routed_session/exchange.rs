@@ -27,7 +27,7 @@ impl Mode{
         (Kind::Png,true)=>"ALLOW SEND CLIPBOARD IMAGE",(Kind::Png,false)=>"ALLOW RECEIVE CLIPBOARD IMAGE",
     }}
 }
-async fn receive(peer:&Peer,channel:&ControlChannel,conn:&mut Connection,deadline:Instant)->MediaResult<Vec<u8>>{
+pub(super) async fn receive(peer:&Peer,channel:&ControlChannel,conn:&mut Connection,deadline:Instant)->MediaResult<Vec<u8>>{
     let step=deadline.min(Instant::now()+Duration::from_secs(10));
     loop{
         if canceled()||Instant::now()>=step{return Err("Transfer canceled or timed out".into());}
