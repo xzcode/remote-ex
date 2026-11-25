@@ -1,0 +1,11 @@
+[package]
+name = "remote-ex-rendezvous-protocol"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+remote-ex-security = { path = "../security" }
+remote-ex-signaling = { path = "../signaling" }
+serde.workspace = true
+serde_json.workspace = true

@@ -5,6 +5,7 @@ edition.workspace = true
 publish.workspace = true
 
 [dependencies]
+remote-ex-rendezvous-protocol = { path = "../../crates/rendezvous-protocol" }
 remote-ex-security = { path = "../../crates/security" }
 remote-ex-signaling = { path = "../../crates/signaling" }
 serde.workspace = true
@@ -16,3 +17,4 @@ futures-util = "0.3"
 
 [dev-dependencies]
 tokio-tungstenite = "0.28"
+

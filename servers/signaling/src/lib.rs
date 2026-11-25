@@ -23,7 +23,7 @@ use std::{
 };
 use tokio::{sync::{Semaphore, mpsc}, time::timeout};
 
-pub const MAX_MESSAGE: usize = 96 * 1024;
+pub use protocol::MAX_MESSAGE;
 const MAX_CONNECTIONS: usize = 128;
 const AUTH_TIMEOUT: Duration = Duration::from_secs(10);
 const SEND_TIMEOUT: Duration = Duration::from_secs(3);
@@ -38,18 +38,23 @@ struct App {
 }
 
 pub fn router() -> Router {
+    router_with_identity(DeviceIdentity::generate().fingerprint()).expect("generated server identity")
+}
+
+/// Stable public server identity configured by the operator. This is an
+/// additional application pin, not a substitute for a trusted TLS certificate.
+pub fn router_with_identity(server_id: [u8;32]) -> Result<Router, &'static str> {
+    if server_id == [0;32] { return Err("invalid server identity"); }
     let state = App {
-        // Ephemeral development server identifier. NOT proof of server
-        // authenticity. A production client must validate WSS/TLS identity.
-        server_id: DeviceIdentity::generate().fingerprint(),
+        server_id,
         hub: Arc::new(Mutex::new(Hub::default())),
         slots: Arc::new(Semaphore::new(MAX_CONNECTIONS)),
         next_connection: Arc::new(AtomicU64::new(1)),
     };
-    Router::new()
+    Ok(Router::new()
         .route("/healthz", get(|| async { "ok" }))
         .route("/v1/ws", get(upgrade))
-        .with_state(state)
+        .with_state(state))
 }
 
 async fn upgrade(State(app): State<App>, ws: WebSocketUpgrade) -> Response {

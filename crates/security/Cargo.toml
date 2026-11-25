@@ -8,3 +8,19 @@ publish.workspace = true
 ed25519-dalek.workspace = true
 rand_core.workspace = true
 sha2.workspace = true
+
+zeroize = "1"
+
+[features]
+default = []
+native-vault = ["dep:keyring", "dep:fs2", "dep:dirs"]
+
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { version = "=3.6.3", optional = true, features = ["windows-native"] }
+fs2 = { version = "0.4", optional = true }
+dirs = { version = "6", optional = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "=3.6.3", optional = true, features = ["apple-native"] }
+fs2 = { version = "0.4", optional = true }
+dirs = { version = "6", optional = true }

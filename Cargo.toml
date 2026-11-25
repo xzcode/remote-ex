@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/protocol", "crates/core", "crates/security", "crates/signaling", "crates/input", "servers/signaling"]
+members = ["crates/protocol", "crates/core", "crates/security", "crates/signaling", "crates/input", "servers/signaling", "crates/rendezvous-protocol", "crates/rendezvous-client"]
 
 [workspace.package]
 version = "0.1.0"
