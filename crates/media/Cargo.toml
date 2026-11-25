@@ -24,3 +24,6 @@ remote-ex-security = { path = "../security" }
 remote-ex-core = { path = "../core" }
 remote-ex-protocol = { path = "../protocol" }
 prost = "0.13"
+
+sha2 = "0.10"
+pem = "3"

@@ -8,3 +8,6 @@ publish.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 remote-ex-security = { path = "../security" }
+
+snow = "0.10"
+zeroize = "1"

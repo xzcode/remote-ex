@@ -7,6 +7,7 @@ use gst::prelude::*;
 use gstreamer_app as app;
 use gstreamer_sdp as sdp;
 use gstreamer_webrtc as rtc;
+pub mod certificate;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     mpsc::{self, Receiver, SyncSender, TrySendError},
@@ -328,6 +329,42 @@ impl Peer {
         ).ok_or("Cannot create control data channel")?;
         self.data_enabled = true;
         Ok(ControlChannel::new(channel))
+    }
+
+    /// Check the certificate on the actual video DTLS transport, independently
+    /// of webrtcbin's SDP acceptance. Fail closed on missing certificate,
+    /// disconnected transport, unsupported fingerprint, or mismatched DER hash.
+    pub fn verify_video_peer(&self, remote_sdp: &str, sending: bool) -> MediaResult<()> {
+        if self.connection_state() != rtc::WebRTCPeerConnectionState::Connected {
+            return Err("WebRTC is not connected".into());
+        }
+        let transceiver = self.webrtc.emit_by_name::<Option<rtc::WebRTCRTPTransceiver>>(
+            "get-transceiver", &[&0i32]
+        ).ok_or("Missing video transceiver")?;
+        let transport = if sending {
+            let sender = transceiver.property::<Option<rtc::WebRTCRTPSender>>("sender").ok_or("Missing video sender")?;
+            sender.property::<Option<rtc::WebRTCDTLSTransport>>("transport")
+        } else {
+            let receiver = transceiver.property::<Option<rtc::WebRTCRTPReceiver>>("receiver").ok_or("Missing video receiver")?;
+            receiver.property::<Option<rtc::WebRTCDTLSTransport>>("transport")
+        }.ok_or("Missing video DTLS transport")?;
+        if transport.property::<rtc::WebRTCDTLSTransportState>("state") != rtc::WebRTCDTLSTransportState::Connected {
+            return Err("Video DTLS is not connected".into());
+        }
+        let certificate = transport.property::<Option<String>>("remote-certificate").ok_or("Missing peer DTLS certificate")?;
+        certificate::verify(remote_sdp, &certificate)?;
+        // If a negotiated control channel exists, verify its actual transport
+        // too, rather than assuming it shares the video BUNDLE transport.
+        if self.data_enabled {
+            let sctp = self.webrtc.property::<Option<rtc::WebRTCSCTPTransport>>("sctp-transport").ok_or("Missing SCTP transport")?;
+            let dtls = sctp.property::<Option<rtc::WebRTCDTLSTransport>>("transport").ok_or("Missing data DTLS transport")?;
+            if dtls.property::<rtc::WebRTCDTLSTransportState>("state") != rtc::WebRTCDTLSTransportState::Connected {
+                return Err("Data DTLS is not connected".into());
+            }
+            let cert = dtls.property::<Option<String>>("remote-certificate").ok_or("Missing data DTLS certificate")?;
+            certificate::verify(remote_sdp, &cert)?;
+        }
+        Ok(())
     }
 
     pub fn ice_complete(&self) -> bool {

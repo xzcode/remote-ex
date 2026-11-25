@@ -4,6 +4,7 @@
 //! signatures are exchanged; the session owner verifies both signatures over
 //! the exact SDP before allowing any privileged media or data.
 //! This is not a production listener, TLS service, registration or TURN relay.
+pub mod secure;
 use remote_ex_security::{PublicKey, session::{INPUT, VIEW}};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -36,6 +37,8 @@ pub enum Message {
     Answer { session: [u8; 16], sdp: String },
     Proof { session: [u8; 16], signature: String },
     Candidates { session: [u8; 16], items: Vec<Candidate> },
+    Ready { session: [u8; 16] },
+    Heartbeat { session: [u8; 16], sequence: u32 },
     Finished { session: [u8; 16] },
 }
 #[derive(Debug, Serialize, Deserialize)]
@@ -53,6 +56,7 @@ impl Message {
             Self::Request { session, .. } | Self::Accept { session, .. }
             | Self::Offer { session, .. } | Self::Answer { session, .. }
             | Self::Proof { session, .. } | Self::Candidates { session, .. }
+            | Self::Ready { session } | Self::Heartbeat { session, .. }
             | Self::Finished { session } => *session,
         }
     }
