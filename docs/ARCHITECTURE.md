@@ -137,3 +137,7 @@ Server returns per-session IceConfig after approved encrypted handshake record e
 ## ADR-021：设备信任与重新上线
 
 Explicit OS-protected persistent signing identity and pre-enrollment display of key/ID. Public SQLite trust book scoped by server ID, no silent key overwrite; local user confirms identity pin and explicitly removes old record for key changes. Pin is not a session grant. Routed confirmation validates supplied device ID equals SHA-256 of the verified key, with saved pin or independently checked manual key. Presence retry is opt-in, bounded and same identity, never auto-accepts a request or resumes an input grant. Authentication and certificate mismatch terminal. A real session reconnect is a fresh local request/authorization.
+
+## ADR-022：M3 原生远程窗口及明确预选多屏
+
+Routed viewer 候选使用 Winit 0.30.13 + Softbuffer 0.4.8 + font8x8 0.3；原 LAN minifb 路径保留。软件渲染复用 physical viewport 几何，工具栏在远程画面外；焦点、鼠标进入工具栏、窗口 resize/fullscreen 或暂停输入时释放远程输入，关闭窗口或 Esc 停止。F11 是本地快捷键。只读会话 host 在本机批准前明确选最多四块屏幕，固定 ID 与 geometry，encrypted ViewLayout count，fixed Next screen message，capture owner 限速在预授权列表/拼接之间轮转，成功 push 后返回 layout ACK。控制仍 primary-only，首张真实帧成功才 readiness。所有平台实际 UI/DPI/性能待验；新依赖许可证审查待 M5。三个独立 controller slot 可分别启用原生凭据 vault，slot0 保持旧身份，额外槽位预登记，非单 ID multiplex。文件暂停和实时音量为固定有界 local pipe 命令，LF/CRLF 支持；未知命令/EOF 撤销，无远端命令接口。
