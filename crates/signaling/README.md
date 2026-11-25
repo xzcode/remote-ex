@@ -1,0 +1,5 @@
+# LAN diagnostic signaling
+
+Length-prefixed JSON (4-byte big-endian length, version 1, typed message, session ID). Maximum frame 256 KiB, SDP 64 KiB, up to 128 bounded ICE candidates, single-use connection, per-message and total deadlines, private/loopback IPv4 or IPv6 loopback only. Separate request, approval, SDP offer/answer, proof, candidate exchange, finished messages. The caller must enforce the precise message order, verify independent peer identities and signed SDP, and match authorization before enabling anything sensitive.
+
+No TLS yet: this is a limited synthetic-video diagnostic protocol, not a secure production LAN service. No credentials, real screen, clipboard, file contents or system input should be sent using it. No service starts automatically. Use only an explicit local bind and trusted devices. Production requires authenticated signaling protection, durable key storage and trust management, resource limits across concurrent sessions and review of the media authorization boundary.

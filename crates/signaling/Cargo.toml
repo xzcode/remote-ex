@@ -1,0 +1,10 @@
+[package]
+name = "remote-ex-signaling"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+remote-ex-security = { path = "../security" }
