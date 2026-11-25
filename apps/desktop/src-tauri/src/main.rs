@@ -3,6 +3,7 @@
 mod capture;
 mod lan;
 mod presence;
+mod trust;
 use tauri::Manager;
 
 fn main() {
@@ -21,6 +22,10 @@ fn main() {
             presence::presence_start,
             presence::presence_status,
             presence::presence_stop,
+            presence::persistent_identity_info,
+            trust::trusted_list,
+            trust::trusted_add,
+            trust::trusted_remove,
         ])
         .on_window_event(|window, event| {
             if window.label() == "main" && matches!(event, tauri::WindowEvent::CloseRequested { .. }) {

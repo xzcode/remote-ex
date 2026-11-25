@@ -19,3 +19,5 @@ remote-ex-rendezvous-client = { path = "../../../crates/rendezvous-client" }
 remote-ex-signaling = { path = "../../../crates/signaling" }
 remote-ex-security = { path = "../../../crates/security", features = ["native-vault"] }
 tokio = { version = "1", features = ["sync", "time", "macros"] }
+
+rusqlite = { version = "0.32", features = ["bundled"] }

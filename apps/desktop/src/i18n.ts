@@ -1,4 +1,9 @@
 export const en = {
+  identityPrepare: "Prepare persistent identity", identityEnrollment: "Device ID for administrator enrollment",
+  presenceRetry: "Retry online registration after a transport interruption (up to three times)", presenceReconnecting: "Reconnecting", presenceRetries: "Reconnect attempts",
+  trustTitle: "Trusted devices", trustDescription: "Verify the full device ID and public key independently. A saved key identifies a device; it never authorizes a session.",
+  trustLabel: "Device name", trustPublicKey: "Public key", trustRemove: "Remove", trustConfirmRemove: "Confirm removal", trustCancel: "Cancel",
+  trustEmpty: "No trusted devices for this server.", trustConsent: "I independently verified this device and its complete public key.", trustSave: "Save trusted device",
   server: "Server connection", presenceTitle: "Register this device", presenceActive: "Server registration active",
   presenceDescription: "Development presence preview (up to five minutes). All incoming connection requests are refused. No screen or keyboard/mouse access.",
   presenceMode: "Connection mode", presenceSecure: "Secure WSS (verified certificate)", presenceDevelopment: "Local development (loopback WS)",
@@ -49,6 +54,11 @@ export const en = {
 } as const;
 export type TextKey = keyof typeof en;
 export const zh: Record<TextKey, string> = {
+  identityPrepare: "准备持久设备身份", identityEnrollment: "供管理员登记的设备 ID",
+  presenceRetry: "网络中断后尝试重新上线（最多三次）", presenceReconnecting: "正在重连", presenceRetries: "重连次数",
+  trustTitle: "可信设备", trustDescription: "请通过独立可信渠道核对完整设备 ID 和公钥。保存公钥仅确认设备身份，不代表授权控制。",
+  trustLabel: "设备名称", trustPublicKey: "设备公钥", trustRemove: "移除", trustConfirmRemove: "确认移除", trustCancel: "取消",
+  trustEmpty: "此服务器暂无可信设备。", trustConsent: "我已独立核对该设备及其完整公钥。", trustSave: "保存可信设备",
   server: "服务器连接", presenceTitle: "注册本机设备", presenceActive: "设备注册进行中",
   presenceDescription: "开发版在线状态预览（最长五分钟）。所有传入连接请求都会被拒绝，不允许读取屏幕或控制键鼠。",
   presenceMode: "连接模式", presenceSecure: "安全 WSS（校验证书）", presenceDevelopment: "本机开发（回环 WS）",
