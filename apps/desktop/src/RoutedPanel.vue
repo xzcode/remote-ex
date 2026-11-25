@@ -5,16 +5,30 @@ import type {TextKey} from "./i18n";
 import {getCurrentWebview} from "@tauri-apps/api/webview";
 type Stage="idle"|"starting"|"awaiting_approval"|"connecting"|"listening"|"connected"|"stopping"|"passed"|"failed"|"canceled";
 type CatalogEntry={parts:string[];directory:boolean;size:number};
-type Snapshot={stage:Stage;active:boolean;local_key:string|null;device_id:string|null;detail:string|null;profile:string;input_released:boolean;decoded_fps?:number|null;decoded_bps?:number|null;transfer_done?:number|null;transfer_total?:number|null;transfer_verified?:boolean;transfer_paused?:boolean;checkpoint_saved?:number|null;directory_entries?:number|null;clipboard_sent?:number|null;clipboard_received?:number|null;catalog?:CatalogEntry[];catalog_ready?:boolean;catalog_selected?:number|null;resume_offset?:number|null;audio_volume?:number|null;network_bps?:number|null;rtt_ms?:number|null;loss_pct?:number|null;route_type?:string|null};
+type Change={op:'create_folder'|'create_file';parent:number|null;name:string}|{op:'rename';index:number;name:string}|{op:'recycle';index:number};
+type FileReview={items:{operation:string;source:string[]|null;destination:string[]}[];recovery:string|null};
+type Snapshot={stage:Stage;active:boolean;local_key:string|null;device_id:string|null;detail:string|null;profile:string;input_released:boolean;decoded_fps?:number|null;decoded_bps?:number|null;transfer_done?:number|null;transfer_total?:number|null;transfer_verified?:boolean;transfer_paused?:boolean;checkpoint_saved?:number|null;directory_entries?:number|null;clipboard_sent?:number|null;clipboard_received?:number|null;catalog?:CatalogEntry[];catalog_ready?:boolean;catalog_selected?:number|null;manage_review?:FileReview|null;manage_token?:string|null;manage_submitted?:boolean;manage_approved?:boolean;manage_applied?:number|null;resume_offset?:number|null;audio_volume?:number|null;network_bps?:number|null;rtt_ms?:number|null;loss_pct?:number|null;route_type?:string|null};
 type Device={device_id:string;public_key:string;label:string};
 type Display={id:number;name:string;width:number;height:number;primary:boolean};
 const props=defineProps<{t:(key:TextKey)=>string;slot:number;visible:boolean}>();
 const emit=defineEmits<{active:[value:boolean]}>();
-const native=isTauri(),role=ref<"host"|"controller">("controller"),mode=ref<"test"|"view"|"control"|"file"|"text"|"png"|"audio"|"directory"|"clipboard_sync"|"catalog"|"av_view"|"av_control">("test");
+const native=isTauri(),role=ref<"host"|"controller">("controller"),mode=ref<"test"|"view"|"control"|"file"|"text"|"png"|"audio"|"directory"|"clipboard_sync"|"catalog"|"av_view"|"av_control"|"manage">("test");
 const sender=ref<"host"|"controller">("controller"),transferPath=ref(""),volume=ref(75);
 const extraDisplays=ref<number[]>([]),secondaryControl=ref(false);
 const canSecondary=computed(()=>role.value==="host"&&(mode.value==="control"||mode.value==="av_control"));
 const catalogQuery=ref(""),catalogChoice=ref<number|null>(null);
+const changes=ref<Change[]>([]),operation=ref<"create_folder"|"create_file"|"rename"|"recycle">("create_folder"),newName=ref(""),parentIndex=ref<number|null>(null),fileIndex=ref<number|null>(null),reviewConfirmed=ref(false),planConfirmed=ref(false);
+const managedEditable=computed(()=>mode.value==="manage"&&role.value==="controller"&&snapshot.value.catalog_ready&&snapshot.value.stage==="connected"&&!snapshot.value.manage_submitted);
+const manageFile=computed(()=>operation.value==="rename"||operation.value==="recycle");
+const actionName=(op:string)=>({create_folder:"manageCreateFolder",create_file:"manageCreateFile",rename:"manageRename",recycle:"manageRecycle"}[op]??"manageUnknown") as TextKey;
+function appendChange(){
+ if(!managedEditable.value||changes.value.length>=4)return;
+ if(manageFile.value){if(fileIndex.value===null)return;changes.value.push(operation.value==="rename"?{op:"rename",index:fileIndex.value,name:newName.value.trim()}:{op:"recycle",index:fileIndex.value});}
+ else if(operation.value==="create_folder"||operation.value==="create_file"){changes.value.push({op:operation.value,parent:parentIndex.value,name:newName.value.trim()});}
+ newName.value="";planConfirmed.value=false;
+}
+function describeChange(c:Change){const row=snapshot.value.catalog??[];if(c.op==="rename"||c.op==="recycle"){const src=row[c.index]?.parts.join("/")??"?";return c.op==="rename"?`${src} → ${c.name}`:src;}return `${c.parent===null?"":(row[c.parent]?.parts.join("/")??"?")+"/"}${c.name}`;}
+watch(()=>snapshot.value.manage_token,()=>{reviewConfirmed.value=false;});
 const catalogRows=computed(()=> (snapshot.value.catalog??[]).map((entry,index)=>({entry,index})).filter(({entry})=>entry.parts.join("/").toLowerCase().includes(catalogQuery.value.toLowerCase())));
 const resumeFrom=ref(""),checkpointPath=ref("");
 const fileReceiver=computed(()=>mode.value==="file"&&role.value!==sender.value);
@@ -39,7 +53,7 @@ let timer:number|undefined,disposed=false,polling=false,revision=0;
 const statuses:Record<Stage,TextKey>={idle:"lanIdle",starting:"lanStarting",awaiting_approval:"lanAwaiting",connecting:"lanConnecting",listening:"lanListening",connected:"routedConnected",stopping:"controlStopping",passed:"controlEnded",failed:"lanFailed",canceled:"lanCanceled"};
 const status=computed(()=>props.t(statuses[snapshot.value.stage]));
 const validHex=(s:string)=>/^[a-fA-F0-9]{64}$/.test(s.trim());
-const canPrepare=computed(()=>native&&!busy.value&&!snapshot.value.active&&url.value.trim().startsWith("wss://")&&validHex(serverId.value)&&(!isDisplay.value||role.value==="controller"||displayId.value!==null)&&(!["file","directory","catalog"].includes(mode.value)||!!transferPath.value.trim()));
+const canPrepare=computed(()=>native&&!busy.value&&!snapshot.value.active&&url.value.trim().startsWith("wss://")&&validHex(serverId.value)&&(!isDisplay.value||role.value==="controller"||displayId.value!==null)&&(!(["file","directory","catalog"].includes(mode.value)||mode.value==="manage"&&role.value==="host")||!!transferPath.value.trim()));
 const canConfirm=computed(()=>!busy.value&&snapshot.value.stage==="awaiting_approval"&&!!snapshot.value.device_id&&validHex(peerId.value)&&validHex(peerKey.value)&&approved.value&&!submitted.value&&peerKey.value.trim().toLowerCase()!==snapshot.value.local_key);
 watch([role,mode],()=>{secondaryControl.value=false;displayId.value=null;extraDisplays.value=[];displays.value=[];approved.value=false;});
 watch(displayId,()=>{extraDisplays.value=[];});
@@ -65,9 +79,9 @@ async function prepareSlotIdentity(){
  catch(e){error.value=String(e);}finally{busy.value=false;}
 }
 async function chooseTransferFile(){
- if(!native||busy.value||snapshot.value.active||!["file","directory","catalog"].includes(mode.value))return;
+ if(!native||busy.value||snapshot.value.active||!["file","directory","catalog","manage"].includes(mode.value))return;
  busy.value=true;error.value="";
- try{const p=await invoke<string|null>("select_transfer_file",{receive:mode.value==="catalog"?role.value==="controller":role.value!==sender.value,directory:mode.value==="catalog"?role.value==="host":mode.value==="directory"&&role.value===sender.value});if(p)transferPath.value=p;}
+ try{const p=await invoke<string|null>("select_transfer_file",{receive:mode.value==="manage"?false:mode.value==="catalog"?role.value==="controller":role.value!==sender.value,directory:mode.value==="manage"?true:mode.value==="catalog"?role.value==="host":mode.value==="directory"&&role.value===sender.value});if(p)transferPath.value=p;}
  catch(e){error.value=String(e);}finally{busy.value=false;}
 }
 async function chooseCheckpoint(save:boolean){
@@ -98,9 +112,9 @@ async function makeInvitation(){
  try{invitation.value=await invoke<string>("invitation_create",{url:url.value.trim(),serverId:serverId.value.trim(),publicKey:snapshot.value.local_key,mode:mode.value});}catch(e){error.value=String(e);}finally{busy.value=false;}
 }
 function prepare(){
- approved.value=false;submitted.value=false;catalogChoice.value=null;catalogQuery.value="";
+ approved.value=false;submitted.value=false;catalogChoice.value=null;catalogQuery.value="";changes.value=[];parentIndex.value=null;fileIndex.value=null;newName.value="";reviewConfirmed.value=false;planConfirmed.value=false;
  return command("routed_prepare",{role:role.value,mode:mode.value,url:url.value.trim(),serverId:serverId.value.trim(),
- displayId:role.value==="host"&&isDisplay.value?displayId.value:null,relayOnly:relay.value,persistent:persistent.value,storageConsent:persistent.value,caPath:ca.value.trim()||null,saveHistory:saveHistory.value,quality:quality.value,sender:isExchange.value?sender.value:null,transferPath:["file","directory","catalog"].includes(mode.value)?transferPath.value.trim():null,volume:volume.value,extraDisplays:role.value==="host"&&isView.value?extraDisplays.value:[],resumeFrom:fileReceiver.value?resumeFrom.value.trim()||null:null,checkpointPath:fileReceiver.value?checkpointPath.value.trim()||null:null,sharedIdentity:shareAvailable.value&&sharedIdentity.value,secondaryControl:canSecondary.value&&secondaryControl.value});
+ displayId:role.value==="host"&&isDisplay.value?displayId.value:null,relayOnly:relay.value,persistent:persistent.value,storageConsent:persistent.value,caPath:ca.value.trim()||null,saveHistory:saveHistory.value,quality:quality.value,sender:isExchange.value?sender.value:null,transferPath:(["file","directory","catalog"].includes(mode.value)||mode.value==="manage"&&role.value==="host")?transferPath.value.trim():null,volume:volume.value,extraDisplays:role.value==="host"&&isView.value?extraDisplays.value:[],resumeFrom:fileReceiver.value?resumeFrom.value.trim()||null:null,checkpointPath:fileReceiver.value?checkpointPath.value.trim()||null:null,sharedIdentity:shareAvailable.value&&sharedIdentity.value,secondaryControl:canSecondary.value&&secondaryControl.value});
 }
 function confirm(){if(!canConfirm.value)return;submitted.value=true;return command("routed_confirm",{deviceId:peerId.value.trim(),peerKey:peerKey.value.trim(),approved:true});}
 let stopDrop:(()=>void)|undefined;
@@ -116,12 +130,12 @@ onBeforeUnmount(()=>{disposed=true;stopDrop?.();if(timer!==undefined)window.clea
  <header class="preview-head"><h2>{{ t("routedTitle") }}</h2><span class="status" role="status">{{ status }}</span></header>
  <p>{{ t("routedDescription") }}</p>
  <div v-if="snapshot.active&&isDisplay" class="view-notice">{{ t(role==="host"?"routedHostNotice":"controlControllerNotice") }}</div>
- <div class="field"><label>{{ t("invitationCode") }}</label><textarea v-model="invitation" maxlength="2048" :readonly="snapshot.active" rows="2"/><div class="actions"><button :disabled="busy||snapshot.active||!invitation.trim()" @click="readInvitation">{{ t("invitationImport") }}</button><button :disabled="busy||role!=='host'||!snapshot.device_id||isExchange||mode==='audio'||mode==='clipboard_sync'||mode==='catalog'" @click="makeInvitation">{{ t("invitationCreate") }}</button></div><p class="muted">{{ t("invitationNotice") }}</p></div>
+ <div class="field"><label>{{ t("invitationCode") }}</label><textarea v-model="invitation" maxlength="2048" :readonly="snapshot.active" rows="2"/><div class="actions"><button :disabled="busy||snapshot.active||!invitation.trim()" @click="readInvitation">{{ t("invitationImport") }}</button><button :disabled="busy||role!=='host'||!snapshot.device_id||isExchange||mode==='audio'||mode==='clipboard_sync'||mode==='catalog'||mode==='manage'" @click="makeInvitation">{{ t("invitationCreate") }}</button></div><p class="muted">{{ t("invitationNotice") }}</p></div>
  <div class="field">
   <label>{{ t("presenceUrl") }}</label><input v-model="url" placeholder="wss://…/v1/ws" maxlength="512" :disabled="busy||snapshot.active"/>
   <label>{{ t("presenceServerId") }}</label><input v-model="serverId" maxlength="64" class="key-input" :disabled="busy||snapshot.active"/>
   <label>{{ t("routedCa") }}</label><input v-model="ca" maxlength="1024" :disabled="busy||snapshot.active"/>
-  <label>{{ t("sessionProfile") }}</label><select v-model="mode" :disabled="busy||snapshot.active"><option value="test">{{ t("secureTest") }}</option><option value="view">{{ t("screenView") }}</option><option value="control">{{ t("controlMode") }}</option><option value="av_view">{{ t("avView") }}</option><option value="av_control">{{ t("avControl") }}</option><option value="file">{{ t("exchangeFile") }}</option><option value="directory">{{ t("exchangeDirectory") }}</option><option value="catalog">{{ t("catalogMode") }}</option><option value="text">{{ t("exchangeText") }}</option><option value="clipboard_sync">{{ t("clipboardSync") }}</option><option value="png">{{ t("exchangeImage") }}</option><option value="audio">{{ t("audioMode") }}</option></select>
+  <label>{{ t("sessionProfile") }}</label><select v-model="mode" :disabled="busy||snapshot.active"><option value="test">{{ t("secureTest") }}</option><option value="view">{{ t("screenView") }}</option><option value="control">{{ t("controlMode") }}</option><option value="av_view">{{ t("avView") }}</option><option value="av_control">{{ t("avControl") }}</option><option value="file">{{ t("exchangeFile") }}</option><option value="directory">{{ t("exchangeDirectory") }}</option><option value="catalog">{{ t("catalogMode") }}</option><option value="manage">{{ t("manageMode") }}</option><option value="text">{{ t("exchangeText") }}</option><option value="clipboard_sync">{{ t("clipboardSync") }}</option><option value="png">{{ t("exchangeImage") }}</option><option value="audio">{{ t("audioMode") }}</option></select>
   <label>{{ t("lanRole") }}</label><select v-model="role" :disabled="busy||snapshot.active"><option value="controller">{{ t("lanController") }}</option><option value="host">{{ t("lanHost") }}</option></select>
   <template v-if="role==='host'&&isDisplay">
    <label v-if="canSecondary" class="check-label"><input type="checkbox" v-model="secondaryControl" :disabled="busy||snapshot.active" @change="displayId=null;displays=[]"/>{{ t("secondaryControl") }}</label>
@@ -134,6 +148,10 @@ onBeforeUnmount(()=>{disposed=true;stopDrop?.();if(timer!==undefined)window.clea
     <label>{{ t(role==="host"?"catalogRoot":"exchangeDestination") }}</label>
     <div class="actions"><input v-model="transferPath" maxlength="2048" :disabled="busy||snapshot.active"/><button :disabled="busy||snapshot.active||!native" @click="chooseTransferFile">{{ t(role==="host"?"directoryChoose":"exchangeChooseFile") }}</button></div>
     <p class="muted">{{ t("catalogNotice") }}</p>
+  </div>
+  <div v-if="mode==='manage'" class="field">
+    <template v-if="role==='host'"><label>{{ t("manageRoot") }}</label><div class="actions"><input v-model="transferPath" maxlength="2048" :disabled="busy||snapshot.active"/><button :disabled="busy||snapshot.active||!native" @click="chooseTransferFile">{{ t("directoryChoose") }}</button></div></template>
+    <p class="muted">{{ t("manageNotice") }}</p>
   </div>
   <template v-if="fileReceiver">
     <label>{{ t("resumeExisting") }}</label><div class="actions"><input v-model="resumeFrom" maxlength="2048" :disabled="busy||snapshot.active"/><button :disabled="busy||snapshot.active||!native" @click="chooseCheckpoint(false)">{{ t("exchangeChooseFile") }}</button></div>
@@ -158,12 +176,36 @@ onBeforeUnmount(()=>{disposed=true;stopDrop?.();if(timer!==undefined)window.clea
   <label>{{ t("routedPeerId") }}</label><input v-model="peerId" maxlength="64" class="key-input" :disabled="busy||submitted||!!chosen"/>
   <label>{{ t("lanPeerKey") }}</label><input v-model="peerKey" maxlength="64" class="key-input" :disabled="busy||submitted||!!chosen"/>
   <p class="muted">{{ t("routedVerify") }}</p>
-  <label class="check-label"><input type="checkbox" v-model="approved" :disabled="busy||submitted"/>{{ t(canSecondary&&secondaryControl?(isAv?"secondaryAvConsent":"secondaryConsent"):isAv?(isView?(role==="host"?"avViewHostConsent":"avViewControllerConsent"):(role==="host"?"avControlHostConsent":"avControlControllerConsent")):mode==="catalog"?(role==="host"?"catalogHostConsent":"catalogControllerConsent"):mode==="clipboard_sync"?"clipboardSyncConsent":mode==="audio"?(role==="host"?"audioSendConsent":"audioPlayConsent"):isExchange?(role===sender?"exchangeSendConsent":"exchangeReceiveConsent"):mode==="test"?"routedTestConsent":mode==="view"?(role==="host"?(extraDisplays.length?"multiDisplayConsent":"viewHostConsent"):"viewControllerConsent"):(role==="host"?"controlHostConsent":"controlControllerConsent")) }}</label>
+  <label class="check-label"><input type="checkbox" v-model="approved" :disabled="busy||submitted"/>{{ t(mode==="manage"?(role==="host"?"manageHostConsent":"manageControllerConsent"):canSecondary&&secondaryControl?(isAv?"secondaryAvConsent":"secondaryConsent"):isAv?(isView?(role==="host"?"avViewHostConsent":"avViewControllerConsent"):(role==="host"?"avControlHostConsent":"avControlControllerConsent")):mode==="catalog"?(role==="host"?"catalogHostConsent":"catalogControllerConsent"):mode==="clipboard_sync"?"clipboardSyncConsent":mode==="audio"?(role==="host"?"audioSendConsent":"audioPlayConsent"):isExchange?(role===sender?"exchangeSendConsent":"exchangeReceiveConsent"):mode==="test"?"routedTestConsent":mode==="view"?(role==="host"?(extraDisplays.length?"multiDisplayConsent":"viewHostConsent"):"viewControllerConsent"):(role==="host"?"controlHostConsent":"controlControllerConsent")) }}</label>
   <button class="primary" :disabled="!canConfirm" @click="confirm">{{ t("lanApprove") }}</button>
  </div>
  <div v-if="snapshot.stage==='connected'&&isDisplay" class="field"><label>{{ t("networkStats") }}</label><p class="muted">{{ t("networkBitrate") }}: {{ snapshot.network_bps==null?"—":(snapshot.network_bps/1000000).toFixed(2)+" Mb/s" }} · RTT: {{ snapshot.rtt_ms==null?"—":snapshot.rtt_ms+" ms" }} · {{ t("networkLoss") }}: {{ snapshot.loss_pct==null?"—":snapshot.loss_pct.toFixed(2)+"%" }} · {{ t("networkRoute") }}: {{ snapshot.route_type==="relay"?"TURN":snapshot.route_type==="direct"?"P2P":"—" }}</p></div>
  <p v-if="snapshot.decoded_fps!=null" class="muted">{{ t("decodedFps") }}: {{ snapshot.decoded_fps.toFixed(1) }} · {{ t("decodedThroughput") }}: {{ ((snapshot.decoded_bps??0)/1000000).toFixed(1) }} Mb/s</p>
  <div v-if="snapshot.transfer_total!=null" class="field"><label>{{ t("exchangeProgress") }}: {{ snapshot.transfer_done??0 }} / {{ snapshot.transfer_total }} B</label><progress :max="Math.max(1,snapshot.transfer_total)" :value="snapshot.transfer_done??0"/></div><div v-if="mode==='file'&&snapshot.stage==='connected'&&!snapshot.transfer_verified" class="actions"><span v-if="snapshot.transfer_paused" class="muted">{{ t("exchangePaused") }}</span><button v-if="role===sender" :disabled="busy" @click="command('routed_transfer_pause',{paused:!snapshot.transfer_paused})">{{ t(snapshot.transfer_paused?"exchangeResume":"exchangePause") }}</button></div><p v-if="snapshot.transfer_verified" class="muted">{{ t("exchangeVerified") }}</p>
+ <div v-if="mode==='manage'&&role==='controller'&&snapshot.catalog_ready" class="field">
+  <label>{{ t("catalogTitle") }} ({{ snapshot.catalog?.length??0 }})</label>
+  <input v-model="catalogQuery" :placeholder="t('deviceSearch')"/>
+  <div style="max-height:200px;overflow:auto;border:1px solid var(--border);border-radius:6px"><div v-for="{entry,index} in catalogRows" :key="index" style="padding:6px 8px;overflow-wrap:anywhere">{{ entry.directory?"▸":"·" }} {{ entry.parts.join("/") }} <span v-if="!entry.directory" class="muted">{{ entry.size }} B</span></div></div>
+  <label>{{ t("manageAction") }}</label>
+  <select v-model="operation" :disabled="busy||!managedEditable"><option value="create_folder">{{ t("manageCreateFolder") }}</option><option value="create_file">{{ t("manageCreateFile") }}</option><option value="rename">{{ t("manageRename") }}</option><option value="recycle">{{ t("manageRecycle") }}</option></select>
+  <select v-if="manageFile" v-model="fileIndex" :disabled="busy||!managedEditable"><option :value="null">{{ t("select") }}</option><option v-for="{entry,index} in catalogRows.filter(x=>!x.entry.directory)" :key="index" :value="index">{{ entry.parts.join("/") }}</option></select>
+  <select v-else v-model="parentIndex" :disabled="busy||!managedEditable"><option :value="null">{{ t("manageRootLevel") }}</option><option v-for="{entry,index} in catalogRows.filter(x=>x.entry.directory)" :key="index" :value="index">{{ entry.parts.join("/") }}</option></select>
+  <input v-if="operation!=='recycle'" v-model="newName" maxlength="96" :placeholder="t('manageNewName')" :disabled="busy||!managedEditable"/>
+  <button :disabled="busy||!managedEditable||changes.length>=4||(manageFile&&fileIndex===null)||(operation!=='recycle'&&!newName.trim())" @click="appendChange">{{ t("manageAdd") }}</button>
+  <label>{{ t("manageProposed") }} ({{ changes.length }}/4)</label>
+  <div v-for="(c,i) in changes" :key="i" class="actions" style="overflow-wrap:anywhere"><span>{{ t(actionName(c.op)) }}: {{ describeChange(c) }}</span><button :disabled="busy||!managedEditable" @click="changes.splice(i,1);planConfirmed=false">{{ t("trustRemove") }}</button></div>
+  <label class="check-label"><input type="checkbox" v-model="planConfirmed" :disabled="!managedEditable||busy"/>{{ t("manageSendConfirm") }}</label>
+  <button class="primary" :disabled="busy||!managedEditable||!changes.length||!planConfirmed" @click="command('routed_manage_submit',{plan:{changes},confirmed:true})">{{ t("manageSend") }}</button>
+  <p v-if="snapshot.manage_submitted" class="muted">{{ t("manageWaiting") }}</p>
+ </div>
+ <div v-if="mode==='manage'&&role==='host'&&snapshot.manage_review" class="field">
+  <label>{{ t("manageReview") }}</label><p>{{ t("manageReviewNotice") }}</p>
+  <div v-for="(r,i) in snapshot.manage_review.items" :key="i" style="overflow-wrap:anywhere;padding:6px 0"><strong>{{ t(actionName(r.operation)) }}</strong><div v-if="r.source">{{ r.source.join("/") }} →</div><div>{{ r.destination.join("/") }}</div></div>
+  <p v-if="snapshot.manage_review.recovery" class="muted">{{ t("manageRecovery") }}: {{ snapshot.manage_review.recovery }}</p>
+  <label class="check-label"><input type="checkbox" v-model="reviewConfirmed" :disabled="busy||snapshot.manage_approved||!snapshot.active"/>{{ t("manageExactConfirm") }}</label>
+  <button class="primary" :disabled="busy||!snapshot.active||snapshot.manage_approved||!reviewConfirmed" @click="command('routed_manage_approve',{token:snapshot.manage_token,confirmed:true})">{{ t("manageApprove") }}</button>
+ </div>
+ <p v-if="snapshot.manage_applied!=null" class="muted">{{ t("manageApplied") }}: {{ snapshot.manage_applied }}</p>
  <div v-if="mode==='catalog'&&role==='controller'&&snapshot.catalog_ready" class="field">
    <label>{{ t("catalogTitle") }} ({{ snapshot.catalog?.length??0 }})</label>
    <input v-model="catalogQuery" :placeholder="t('deviceSearch')"/>

@@ -52,6 +52,11 @@ pub struct Snapshot {
     catalog:Vec<remote_ex_desktop_features::directory::Entry>,
     catalog_ready:bool,
     catalog_selected:Option<usize>,
+    manage_review:Option<remote_ex_desktop_features::directory::managed::Review>,
+    manage_token:Option<String>,
+    manage_submitted:bool,
+    manage_approved:bool,
+    manage_applied:Option<usize>,
     secondary_control:bool,
     resume_offset: Option<u64>,
     audio_volume: Option<u8>,
@@ -62,7 +67,7 @@ pub struct Snapshot {
 }
 impl Default for Snapshot {
     fn default() -> Self {
-        Self { stage: Stage::Idle, active: false, local_key: None, detail: None, profile: Profile::Diagnostic, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, transfer_paused:false, checkpoint_saved:None, directory_entries:None, clipboard_sent:None, clipboard_received:None, catalog:Vec::new(), catalog_ready:false,catalog_selected:None,secondary_control:false,resume_offset:None, audio_volume:None, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None }
+        Self { stage: Stage::Idle, active: false, local_key: None, detail: None, profile: Profile::Diagnostic, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, transfer_paused:false, checkpoint_saved:None, directory_entries:None, clipboard_sent:None, clipboard_received:None, catalog:Vec::new(), catalog_ready:false,catalog_selected:None,manage_review:None,manage_token:None,manage_submitted:false,manage_approved:false,manage_applied:None,secondary_control:false,resume_offset:None, audio_volume:None, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None }
     }
 }
 
@@ -79,7 +84,7 @@ fn stage(shared: &Mutex<Snapshot>, next: Stage, detail: Option<String>) {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
-enum Profile { Diagnostic, SecureTest, Screen, Control, RoutedTest, RoutedView, RoutedControl, RoutedFileHost, RoutedFileController, RoutedTextHost, RoutedTextController, RoutedPngHost, RoutedPngController, RoutedAudio, RoutedDirectoryHost, RoutedDirectoryController, RoutedClipboardSync, RoutedCatalog, RoutedAvView, RoutedAvControl }
+enum Profile { Diagnostic, SecureTest, Screen, Control, RoutedTest, RoutedView, RoutedControl, RoutedFileHost, RoutedFileController, RoutedTextHost, RoutedTextController, RoutedPngHost, RoutedPngController, RoutedAudio, RoutedDirectoryHost, RoutedDirectoryController, RoutedClipboardSync, RoutedCatalog, RoutedAvView, RoutedAvControl, RoutedManage }
 impl Profile {
     fn parse(value: &str) -> Result<Self, String> {
         match value {
@@ -90,9 +95,9 @@ impl Profile {
             _ => Err("Unknown session profile".into()),
         }
     }
-    fn routed(self)->bool{matches!(self,Self::RoutedTest|Self::RoutedView|Self::RoutedControl|Self::RoutedAvView|Self::RoutedAvControl)||self.exchange().is_some()||matches!(self,Self::RoutedAudio|Self::RoutedClipboardSync|Self::RoutedCatalog)}
+    fn routed(self)->bool{matches!(self,Self::RoutedTest|Self::RoutedView|Self::RoutedControl|Self::RoutedAvView|Self::RoutedAvControl)||self.exchange().is_some()||matches!(self,Self::RoutedAudio|Self::RoutedClipboardSync|Self::RoutedCatalog|Self::RoutedManage)}
     fn exchange(self)->Option<(&'static str,bool)>{match self{Self::RoutedFileHost=>Some(("file",true)),Self::RoutedFileController=>Some(("file",false)),Self::RoutedTextHost=>Some(("text",true)),Self::RoutedTextController=>Some(("text",false)),Self::RoutedPngHost=>Some(("png",true)),Self::RoutedPngController=>Some(("png",false)),Self::RoutedDirectoryHost=>Some(("directory",true)),Self::RoutedDirectoryController=>Some(("directory",false)),_=>None}}
-    fn graceful(self)->bool{self.requires_release()||self.exchange().is_some()||matches!(self,Self::RoutedAudio|Self::RoutedClipboardSync|Self::RoutedCatalog)}
+    fn graceful(self)->bool{self.requires_release()||self.exchange().is_some()||matches!(self,Self::RoutedAudio|Self::RoutedClipboardSync|Self::RoutedCatalog|Self::RoutedManage)}
     fn av(self)->bool{matches!(self,Self::RoutedAvView|Self::RoutedAvControl)}
     fn view(self)->bool{matches!(self,Self::RoutedView|Self::RoutedAvView)}
     fn audio(self)->bool{self==Self::RoutedAudio||self.av()}
@@ -121,6 +126,7 @@ impl Profile {
             Self::RoutedAudio=>if host{"ALLOW SEND SYSTEM AUDIO"}else{"ALLOW PLAY SYSTEM AUDIO"},
             Self::RoutedClipboardSync=>"ALLOW LIVE CLIPBOARD TEXT SYNC",
             Self::RoutedCatalog=>if host{"ALLOW LIST AND DOWNLOAD SELECTED ROOT"}else{"ALLOW BROWSE AND RECEIVE ONE FILE"},
+            Self::RoutedManage=>if host{"ALLOW REVIEW FILE CHANGES"}else{"ALLOW PROPOSE FILE CHANGES"},
             Self::RoutedDirectoryHost|Self::RoutedDirectoryController=>if self.exchange().unwrap().1==host{"ALLOW SEND DIRECTORY"}else{"ALLOW RECEIVE DIRECTORY"},
         }
     }
@@ -153,8 +159,8 @@ fn sidecar_path(profile: Profile) -> Result<PathBuf, String> {
         (Profile::RoutedTest,false)=>"routed_diagnostic",
         (p,true) if p.exchange().is_some()=>"routed_control.exe",
         (p,false) if p.exchange().is_some()=>"routed_control",
-        (Profile::RoutedView|Profile::RoutedControl|Profile::RoutedAvView|Profile::RoutedAvControl|Profile::RoutedAudio|Profile::RoutedClipboardSync|Profile::RoutedCatalog,true)=>"routed_control.exe",
-        (Profile::RoutedView|Profile::RoutedControl|Profile::RoutedAvView|Profile::RoutedAvControl|Profile::RoutedAudio|Profile::RoutedClipboardSync|Profile::RoutedCatalog,false)=>"routed_control",
+        (Profile::RoutedView|Profile::RoutedControl|Profile::RoutedAvView|Profile::RoutedAvControl|Profile::RoutedAudio|Profile::RoutedClipboardSync|Profile::RoutedCatalog|Profile::RoutedManage,true)=>"routed_control.exe",
+        (Profile::RoutedView|Profile::RoutedControl|Profile::RoutedAvView|Profile::RoutedAvControl|Profile::RoutedAudio|Profile::RoutedClipboardSync|Profile::RoutedCatalog|Profile::RoutedManage,false)=>"routed_control",
         (_, true) => "lan_view.exe",
         (_, false) => "lan_view",
     };
@@ -166,7 +172,7 @@ fn sidecar_path(profile: Profile) -> Result<PathBuf, String> {
     Ok(path)
 }
 
-enum WorkerCommand { Approve(String), Pause(bool), Volume(u8), CatalogSelect(usize) }
+enum WorkerCommand { Approve(String), Pause(bool), Volume(u8), CatalogSelect(usize), ManagePlan(String), ManageApprove(String) }
 enum Output { Stdout(String), Stderr(String), Invalid }
 struct Worker { tx: SyncSender<WorkerCommand>, stop: Arc<AtomicBool>, join: JoinHandle<()> }
 struct ChildGuard(Child);
@@ -257,9 +263,26 @@ fn handle_output(shared: &Mutex<Snapshot>, output: Output, pass: &mut bool, fail
                 }
             } else if let Some(v)=text.strip_prefix("AUDIO_VOLUME "){
                 let mut snap=locked(shared);if snap.profile.audio(){snap.audio_volume=v.parse::<u8>().ok().filter(|v|*v<=100);}
+            } else if let Some(line)=text.strip_prefix("MANAGE_REVIEW "){
+                let mut snap=locked(shared);
+                if snap.profile==Profile::RoutedManage&&snap.stage==Stage::Connected&&snap.manage_review.is_none(){
+                    let review=line.split_once(' ').and_then(|(token,json)|{
+                        if token.len()!=64||!token.bytes().all(|b|b.is_ascii_hexdigit())||json.len()>remote_ex_desktop_features::directory::managed::MAX_REVIEW_BYTES{return None;}
+                        let r:remote_ex_desktop_features::directory::managed::Review=serde_json::from_str(json).ok()?;
+                        if r.items.is_empty()||r.items.len()>4{return None;}
+                        Some((token.to_owned(),r))
+                    });
+                    if let Some((token,review))=review{snap.manage_token=Some(token);snap.manage_review=Some(review);}else{*failure=Some("Invalid local file review".into());}
+                }
+            } else if let Some(n)=text.strip_prefix("MANAGE_APPLIED "){
+                let mut snap=locked(shared);
+                if snap.profile==Profile::RoutedManage{
+                    snap.manage_applied=n.parse::<usize>().ok().filter(|v|(1..=4).contains(v));
+                    if snap.manage_applied.is_none(){*failure=Some("Invalid file change receipt".into());}
+                }
             } else if let Some(line)=text.strip_prefix("CATALOG_ENTRY "){
                 let mut snap=locked(shared);
-                if snap.profile==Profile::RoutedCatalog&&snap.stage==Stage::Connected&&!snap.catalog_ready{
+                if matches!(snap.profile,Profile::RoutedCatalog|Profile::RoutedManage)&&snap.stage==Stage::Connected&&!snap.catalog_ready{
                     let valid=line.split_once(' ').and_then(|(i,json)|{
                         if i.parse::<usize>().ok()!=Some(snap.catalog.len())||snap.catalog.len()>=256{return None;}
                         serde_json::from_str::<remote_ex_desktop_features::directory::Entry>(json).ok()
@@ -268,7 +291,7 @@ fn handle_output(shared: &Mutex<Snapshot>, output: Output, pass: &mut bool, fail
                 }
             } else if let Some(n)=text.strip_prefix("CATALOG_READY "){
                 let mut snap=locked(shared);
-                if snap.profile==Profile::RoutedCatalog&&snap.stage==Stage::Connected&&!snap.catalog_ready{
+                if matches!(snap.profile,Profile::RoutedCatalog|Profile::RoutedManage)&&snap.stage==Stage::Connected&&!snap.catalog_ready{
                     let valid=n.parse::<usize>().ok()==Some(snap.catalog.len())
                         &&serde_json::to_vec(&snap.catalog).ok().and_then(|b|remote_ex_desktop_features::directory::decode_catalog(&b).ok()).is_some();
                     if valid{snap.catalog_ready=true;}else{*failure=Some("Invalid catalog manifest output".into());}
@@ -395,6 +418,17 @@ fn supervise(
                     if let Some(pipe)=stdin.as_mut(){if writeln!(pipe,"SELECT {index}").and_then(|_|pipe.flush()).is_err(){failure=Some("Could not deliver local file selection".into());}}
                 }
             }
+            Ok(WorkerCommand::ManagePlan(plan))=>{
+                if approved&&profile==Profile::RoutedManage&&!host&&locked(&shared).stage==Stage::Connected{
+                    if let Some(pipe)=stdin.as_mut(){if writeln!(pipe,"PLAN {plan}").and_then(|_|pipe.flush()).is_err(){failure=Some("Could not deliver local change request".into());}}
+                }
+            }
+            Ok(WorkerCommand::ManageApprove(token))=>{
+                let valid={let s=locked(&shared);s.stage==Stage::Connected&&s.manage_approved&&s.manage_token.as_deref()==Some(token.as_str())};
+                if approved&&profile==Profile::RoutedManage&&host&&valid{
+                    if let Some(pipe)=stdin.as_mut(){if writeln!(pipe,"APPROVE {token}").and_then(|_|pipe.flush()).is_err(){failure=Some("Could not deliver exact local review approval".into());}}
+                }
+            }
             Err(TryRecvError::Empty) => {}
         }}
         match child.0.try_wait() {
@@ -460,7 +494,7 @@ impl SessionManager {
                 command.arg("--desktop-session");
             }
             p if p.routed()=>return Err("Use the routed connection entry point".into()),
-            Profile::RoutedTest|Profile::RoutedView|Profile::RoutedControl|Profile::RoutedFileHost|Profile::RoutedFileController|Profile::RoutedTextHost|Profile::RoutedTextController|Profile::RoutedPngHost|Profile::RoutedPngController|Profile::RoutedAudio|Profile::RoutedDirectoryHost|Profile::RoutedDirectoryController|Profile::RoutedClipboardSync|Profile::RoutedCatalog|Profile::RoutedAvView|Profile::RoutedAvControl=>return Err("Use the routed connection entry point".into()),
+            Profile::RoutedTest|Profile::RoutedView|Profile::RoutedControl|Profile::RoutedFileHost|Profile::RoutedFileController|Profile::RoutedTextHost|Profile::RoutedTextController|Profile::RoutedPngHost|Profile::RoutedPngController|Profile::RoutedAudio|Profile::RoutedDirectoryHost|Profile::RoutedDirectoryController|Profile::RoutedClipboardSync|Profile::RoutedCatalog|Profile::RoutedAvView|Profile::RoutedAvControl|Profile::RoutedManage=>return Err("Use the routed connection entry point".into()),
             Profile::Screen => {
                 if host {
                     let display = display_id.ok_or("Choose the specific display to share")?;
@@ -494,6 +528,14 @@ impl SessionManager {
                     for d in extra_displays{command.arg("--view-extra").arg(d.to_string());}
                 }else if !extra_displays.is_empty(){return Err("Only the host can authorize additional displays".into());}
                 if profile.av(){if volume>100{return Err("Invalid audio volume".into());}command.arg("--volume").arg(volume.to_string());}
+            },
+            Profile::RoutedManage=>{
+                command.arg("--manage");
+                if host{
+                    let root=PathBuf::from(transfer_path.ok_or("Choose local directory for reviewed changes")?);
+                    if !root.is_absolute()||!std::fs::symlink_metadata(&root).is_ok_and(|m|m.file_type().is_dir()){return Err("Select an ordinary absolute local directory".into());}
+                    command.arg(root);
+                }
             },
             Profile::RoutedCatalog=>{
                 let path=PathBuf::from(transfer_path.ok_or("Choose local catalog root or destination")?);
@@ -560,7 +602,7 @@ impl SessionManager {
         }
         let child = command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped())
             .spawn().map_err(|e| format!("Cannot start native media diagnostic: {e}"))?;
-        *locked(&self.shared) = Snapshot { stage: Stage::Starting, active: true, local_key: None, detail: None, profile, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, transfer_paused:false, checkpoint_saved:None, directory_entries:None, clipboard_sent:None, clipboard_received:None, catalog:Vec::new(), catalog_ready:false,catalog_selected:None,secondary_control:secondary,resume_offset:None, audio_volume:None, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None };
+        *locked(&self.shared) = Snapshot { stage: Stage::Starting, active: true, local_key: None, detail: None, profile, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, transfer_paused:false, checkpoint_saved:None, directory_entries:None, clipboard_sent:None, clipboard_received:None, catalog:Vec::new(), catalog_ready:false,catalog_selected:None,manage_review:None,manage_token:None,manage_submitted:false,manage_approved:false,manage_applied:None,secondary_control:secondary,resume_offset:None, audio_volume:None, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None };
         let (tx, rx) = mpsc::sync_channel(4);
         let shared = self.shared.clone();
         let stop = Arc::new(AtomicBool::new(false));
@@ -686,6 +728,33 @@ pub fn routed_transfer_pause(window:WebviewWindow,managers:State<'_,RoutedManage
 }
 
 #[tauri::command]
+pub fn routed_manage_submit(window:WebviewWindow,managers:State<'_,RoutedManagers>,slot:Option<u8>,plan:remote_ex_desktop_features::directory::managed::Plan,confirmed:bool)->Result<Snapshot,String>{
+    require_main(&window)?;
+    if !confirmed{return Err("Confirm sending the proposed changes for host review".into());}
+    let slots=locked(&managers.slots);let manager=&slots.sessions[slot_index(slot)?];
+    let mut snap=locked(&manager.shared);
+    if snap.stage!=Stage::Connected||snap.profile!=Profile::RoutedManage||!snap.catalog_ready||snap.manage_submitted{return Err("No unsubmitted file change session".into());}
+    // Session-bound review is computed by the authenticated child; this
+    // parent only validates the same typed, bounded proposal and indices.
+    plan.review(&snap.catalog,[1;16])?;
+    let encoded=String::from_utf8(plan.encode()?).map_err(|_|"Invalid file plan encoding")?;
+    let worker=locked(&manager.worker);
+    worker.as_ref().ok_or("No active file-management process")?.tx.try_send(WorkerCommand::ManagePlan(encoded)).map_err(|_|"File change request unavailable".to_owned())?;
+    snap.manage_submitted=true;Ok(snap.clone())
+}
+#[tauri::command]
+pub fn routed_manage_approve(window:WebviewWindow,managers:State<'_,RoutedManagers>,slot:Option<u8>,token:String,confirmed:bool)->Result<Snapshot,String>{
+    require_main(&window)?;
+    if !confirmed{return Err("Explicitly confirm the exact local review".into());}
+    let slots=locked(&managers.slots);let manager=&slots.sessions[slot_index(slot)?];let mut snap=locked(&manager.shared);
+    if snap.stage!=Stage::Connected||snap.profile!=Profile::RoutedManage||snap.manage_review.is_none()||snap.manage_approved||snap.manage_token.as_deref()!=Some(token.as_str()){
+        return Err("No matching pending local file review".into());
+    }
+    let worker=locked(&manager.worker);
+    worker.as_ref().ok_or("No active file-management process")?.tx.try_send(WorkerCommand::ManageApprove(token)).map_err(|_|"Local review approval unavailable".to_owned())?;
+    snap.manage_approved=true;Ok(snap.clone())
+}
+#[tauri::command]
 pub fn routed_catalog_select(window:WebviewWindow,managers:State<'_,RoutedManagers>,slot:Option<u8>,index:usize,confirmed:bool)->Result<Snapshot,String>{
     require_main(&window)?;
     if !confirmed{return Err("Confirm the selected download".into());}
@@ -721,7 +790,7 @@ pub async fn select_transfer_file(window:WebviewWindow,receive:bool,directory:Op
 pub fn routed_prepare(window:WebviewWindow,manager:State<'_,SessionManager>,managers:State<'_,RoutedManagers>,slot:Option<u8>,role:String,url:String,server_id:String,mode:String,display_id:Option<u32>,relay_only:bool,persistent:bool,storage_consent:bool,ca_path:Option<String>,save_history:Option<bool>,quality:Option<String>,sender:Option<String>,transfer_path:Option<String>,volume:Option<u8>,extra_displays:Option<Vec<u32>>,resume_from:Option<String>,checkpoint_path:Option<String>,shared_identity:Option<bool>,secondary_control:Option<bool>)->Result<Snapshot,String>{
     require_main(&window)?;
     let profile=match (mode.as_str(),sender.as_deref()){
-        ("test",_)=>Profile::RoutedTest,("view",_)=>Profile::RoutedView,("control",_)=>Profile::RoutedControl,("av_view",_)=>Profile::RoutedAvView,("av_control",_)=>Profile::RoutedAvControl,("audio",_)=>Profile::RoutedAudio,("clipboard_sync",_)=>Profile::RoutedClipboardSync,("catalog",_)=>Profile::RoutedCatalog,
+        ("test",_)=>Profile::RoutedTest,("view",_)=>Profile::RoutedView,("control",_)=>Profile::RoutedControl,("av_view",_)=>Profile::RoutedAvView,("av_control",_)=>Profile::RoutedAvControl,("audio",_)=>Profile::RoutedAudio,("clipboard_sync",_)=>Profile::RoutedClipboardSync,("catalog",_)=>Profile::RoutedCatalog,("manage",_)=>Profile::RoutedManage,
         ("file",Some("host"))=>Profile::RoutedFileHost,("file",Some("controller"))=>Profile::RoutedFileController,
         ("text",Some("host"))=>Profile::RoutedTextHost,("text",Some("controller"))=>Profile::RoutedTextController,
         ("png",Some("host"))=>Profile::RoutedPngHost,("png",Some("controller"))=>Profile::RoutedPngController,
@@ -732,7 +801,7 @@ pub fn routed_prepare(window:WebviewWindow,manager:State<'_,SessionManager>,mana
     let i=slot_index(slot)?;
     let mut slots=locked(&managers.slots);
     if manager.busy(){return Err("Finish the LAN session first".into());}
-    let exclusive=role=="host"||profile.exchange().is_some()||matches!(profile,Profile::RoutedAudio|Profile::RoutedClipboardSync|Profile::RoutedCatalog);
+    let exclusive=role=="host"||profile.exchange().is_some()||matches!(profile,Profile::RoutedAudio|Profile::RoutedClipboardSync|Profile::RoutedCatalog|Profile::RoutedManage);
     let shared=shared_identity.unwrap_or(false);
     if shared&&(!persistent||exclusive){return Err("Shared identity is only for persistent outgoing test/view/control sessions".into());}
     let identity=if shared{0}else{i as u8};
@@ -787,7 +856,7 @@ mod tests {
     fn control_requires_distinct_consent_and_release_marker() {
         assert_eq!(Profile::Control.consent(true), "ALLOW SCREEN AND INPUT");
         assert_eq!(Profile::Control.consent(false), "ALLOW REMOTE INPUT");
-        let shared = Mutex::new(Snapshot { stage: Stage::Connected, active: true, local_key: None, detail: None, profile: Profile::Control, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, transfer_paused:false, checkpoint_saved:None, directory_entries:None, clipboard_sent:None, clipboard_received:None, catalog:Vec::new(), catalog_ready:false,catalog_selected:None,secondary_control:false,resume_offset:None, audio_volume:None, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None });
+        let shared = Mutex::new(Snapshot { stage: Stage::Connected, active: true, local_key: None, detail: None, profile: Profile::Control, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, transfer_paused:false, checkpoint_saved:None, directory_entries:None, clipboard_sent:None, clipboard_received:None, catalog:Vec::new(), catalog_ready:false,catalog_selected:None,manage_review:None,manage_token:None,manage_submitted:false,manage_approved:false,manage_applied:None,secondary_control:false,resume_offset:None, audio_volume:None, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None });
         let (mut pass, mut failure) = (false, None);
         stage(&shared, Stage::Stopping, None);
         assert!(locked(&shared).active);
@@ -797,7 +866,7 @@ mod tests {
     }
     #[test]
     fn status_requires_valid_local_key_and_terminal_state() {
-        let shared = Mutex::new(Snapshot { stage: Stage::Starting, active: true, local_key: None, detail: None, profile: Profile::Diagnostic, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, transfer_paused:false, checkpoint_saved:None, directory_entries:None, clipboard_sent:None, clipboard_received:None, catalog:Vec::new(), catalog_ready:false,catalog_selected:None,secondary_control:false,resume_offset:None, audio_volume:None, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None });
+        let shared = Mutex::new(Snapshot { stage: Stage::Starting, active: true, local_key: None, detail: None, profile: Profile::Diagnostic, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, transfer_paused:false, checkpoint_saved:None, directory_entries:None, clipboard_sent:None, clipboard_received:None, catalog:Vec::new(), catalog_ready:false,catalog_selected:None,manage_review:None,manage_token:None,manage_submitted:false,manage_approved:false,manage_applied:None,secondary_control:false,resume_offset:None, audio_volume:None, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None });
         let (mut pass, mut fail) = (false, None);
         handle_output(&shared, Output::Stdout(format!("KEY {}", "ab".repeat(32))), &mut pass, &mut fail);
         assert_eq!(locked(&shared).stage, Stage::AwaitingApproval);
