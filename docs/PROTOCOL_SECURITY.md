@@ -34,3 +34,7 @@ view / input / clipboard-read / clipboard-write / file-send / file-receive / aud
 ## M1 第三批实现增量
 
 crates/security/src/session.rs 实现单次 offer/answer 的签名 transcript 原语（固定宽度域隔离编码，签名角色、双方预期 Ed25519 公钥、session ID、双方 nonce、请求/授予权限、原始 SDP 字节的 SHA-256）。两端分别签名，验证者必须从独立可信渠道获得预期公钥并比对实际 SDP 原字节。签名绑定 SDP 内容，进而覆盖其中指纹，但不独立证明 SDP 有效或 DTLS 已验证。此原语尚未与媒体及会话状态机集成。首次配对、随机数生成及一次性消费、持久信任、签名交换的具体 wire schema、DTLS 实际绑定、用户确认、超时和授权仍是必须完成的工作。不能仅凭签名通过开放真实画面或系统输入；签名交换之前若需协商，使用合成/空白视频且阻断输入。当前不是生产级认证协议。
+
+## M1 第四批增量
+
+pairing.rs 增加单次 PendingPairing → ApprovedPairing → SignedPairing → VerifiedSession 状态。每个 attempt 由 OsRng 生成新 nonce，120 秒过期，批准、签名、完成消耗前一状态；固定预期 peer 公钥（必须通过独立可信全指纹校验或既有可信记录获得），拒绝扩大权限，双端签署相同 session/nonce/SDP/grant。core SessionGate::on_verified_transport 要求匹配 session ID、请求及授予权限的 VerifiedSession。此机制尚无 UI、网络信令、信任库或实际 DTLS channel binding；会话 owner 必须确认真实 DTLS 对端与已批准公钥/SDP 一致，并禁止重复 session、控制未授权输入、关闭时释放资源。底层签名验证函数不代替一次性状态机。

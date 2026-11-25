@@ -35,3 +35,9 @@ Rust 核心 CI 通过：[45564676252](https://github.com/xzcode/remote-ex/action
 - [Desktop checks #45569412142](https://github.com/xzcode/remote-ex/actions/runs/45569412142)：macOS job 成功，Windows 前端和 Rust check 成功，Windows 最后测试尚未完成（记录时）。无真实桌面权限/采集证据。
 - [Native media engine #45569853979](https://github.com/xzcode/remote-ex/actions/runs/45569853979)：运行中；本批 Rust GStreamer WebRTC 引擎的编译和双端解码结果仍待确认。S01 尚未通过完整退出门槛。
 - 新增 GStreamer Rust binding 版本范围 0.23，原生 GStreamer 最低 1.20；锁文件、插件许可证与三平台分发仍待审查。
+
+## M1 第四批实际记录
+
+- Desktop checks #45569412142：Windows 与 macOS 均成功（编译/单元测试，非实机采集）。
+- Native media engine #45569853979：GStreamer 1.28.2 + gstreamer-rs 0.23 编译及 config_bounds 通过；loopback 运行失败，日志 `Invalid ICE candidate or peer state`。上游 1.24 release notes 明确空字符串候选表示 ICE 结束，修复该兼容性并增加边界测试及原生 RGBA 输入验证。新 run #45570342512 未结束，不能宣称已解决运行失败。
+- local-screen 与 autovideosink 是待平台验证的诊断实现，不等同跨设备屏幕分享或持续 GPU 采集。S01–S07 退出门槛不变。
