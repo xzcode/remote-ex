@@ -88,7 +88,7 @@ def main():
             payload=bytes(range(256))*257
             host_flags=list(flags);controller_flags=list(flags)
             if audio_test:
-                host_flags.append("--audio-test");controller_flags.append("--audio-test")
+                host_flags.extend(["--audio-test","--desktop-session"]);controller_flags.extend(["--audio-test","--desktop-session"])
             if exchange_sender:
                 with open(source,"wb") as stream:stream.write(payload)
                 for role,args in (("host",host_flags),("controller",controller_flags)):
