@@ -337,16 +337,18 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
     let url=a.next().ok_or("Missing WSS URL")?;
     let pin=decode_hex::<32>(&a.next().ok_or("Missing server ID")?).map_err(error)?;
     let endpoint=Endpoint::secure(&url,pin)?;
-    let mut ca=None;let mut relay_only=false;let mut profile=Profile::Test;let mut display=None;let mut supervised=false;let mut persistent=false;
+    let mut ca=None;let mut relay_only=false;let mut profile=Profile::Test;let mut display=None;let mut supervised=false;let mut persistent=false;let mut defer_test_registration=false;
     while let Some(arg)=a.next(){match arg.as_str(){
         "--ca" if ca.is_none()=>ca=Some(a.next().ok_or("Missing CA path")?),
         "--relay-only" if !relay_only=>relay_only=true,
         "--desktop-session" if !supervised=>supervised=true,
+        "--defer-test-registration" if !native_allowed&&!defer_test_registration=>defer_test_registration=true,
         "--persistent" if !persistent=>persistent=true,
         "--view" if native_allowed&&profile==Profile::Test=>{profile=Profile::View;if host{display=Some(a.next().ok_or("Select display ID")?.parse::<u32>().map_err(error)?);}},
         "--control" if native_allowed&&profile==Profile::Test=>{profile=Profile::Control;if host{display=Some(a.next().ok_or("Select display ID")?.parse::<u32>().map_err(error)?);}},
         _=>return Err("Unexpected argument".into()),
     }}
+    if defer_test_registration&&(!supervised||persistent||profile!=Profile::Test){return Err("Test registration barrier requires synthetic temporary supervised mode".into());}
     if native_allowed&&profile==Profile::Test{return Err("Choose a separate view or control profile".into());}
     if profile!=Profile::Test&&!cfg!(all(feature="native-control",any(target_os="windows",target_os="macos"))){return Err("Native mode not compiled for this platform".into());}
     if supervised&&(io::stdin().is_terminal()||io::stdout().is_terminal()){return Err("Desktop mode requires supervisor pipes".into());}
@@ -363,6 +365,11 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
         {return Err("Persistent identity unavailable".into());}
     }else{DeviceIdentity::generate()};
     out(&format!("KEY {}",hex(&id.public_key())))?;
+    // The isolated CI lab explicitly enrolls these ephemeral keys before
+    // opening the TLS endpoint. This barrier exists only in the inert binary.
+    if defer_test_registration && (input()?!="REGISTER TEST"||canceled()){
+        return Err("Test enrollment canceled".into());
+    }
     let mut conn=if let Some(path)=ca{Connection::register_with_roots(endpoint,&id,roots(&path)?).await?}else{Connection::register(endpoint,&id).await?};
     out(&format!("ONLINE {}",conn.device_id()))?;
     out("PEER_KEY (independently verify the peer's entire public key)")?;
