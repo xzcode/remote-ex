@@ -38,6 +38,8 @@ def main():
     if exchange_sender not in (None,"host","controller"):raise RuntimeError("Invalid file sender role")
     pause_test="--file-pause" in sys.argv[3:]
     if pause_test and not exchange_sender:raise RuntimeError("Pause test needs file transfer")
+    catalog_test="--catalog-test" in sys.argv[3:]
+    if catalog_test and exchange_sender:raise RuntimeError("Choose a separate catalog test")
     directory_test="--directory-exchange" in sys.argv[3:]
     resume_test="--file-resume" in sys.argv[3:]
     checkpoint_test="--file-checkpoint" in sys.argv[3:]
@@ -98,6 +100,10 @@ def main():
             payload=bytes(range(256))*(32768 if checkpoint_test else 257)
             host_flags=list(flags);controller_flags=list(flags)
             if "--shared-controller" in sys.argv[3:]:controller_flags.append("--shared-controller")
+            if catalog_test:
+                os.mkdir(source);os.mkdir(os.path.join(source,"nested"))
+                with open(os.path.join(source,"nested","sample.bin"),"wb") as stream:stream.write(payload)
+                host_flags.extend(["--desktop-session","--catalog",source]);controller_flags.extend(["--desktop-session","--catalog",target])
             if clipboard_test:
                 host_flags.extend(["--clipboard-sync-test","--desktop-session"]);controller_flags.extend(["--clipboard-sync-test","--desktop-session"])
             if audio_test:
@@ -135,6 +141,11 @@ def main():
                 for role,pair,key in (("host",host,ck),("controller",controller,hk)):
                     consent=("ALLOW SEND " if role==exchange_sender else "ALLOW RECEIVE ")+("DIRECTORY" if directory_test else "FILE")
                     pair[0].stdin.write(key+"\n"+consent+"\n");pair[0].stdin.flush()
+            elif catalog_test:
+                for pair,key,consent in ((host,ck,"ALLOW LIST AND DOWNLOAD SELECTED ROOT"),(controller,hk,"ALLOW BROWSE AND RECEIVE ONE FILE")):
+                    pair[0].stdin.write(key+"\n"+consent+"\n");pair[0].stdin.flush()
+                expect(controller,"CATALOG_READY ",deadline)
+                controller[0].stdin.write("SELECT 1\n");controller[0].stdin.flush()
             elif clipboard_test:
                 for pair,key in ((host,ck),(controller,hk)):
                     pair[0].stdin.write(key+"\nALLOW TEST CLIPBOARD SYNC\n");pair[0].stdin.flush()
@@ -177,6 +188,11 @@ def main():
             expect(controller,"PASS ROUTED CONTROLLER:",deadline)
             for proc,_ in peers[-2:]:
                 if proc.wait(timeout=5)!=0:raise RuntimeError("peer exited unsuccessfully")
+            if catalog_test:
+                with open(target,"rb") as stream:
+                    if stream.read()!=payload:raise RuntimeError("Catalog selected file mismatch")
+                print("PASS: scoped directory catalog and one selected authenticated file download",flush=True)
+                return
             if clipboard_test:
                 print("PASS: synthetic bidirectional text clipboard sync, baseline and echo suppression",flush=True)
                 return

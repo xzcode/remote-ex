@@ -24,6 +24,7 @@ fn main() {
             lan::routed_disconnect,
             lan::routed_transfer_pause,
             lan::routed_audio_volume,
+            lan::routed_catalog_select,
             lan::select_transfer_file,
             lan::lan_status,
             lan::lan_confirm,

@@ -49,6 +49,9 @@ pub struct Snapshot {
     directory_entries: Option<u32>,
     clipboard_sent: Option<u32>,
     clipboard_received: Option<u32>,
+    catalog:Vec<remote_ex_desktop_features::directory::Entry>,
+    catalog_ready:bool,
+    catalog_selected:Option<usize>,
     resume_offset: Option<u64>,
     audio_volume: Option<u8>,
     network_bps: Option<u64>,
@@ -58,7 +61,7 @@ pub struct Snapshot {
 }
 impl Default for Snapshot {
     fn default() -> Self {
-        Self { stage: Stage::Idle, active: false, local_key: None, detail: None, profile: Profile::Diagnostic, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, transfer_paused:false, checkpoint_saved:None, directory_entries:None, clipboard_sent:None, clipboard_received:None, resume_offset:None, audio_volume:None, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None }
+        Self { stage: Stage::Idle, active: false, local_key: None, detail: None, profile: Profile::Diagnostic, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, transfer_paused:false, checkpoint_saved:None, directory_entries:None, clipboard_sent:None, clipboard_received:None, catalog:Vec::new(), catalog_ready:false,catalog_selected:None,resume_offset:None, audio_volume:None, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None }
     }
 }
 
@@ -75,7 +78,7 @@ fn stage(shared: &Mutex<Snapshot>, next: Stage, detail: Option<String>) {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
-enum Profile { Diagnostic, SecureTest, Screen, Control, RoutedTest, RoutedView, RoutedControl, RoutedFileHost, RoutedFileController, RoutedTextHost, RoutedTextController, RoutedPngHost, RoutedPngController, RoutedAudio, RoutedDirectoryHost, RoutedDirectoryController, RoutedClipboardSync }
+enum Profile { Diagnostic, SecureTest, Screen, Control, RoutedTest, RoutedView, RoutedControl, RoutedFileHost, RoutedFileController, RoutedTextHost, RoutedTextController, RoutedPngHost, RoutedPngController, RoutedAudio, RoutedDirectoryHost, RoutedDirectoryController, RoutedClipboardSync, RoutedCatalog }
 impl Profile {
     fn parse(value: &str) -> Result<Self, String> {
         match value {
@@ -86,9 +89,9 @@ impl Profile {
             _ => Err("Unknown session profile".into()),
         }
     }
-    fn routed(self)->bool{matches!(self,Self::RoutedTest|Self::RoutedView|Self::RoutedControl)||self.exchange().is_some()||matches!(self,Self::RoutedAudio|Self::RoutedClipboardSync)}
+    fn routed(self)->bool{matches!(self,Self::RoutedTest|Self::RoutedView|Self::RoutedControl)||self.exchange().is_some()||matches!(self,Self::RoutedAudio|Self::RoutedClipboardSync|Self::RoutedCatalog)}
     fn exchange(self)->Option<(&'static str,bool)>{match self{Self::RoutedFileHost=>Some(("file",true)),Self::RoutedFileController=>Some(("file",false)),Self::RoutedTextHost=>Some(("text",true)),Self::RoutedTextController=>Some(("text",false)),Self::RoutedPngHost=>Some(("png",true)),Self::RoutedPngController=>Some(("png",false)),Self::RoutedDirectoryHost=>Some(("directory",true)),Self::RoutedDirectoryController=>Some(("directory",false)),_=>None}}
-    fn graceful(self)->bool{self.requires_release()||self.exchange().is_some()||matches!(self,Self::RoutedAudio|Self::RoutedClipboardSync)}
+    fn graceful(self)->bool{self.requires_release()||self.exchange().is_some()||matches!(self,Self::RoutedAudio|Self::RoutedClipboardSync|Self::RoutedCatalog)}
     fn requires_release(self)->bool{matches!(self,Self::Control|Self::RoutedControl|Self::RoutedView)}
     fn key_len(self) -> usize { if self == Self::Diagnostic || self.routed() { 64 } else { 128 } }
     fn consent(self, host: bool) -> &'static str {
@@ -109,6 +112,7 @@ impl Profile {
             Self::RoutedPngHost|Self::RoutedPngController=>if self.exchange().unwrap().1==host{"ALLOW SEND CLIPBOARD IMAGE"}else{"ALLOW RECEIVE CLIPBOARD IMAGE"},
             Self::RoutedAudio=>if host{"ALLOW SEND SYSTEM AUDIO"}else{"ALLOW PLAY SYSTEM AUDIO"},
             Self::RoutedClipboardSync=>"ALLOW LIVE CLIPBOARD TEXT SYNC",
+            Self::RoutedCatalog=>if host{"ALLOW LIST AND DOWNLOAD SELECTED ROOT"}else{"ALLOW BROWSE AND RECEIVE ONE FILE"},
             Self::RoutedDirectoryHost|Self::RoutedDirectoryController=>if self.exchange().unwrap().1==host{"ALLOW SEND DIRECTORY"}else{"ALLOW RECEIVE DIRECTORY"},
         }
     }
@@ -141,8 +145,8 @@ fn sidecar_path(profile: Profile) -> Result<PathBuf, String> {
         (Profile::RoutedTest,false)=>"routed_diagnostic",
         (p,true) if p.exchange().is_some()=>"routed_control.exe",
         (p,false) if p.exchange().is_some()=>"routed_control",
-        (Profile::RoutedView|Profile::RoutedControl|Profile::RoutedAudio|Profile::RoutedClipboardSync,true)=>"routed_control.exe",
-        (Profile::RoutedView|Profile::RoutedControl|Profile::RoutedAudio|Profile::RoutedClipboardSync,false)=>"routed_control",
+        (Profile::RoutedView|Profile::RoutedControl|Profile::RoutedAudio|Profile::RoutedClipboardSync|Profile::RoutedCatalog,true)=>"routed_control.exe",
+        (Profile::RoutedView|Profile::RoutedControl|Profile::RoutedAudio|Profile::RoutedClipboardSync|Profile::RoutedCatalog,false)=>"routed_control",
         (_, true) => "lan_view.exe",
         (_, false) => "lan_view",
     };
@@ -154,7 +158,7 @@ fn sidecar_path(profile: Profile) -> Result<PathBuf, String> {
     Ok(path)
 }
 
-enum WorkerCommand { Approve(String), Pause(bool), Volume(u8) }
+enum WorkerCommand { Approve(String), Pause(bool), Volume(u8), CatalogSelect(usize) }
 enum Output { Stdout(String), Stderr(String), Invalid }
 struct Worker { tx: SyncSender<WorkerCommand>, stop: Arc<AtomicBool>, join: JoinHandle<()> }
 struct ChildGuard(Child);
@@ -241,10 +245,26 @@ fn handle_output(shared: &Mutex<Snapshot>, output: Output, pass: &mut bool, fail
             } else if let Some(progress)=text.strip_prefix("TRANSFER_PROGRESS ") {
                 let mut fields=progress.split_ascii_whitespace();
                 if let (Some(done),Some(total),None)=(fields.next().and_then(|s|s.parse::<u64>().ok()),fields.next().and_then(|s|s.parse::<u64>().ok()),fields.next()){
-                    let mut snap=locked(shared);if snap.profile.exchange().is_some()&&done<=total&&total<=64*1024*1024{snap.transfer_done=Some(done);snap.transfer_total=Some(total);}
+                    let mut snap=locked(shared);if (snap.profile.exchange().is_some()||snap.profile==Profile::RoutedCatalog&&snap.catalog_selected.is_some())&&done<=total&&total<=64*1024*1024{snap.transfer_done=Some(done);snap.transfer_total=Some(total);}
                 }
             } else if let Some(v)=text.strip_prefix("AUDIO_VOLUME "){
                 let mut snap=locked(shared);if snap.profile==Profile::RoutedAudio{snap.audio_volume=v.parse::<u8>().ok().filter(|v|*v<=100);}
+            } else if let Some(line)=text.strip_prefix("CATALOG_ENTRY "){
+                let mut snap=locked(shared);
+                if snap.profile==Profile::RoutedCatalog&&snap.stage==Stage::Connected&&!snap.catalog_ready{
+                    let valid=line.split_once(' ').and_then(|(i,json)|{
+                        if i.parse::<usize>().ok()!=Some(snap.catalog.len())||snap.catalog.len()>=256{return None;}
+                        serde_json::from_str::<remote_ex_desktop_features::directory::Entry>(json).ok()
+                    });
+                    if let Some(entry)=valid{snap.catalog.push(entry);}else{*failure=Some("Invalid catalog entry output".into());}
+                }
+            } else if let Some(n)=text.strip_prefix("CATALOG_READY "){
+                let mut snap=locked(shared);
+                if snap.profile==Profile::RoutedCatalog&&snap.stage==Stage::Connected&&!snap.catalog_ready{
+                    let valid=n.parse::<usize>().ok()==Some(snap.catalog.len())
+                        &&serde_json::to_vec(&snap.catalog).ok().and_then(|b|remote_ex_desktop_features::directory::decode_catalog(&b).ok()).is_some();
+                    if valid{snap.catalog_ready=true;}else{*failure=Some("Invalid catalog manifest output".into());}
+                }
             } else if let Some(n)=text.strip_prefix("CLIPBOARD_SYNC_COUNTS "){
                 let mut s=locked(shared);if s.profile==Profile::RoutedClipboardSync{
                     let vals:Vec<_>=n.split_ascii_whitespace().filter_map(|v|v.parse::<u32>().ok()).collect();
@@ -264,7 +284,7 @@ fn handle_output(shared: &Mutex<Snapshot>, output: Output, pass: &mut bool, fail
             } else if text=="TRANSFER_PAUSED"||text=="TRANSFER_RESUMED"{
                 let mut snap=locked(shared);if snap.profile.exchange().is_some_and(|(kind,_)|kind=="file"){snap.transfer_paused=text=="TRANSFER_PAUSED";}
             } else if text=="TRANSFER_VERIFIED" {
-                let mut snap=locked(shared);if snap.profile.exchange().is_some(){snap.transfer_verified=true;snap.transfer_paused=false;}
+                let mut snap=locked(shared);if snap.profile.exchange().is_some()||snap.profile==Profile::RoutedCatalog{snap.transfer_verified=true;snap.transfer_paused=false;}
             } else if text == "INPUT_RELEASED" {
                 let mut snapshot = locked(shared);
                 if snapshot.profile.requires_release() { snapshot.input_released = true; }
@@ -360,6 +380,12 @@ fn supervise(
                     if let Some(pipe)=stdin.as_mut(){if writeln!(pipe,"VOLUME {volume}").and_then(|_|pipe.flush()).is_err(){failure=Some("Could not deliver local audio volume".into());}}
                 }
             }
+            Ok(WorkerCommand::CatalogSelect(index))=>{
+                let valid={let s=locked(&shared);s.stage==Stage::Connected&&s.catalog_ready&&s.catalog_selected==Some(index)&&s.catalog.get(index).is_some_and(|e|!e.directory)};
+                if approved&&profile==Profile::RoutedCatalog&&!host&&valid{
+                    if let Some(pipe)=stdin.as_mut(){if writeln!(pipe,"SELECT {index}").and_then(|_|pipe.flush()).is_err(){failure=Some("Could not deliver local file selection".into());}}
+                }
+            }
             Err(TryRecvError::Empty) => {}
         }}
         match child.0.try_wait() {
@@ -425,7 +451,7 @@ impl SessionManager {
                 command.arg("--desktop-session");
             }
             p if p.routed()=>return Err("Use the routed connection entry point".into()),
-            Profile::RoutedTest|Profile::RoutedView|Profile::RoutedControl|Profile::RoutedFileHost|Profile::RoutedFileController|Profile::RoutedTextHost|Profile::RoutedTextController|Profile::RoutedPngHost|Profile::RoutedPngController|Profile::RoutedAudio|Profile::RoutedDirectoryHost|Profile::RoutedDirectoryController|Profile::RoutedClipboardSync=>return Err("Use the routed connection entry point".into()),
+            Profile::RoutedTest|Profile::RoutedView|Profile::RoutedControl|Profile::RoutedFileHost|Profile::RoutedFileController|Profile::RoutedTextHost|Profile::RoutedTextController|Profile::RoutedPngHost|Profile::RoutedPngController|Profile::RoutedAudio|Profile::RoutedDirectoryHost|Profile::RoutedDirectoryController|Profile::RoutedClipboardSync|Profile::RoutedCatalog=>return Err("Use the routed connection entry point".into()),
             Profile::Screen => {
                 if host {
                     let display = display_id.ok_or("Choose the specific display to share")?;
@@ -457,6 +483,15 @@ impl SessionManager {
                     if extra_displays.len()>3||extra_displays.iter().enumerate().any(|(i,d)|*d==main||extra_displays[..i].contains(d)){return Err("Select up to four distinct displays".into());}
                     for d in extra_displays{command.arg("--view-extra").arg(d.to_string());}
                 }else if !extra_displays.is_empty(){return Err("Only the host can authorize additional displays".into());}
+            },
+            Profile::RoutedCatalog=>{
+                let path=PathBuf::from(transfer_path.ok_or("Choose local catalog root or destination")?);
+                if !path.is_absolute()||path.file_name().is_none(){return Err("Choose an absolute local path".into());}
+                if host{
+                    let m=std::fs::symlink_metadata(&path).map_err(|_|"Selected directory unavailable")?;
+                    if !m.file_type().is_dir(){return Err("Select an ordinary local directory".into());}
+                }else if path.exists()||!path.parent().is_some_and(|p|p.is_dir()){return Err("Choose a new file destination".into());}
+                command.arg("--catalog").arg(path);
             },
             Profile::RoutedClipboardSync=>{command.arg("--clipboard-sync");},
             Profile::RoutedAudio=>{
@@ -513,7 +548,7 @@ impl SessionManager {
         }
         let child = command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped())
             .spawn().map_err(|e| format!("Cannot start native media diagnostic: {e}"))?;
-        *locked(&self.shared) = Snapshot { stage: Stage::Starting, active: true, local_key: None, detail: None, profile, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, transfer_paused:false, checkpoint_saved:None, directory_entries:None, clipboard_sent:None, clipboard_received:None, resume_offset:None, audio_volume:None, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None };
+        *locked(&self.shared) = Snapshot { stage: Stage::Starting, active: true, local_key: None, detail: None, profile, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, transfer_paused:false, checkpoint_saved:None, directory_entries:None, clipboard_sent:None, clipboard_received:None, catalog:Vec::new(), catalog_ready:false,catalog_selected:None,resume_offset:None, audio_volume:None, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None };
         let (tx, rx) = mpsc::sync_channel(4);
         let shared = self.shared.clone();
         let stop = Arc::new(AtomicBool::new(false));
@@ -639,6 +674,19 @@ pub fn routed_transfer_pause(window:WebviewWindow,managers:State<'_,RoutedManage
 }
 
 #[tauri::command]
+pub fn routed_catalog_select(window:WebviewWindow,managers:State<'_,RoutedManagers>,slot:Option<u8>,index:usize,confirmed:bool)->Result<Snapshot,String>{
+    require_main(&window)?;
+    if !confirmed{return Err("Confirm the selected download".into());}
+    let slots=locked(&managers.slots);let manager=&slots.sessions[slot_index(slot)?];
+    let mut snap=locked(&manager.shared);
+    if snap.stage!=Stage::Connected||snap.profile!=Profile::RoutedCatalog||!snap.catalog_ready||snap.catalog_selected.is_some()
+        ||!snap.catalog.get(index).is_some_and(|e|!e.directory){return Err("Select one file in the current approved catalog".into());}
+    let worker=locked(&manager.worker);
+    worker.as_ref().ok_or("No active catalog process")?.tx.try_send(WorkerCommand::CatalogSelect(index)).map_err(|_|"File selection unavailable".to_owned())?;
+    snap.catalog_selected=Some(index);
+    Ok(snap.clone())
+}
+#[tauri::command]
 pub fn routed_audio_volume(window:WebviewWindow,managers:State<'_,RoutedManagers>,slot:Option<u8>,volume:u8)->Result<Snapshot,String>{
     require_main(&window)?;
     let slots=locked(&managers.slots);let manager=&slots.sessions[slot_index(slot)?];let snap=manager.snapshot();
@@ -661,7 +709,7 @@ pub async fn select_transfer_file(window:WebviewWindow,receive:bool,directory:Op
 pub fn routed_prepare(window:WebviewWindow,manager:State<'_,SessionManager>,managers:State<'_,RoutedManagers>,slot:Option<u8>,role:String,url:String,server_id:String,mode:String,display_id:Option<u32>,relay_only:bool,persistent:bool,storage_consent:bool,ca_path:Option<String>,save_history:Option<bool>,quality:Option<String>,sender:Option<String>,transfer_path:Option<String>,volume:Option<u8>,extra_displays:Option<Vec<u32>>,resume_from:Option<String>,checkpoint_path:Option<String>,shared_identity:Option<bool>)->Result<Snapshot,String>{
     require_main(&window)?;
     let profile=match (mode.as_str(),sender.as_deref()){
-        ("test",_)=>Profile::RoutedTest,("view",_)=>Profile::RoutedView,("control",_)=>Profile::RoutedControl,("audio",_)=>Profile::RoutedAudio,("clipboard_sync",_)=>Profile::RoutedClipboardSync,
+        ("test",_)=>Profile::RoutedTest,("view",_)=>Profile::RoutedView,("control",_)=>Profile::RoutedControl,("audio",_)=>Profile::RoutedAudio,("clipboard_sync",_)=>Profile::RoutedClipboardSync,("catalog",_)=>Profile::RoutedCatalog,
         ("file",Some("host"))=>Profile::RoutedFileHost,("file",Some("controller"))=>Profile::RoutedFileController,
         ("text",Some("host"))=>Profile::RoutedTextHost,("text",Some("controller"))=>Profile::RoutedTextController,
         ("png",Some("host"))=>Profile::RoutedPngHost,("png",Some("controller"))=>Profile::RoutedPngController,
@@ -672,7 +720,7 @@ pub fn routed_prepare(window:WebviewWindow,manager:State<'_,SessionManager>,mana
     let i=slot_index(slot)?;
     let mut slots=locked(&managers.slots);
     if manager.busy(){return Err("Finish the LAN session first".into());}
-    let exclusive=role=="host"||profile.exchange().is_some()||matches!(profile,Profile::RoutedAudio|Profile::RoutedClipboardSync);
+    let exclusive=role=="host"||profile.exchange().is_some()||matches!(profile,Profile::RoutedAudio|Profile::RoutedClipboardSync|Profile::RoutedCatalog);
     let shared=shared_identity.unwrap_or(false);
     if shared&&(!persistent||exclusive){return Err("Shared identity is only for persistent outgoing test/view/control sessions".into());}
     let identity=if shared{0}else{i as u8};
@@ -727,7 +775,7 @@ mod tests {
     fn control_requires_distinct_consent_and_release_marker() {
         assert_eq!(Profile::Control.consent(true), "ALLOW SCREEN AND INPUT");
         assert_eq!(Profile::Control.consent(false), "ALLOW REMOTE INPUT");
-        let shared = Mutex::new(Snapshot { stage: Stage::Connected, active: true, local_key: None, detail: None, profile: Profile::Control, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, transfer_paused:false, checkpoint_saved:None, directory_entries:None, clipboard_sent:None, clipboard_received:None, resume_offset:None, audio_volume:None, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None });
+        let shared = Mutex::new(Snapshot { stage: Stage::Connected, active: true, local_key: None, detail: None, profile: Profile::Control, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, transfer_paused:false, checkpoint_saved:None, directory_entries:None, clipboard_sent:None, clipboard_received:None, catalog:Vec::new(), catalog_ready:false,catalog_selected:None,resume_offset:None, audio_volume:None, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None });
         let (mut pass, mut failure) = (false, None);
         stage(&shared, Stage::Stopping, None);
         assert!(locked(&shared).active);
@@ -737,7 +785,7 @@ mod tests {
     }
     #[test]
     fn status_requires_valid_local_key_and_terminal_state() {
-        let shared = Mutex::new(Snapshot { stage: Stage::Starting, active: true, local_key: None, detail: None, profile: Profile::Diagnostic, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, transfer_paused:false, checkpoint_saved:None, directory_entries:None, clipboard_sent:None, clipboard_received:None, resume_offset:None, audio_volume:None, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None });
+        let shared = Mutex::new(Snapshot { stage: Stage::Starting, active: true, local_key: None, detail: None, profile: Profile::Diagnostic, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, transfer_paused:false, checkpoint_saved:None, directory_entries:None, clipboard_sent:None, clipboard_received:None, catalog:Vec::new(), catalog_ready:false,catalog_selected:None,resume_offset:None, audio_volume:None, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None });
         let (mut pass, mut fail) = (false, None);
         handle_output(&shared, Output::Stdout(format!("KEY {}", "ab".repeat(32))), &mut pass, &mut fail);
         assert_eq!(locked(&shared).stage, Stage::AwaitingApproval);
