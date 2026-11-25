@@ -12,7 +12,7 @@ use remote_ex_security::{DeviceIdentity, PublicKey, Role, VerifiedSession, finge
 use remote_ex_signaling::{decode_hex, hex};
 use std::{io::{self, Read, Write, IsTerminal},sync::atomic::{AtomicBool,Ordering}, time::{Duration, Instant}};
 #[cfg(all(feature="native-control",any(target_os="windows",target_os="macos")))]
-#[path="../control_window/mod.rs"] mod control_window;
+mod viewer;
 #[cfg(all(feature="native-control",any(target_os="windows",target_os="macos")))]
 mod native;
 mod exchange;

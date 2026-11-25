@@ -133,7 +133,7 @@ pub(super) async fn controller(peer:&Peer,channel:&ControlChannel,mut conn:Conne
         let close=conn.close().await;result?;close
     });
     out(if profile==Profile::Control{"CONNECTED ROUTED CONTROL"}else{"CONNECTED ROUTED VIEW"})?;
-    let result=control_window::run(peer,channel,sid,geometry,profile==Profile::Control);
+    let result=viewer::run(peer,channel,sid,geometry,profile==Profile::Control,1);
     let (frames,released)=match result{
         Ok(v)=>v,
         Err(e)=>{let _=done.send(());let _=monitor.await;return Err(e);}
