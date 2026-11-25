@@ -53,7 +53,7 @@ jobs:
           sudo env REMOTE_EX_ISOLATED_CI=1 python3 scripts/test_cross_nat.py target/debug/remote-ex-rendezvous crates/media/target/debug/routed_diagnostic
       - name: Authorized bidirectional file exchange over WebRTC
         run: |
-          timeout 100s python3 scripts/test_routed_diagnostic.py target/debug/remote-ex-rendezvous crates/media/target/debug/routed_diagnostic --file-exchange=host
+          timeout 100s python3 scripts/test_routed_diagnostic.py target/debug/remote-ex-rendezvous crates/media/target/debug/routed_diagnostic --file-exchange=host --file-pause
           timeout 100s python3 scripts/test_routed_diagnostic.py target/debug/remote-ex-rendezvous crates/media/target/debug/routed_diagnostic --file-exchange=controller
       - name: Independent authenticated synthetic audio stream
         run: timeout 100s python3 scripts/test_routed_diagnostic.py target/debug/remote-ex-rendezvous crates/media/target/debug/routed_diagnostic --audio-test

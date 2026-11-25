@@ -2,7 +2,7 @@
 
 跨平台、可私有化部署的远程桌面工具。Remote EX 自主研发客户端、服务端和业务协议，使用成熟底层库，不基于 RustDesk 等完整产品进行 fork。
 
-**当前状态：M1 Windows x64 / macOS ARM64 开发包已生成（ed2aca9，外部 GStreamer runtime），物理设备验收待完成。M2.1–M2.5 本轮已编写功能候选：设备 ID/可信设备、WSS/端到端协商、原生只读/控制入口、STUN/TURN、显式 TLS 准入部署及重新上线。基础核心测试已通过，最新媒体/桌面/开发包及实际跨网验收未完成；尚无正式 Release。**
+**当前状态：M2 Windows x64 / macOS ARM64 开发包、WSS/Noise/DTLS、隔离双 NAT direct/TURN 自动化已通过（bb65000）；真实设备/生产部署验收仍待完成。M3.1–M3.10 已推进功能候选，包含设备管理、邀请、质量预设、窗口、多显示器只读选择、独立剪贴板/文件/音频、三个会话槽位和统计；部分功能仍有范围限制，最新 CI 及实机验证待完成。尚无正式 Release。**
 
 ## 目标
 
@@ -37,6 +37,7 @@
 - [M2 第十四批交接](docs/M2_ROUTED_MEDIA_HANDOFF.md)
 - [M2 功能整合交接](docs/M2_FULL_HANDOFF.md)
 - [M2 跨网络验收](docs/M2_NETWORK_ACCEPTANCE.md)
+- [M3 功能交接与验收清单](docs/M3_FULL_HANDOFF.md)
 - [自建部署候选](deploy/README.md)
 - [M2.1 信令服务](servers/signaling/README.md)
 - [物理设备验收清单](docs/M1_DEVICE_ACCEPTANCE.md)
@@ -58,3 +59,7 @@ Rust + Tauri 2 + Vue 3/TypeScript；WebRTC/ICE/STUN/TURN；Rust/Axum 信令服�
 ## M1 开发包（临时 Actions artifacts）
 
 [Windows x64](https://github.com/xzcode/remote-ex/actions/runs/45577251479/artifacts/15005652383) · [macOS ARM64](https://github.com/xzcode/remote-ex/actions/runs/45577251479/artifacts/15004599699) · [构建与使用说明](docs/DEV_BUILD.md)。两平台完整 CI 通过，源提交 ed2aca9，不含 M2；须登录 GitHub 下载，2026-12-09 到期。需要官方 GStreamer 1.26.11 runtime。Windows unsigned，macOS ad-hoc signed，非正式 Release；真实设备验收未完成。
+
+## M2 开发包（临时 Actions artifacts）
+
+[Windows x64](https://github.com/xzcode/remote-ex/actions/runs/45585068172/artifacts/15008819036) · [macOS ARM64](https://github.com/xzcode/remote-ex/actions/runs/45585068172/artifacts/15008019517)。源提交 bb65000，2026-12-09 到期，外部官方 GStreamer 1.26.11 runtime；非正式发行、不含 M3。真实设备验收未完成。

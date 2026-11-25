@@ -46,3 +46,8 @@
 - [桌面重验 #45584544562](https://github.com/xzcode/remote-ex/actions/runs/45584544562)
 - [新 M2 开发包 #45585068172](https://github.com/xzcode/remote-ex/actions/runs/45585068172)
 
+
+## 第十七批：M2 自动化结论（M3 开发前核对）
+
+- bb65000 核心 #45585068192、媒体（包含隔离双 NAT 自动回退与强制 TURN）#45585068195、开发包 #45585068172 均 success；修正桌面 #45584544562 success。
+- 开发包 [Windows x64](https://github.com/xzcode/remote-ex/actions/runs/45585068172/artifacts/15008819036) / [macOS ARM64](https://github.com/xzcode/remote-ex/actions/runs/45585068172/artifacts/15008019517)，外部 runtime，非正式发行。B06 自动化通过，B11 构建部分通过；B08 等真实桌面、跨公网、运营审查仍 BLOCKED，不能以 M3 开发代表实机验收。
