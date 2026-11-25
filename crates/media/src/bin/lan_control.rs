@@ -221,7 +221,7 @@ fn controller(mut wire:SecureWire,id:DeviceIdentity,expected:PublicKey,test:bool
     (frames,peer_released)
     }else{
         #[cfg(all(feature="native-control",any(target_os="windows",target_os="macos")))]
-        {control_window::run(&peer,&channel,session,geometry)?}
+        {control_window::run(&peer,&channel,session,geometry,true)?}
         #[cfg(not(all(feature="native-control",any(target_os="windows",target_os="macos"))))]
         {let _=geometry;return Err("Native control unavailable".into());}
     };

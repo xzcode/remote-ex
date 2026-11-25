@@ -10,7 +10,7 @@ publish = false
 [features]
 default = []
 local-screen = ["dep:xcap"]
-native-control = ["local-screen", "remote-ex-input/native", "dep:minifb"]
+native-control = ["local-screen", "remote-ex-input/native", "remote-ex-security/native-vault", "dep:minifb"]
 
 [dependencies]
 gstreamer = { version = "0.23", features = ["v1_20"] }
@@ -35,7 +35,7 @@ ctrlc = "3.4"
 
 remote-ex-rendezvous-client = { path = "../rendezvous-client" }
 remote-ex-rendezvous-protocol = { path = "../rendezvous-protocol" }
-tokio = { version = "1", features = ["macros", "rt", "time"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-pemfile = "2"
 percent-encoding = "2"
@@ -43,3 +43,8 @@ zeroize = "1"
 
 [target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
 minifb = { version = "=0.28.0", optional = true, default-features = false }
+
+[[bin]]
+name = "routed_control"
+path = "src/bin/routed_control.rs"
+required-features = ["native-control"]

@@ -24,9 +24,9 @@ fn pointer(g:Geometry,x:f32,y:f32)->Option<(u32,u32)>{
     let norm=|v:f32,o:u32,n:u32|(((v-o as f32)/(n-1)as f32).clamp(0.,1.)*65535.).round()as u32;
     Some((norm(x,g.x,g.width),norm(y,g.y,g.height)))
 }
-pub fn run(peer:&Peer,channel:&ControlChannel,session:[u8;16],geometry:Geometry)->MediaResult<(u32,bool)>{
+pub fn run(peer:&Peer,channel:&ControlChannel,session:[u8;16],geometry:Geometry,allow_input:bool)->MediaResult<(u32,bool)>{
     let(w,h)=(CONFIG.width as usize,CONFIG.height as usize);
-    let mut window=Window::new("Remote EX — authorized control (Esc disconnects)",w,h,WindowOptions{resize:false,..Default::default()}).map_err(|e|e.to_string())?;
+    let mut window=Window::new(if allow_input{"Remote EX — authorized control (Esc disconnects)"}else{"Remote EX — view only (Esc disconnects)"},w,h,WindowOptions{resize:false,..Default::default()}).map_err(|e|e.to_string())?;
     window.set_target_fps(60);
     let mut seq=0u64;
     let mut emit=|event:Event|->MediaResult<()>{
@@ -56,6 +56,7 @@ pub fn run(peer:&Peer,channel:&ControlChannel,session:[u8;16],geometry:Geometry)
             if canceled()||window.is_key_down(K::Escape){break;}
             if poll_release(channel)?{peer_released=true;break;}
             if last_frame.elapsed()>Duration::from_secs(2){return Err("Video stalled; input stopped".into());}
+            if !allow_input{continue;}
             let pos=window.get_mouse_pos(MouseMode::Discard).and_then(|(x,y)|pointer(geometry,x,y));
             let current_keys:BTreeSet<u16>=window.get_keys().into_iter().filter_map(hid).collect();
             let current_buttons:BTreeSet<u8>=[(1,MouseButton::Left),(2,MouseButton::Middle),(3,MouseButton::Right)].into_iter().filter_map(|(n,b)|window.get_mouse_down(b).then_some(n)).collect();
@@ -80,6 +81,6 @@ pub fn run(peer:&Peer,channel:&ControlChannel,session:[u8;16],geometry:Geometry)
             }
         }Ok(count)
     })();
-    if !peer_released { emit(Event::ReleaseAll(ReleaseAll{}))?; }
+    if allow_input&&!peer_released { emit(Event::ReleaseAll(ReleaseAll{}))?; }
     result.map(|frames|(frames,peer_released))
 }
