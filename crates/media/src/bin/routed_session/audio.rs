@@ -10,6 +10,7 @@ const END:&[u8]=b"remote-ex-audio/end/v1";
 const STOP_AUDIO:&[u8]=b"remote-ex-audio/stop/v1";
 const DONE:&[u8]=b"remote-ex-audio/done/v1";
 pub(super) const HOST_DONE:&[u8]=b"remote-ex-audio/host-done/v1";
+pub(super) static VOLUME:std::sync::atomic::AtomicU8=std::sync::atomic::AtomicU8::new(75);
 struct Pipeline(gst::Pipeline);
 impl Drop for Pipeline{fn drop(&mut self){let _=self.0.set_state(gst::State::Null);}}
 impl Pipeline{
@@ -62,13 +63,16 @@ pub(super) async fn play(peer:&Peer,channel:&ControlChannel,conn:&mut Connection
     let sink=if test{"fakesink sync=false"}else{"autoaudiosink sync=false"};
     let p=Pipeline::new(&format!("appsrc name=pcm is-live=true format=time do-timestamp=true block=false max-buffers=8 leaky-type=downstream ! audio/x-raw,format=S16LE,rate=16000,channels=1,layout=interleaved ! audioconvert ! audioresample ! volume name=gain ! {sink}"))?;
     let appsrc=p.0.by_name("pcm").ok_or("Missing audio appsrc")?.downcast::<app::AppSrc>().map_err(|_|"Invalid audio appsrc")?;
-    p.0.by_name("gain").ok_or("Missing volume")?.set_property("volume",f64::from(volume)/100.0);
+    let gain=p.0.by_name("gain").ok_or("Missing volume")?;
+    let mut actual_volume=volume;gain.set_property("volume",f64::from(actual_volume)/100.0);
     appsrc.set_caps(Some(&gst::Caps::builder("audio/x-raw").field("format","S16LE").field("rate",16000i32).field("channels",1i32).field("layout","interleaved").build()));
     p.start()?;out("CONNECTED ROUTED AUDIO")?;
     let deadline=Instant::now()+Duration::from_secs(35);let mut seq=0u32;let mut nonzero=false;let mut stopped=false;let mut last=Instant::now();
     loop{
         connected(peer,channel)?;p.health()?;
-        if canceled()&&!stopped{channel.send(STOP_AUDIO)?;stopped=true;}
+        if canceled()&&!stopped{channel.send(STOP_AUDIO)?;stopped=true;gain.set_property("volume",0.0f64);}
+        let requested=VOLUME.load(Ordering::Acquire);
+        if !stopped&&requested!=actual_volume{actual_volume=requested;gain.set_property("volume",f64::from(actual_volume)/100.0);out(&format!("AUDIO_VOLUME {actual_volume}"))?;}
         for _ in 0..16{
             let Some(packet)=channel.receive()? else{break;};
             if packet==END{

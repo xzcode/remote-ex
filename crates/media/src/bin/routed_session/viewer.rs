@@ -238,7 +238,7 @@ impl ApplicationHandler for Viewer<'_>{
 }
 pub(super) fn run(peer:&Peer,channel:&ControlChannel,session:[u8;16],geometry:Geometry,allow_input:bool,screens:u8)->MediaResult<(u32,bool)>{
     let c=peer.config();let now=Instant::now();
-    let event_loop=EventLoop::new().map_err(error)?;
+    let event_loop:EventLoop<()>=EventLoop::new().map_err(error)?;
     let mut v=Viewer{peer,channel,session,geometry:Rect{x:geometry.x,y:geometry.y,width:geometry.width,height:geometry.height},
         allow_input,input_enabled:allow_input,screens,view_index:None,switch_pending:false,window:None,surface:None,size:PhysicalSize::new(0,0),
         toolbar:0,scale:1,fit:None,last_cursor:None,focused:false,armed:false,physical_keys:BTreeSet::new(),physical_buttons:BTreeSet::new(),

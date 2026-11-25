@@ -66,9 +66,25 @@ fn capture(displays:Vec<(u32,DisplayArea)>,input:bool,config:VideoConfig)->Captu
 }
 async fn serve<B:Backend>(peer:&Peer,channel:&ControlChannel,conn:&mut Connection,session:&str,
     mut dispatcher:Dispatcher<B>,capture:Capture,input:bool)->MediaResult<()>{
+    // The native capture worker is already authorized and independent. Do not
+    // acknowledge readiness or accept input before its first successful frame.
+    let first_deadline=Instant::now()+Duration::from_secs(3);
+    let initial=loop{
+        if canceled()||Instant::now()>=first_deadline{return Err("First authorized display frame unavailable".into());}
+        connected(peer,channel)?;
+        match capture.rx.try_recv(){
+            Ok(frame)=>break frame?,
+            Err(TryRecvError::Empty)=>tick(conn).await?,
+            Err(TryRecvError::Disconnected)=>return Err("Capture worker stopped before readiness".into()),
+        }
+    };
+    peer.push_rgba(initial.pixels)?;
+    channel.send(READY_ACK)?;
+    out(if input{"CONNECTED ROUTED CONTROL"}else{"CONNECTED ROUTED VIEW"})?;
+    if !input{channel.send(&[VIEW_LAYOUT_ACK,initial.layout as u8,capture.count as u8])?;}
     let started=Instant::now();let mut last=started;let mut last_frame=started;
     let mut stats=remote_ex_media::stats::Sampler::default();
-    let mut published=None;let mut last_switch=Instant::now()-Duration::from_secs(1);
+    let mut published=Some(initial.layout);let mut last_switch=Instant::now()-Duration::from_secs(1);
     let mut bitrate=peer.config().bitrate;let ceiling=bitrate;let floor=(ceiling/4).max(100_000);let mut good=0u8;
     let result:MediaResult<()> = async{
         loop{
@@ -146,12 +162,10 @@ pub(super) async fn host(peer:&Peer,channel:&ControlChannel,conn:&mut Connection
         let backend=NativeBackend::new()?;
         if backend.primary_area()?!=area{return Err("Primary display DPI/geometry mismatch".into());}
         let d=Dispatcher::new(gate,backend,area)?;
-        channel.send(READY_ACK)?;out("CONNECTED ROUTED CONTROL")?;
         serve(peer,channel,conn,session,d,capture(displays,true,config),true).await
     }else{
         // Never instantiate a native input backend in the view-only profile.
         let d=Dispatcher::new(gate,Inert::default(),area)?;
-        channel.send(READY_ACK)?;out("CONNECTED ROUTED VIEW")?;
         serve(peer,channel,conn,session,d,capture(displays,false,config),false).await
     }
 }

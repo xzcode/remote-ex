@@ -446,19 +446,31 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
     if let Profile::Exchange(mode)=profile{out(&format!("TRANSFER {} {:?}",if mode.sending(host){"SEND"}else{"RECEIVE"},mode.kind))?;}
     out(&format!("CONSENT (type {}; one-shot)",profile.consent(host)))?;
     if input()? !=profile.consent(host)||canceled(){return Err("Local consent denied".into());}
+    audio::VOLUME.store(volume,Ordering::Release);
     if supervised{
         let allow_pause=matches!(profile,Profile::Exchange(m) if m.kind==remote_ex_desktop_features::exchange::Kind::File&&m.sending(host));
+        let allow_volume=profile==Profile::Audio(false)&&!host;
         std::thread::spawn(move||{
             use std::io::BufRead;
             let mut pipe=io::stdin().lock();
-            if allow_pause{
+            if allow_pause||allow_volume{
                 loop{
                     let mut line=Vec::new();
                     match (&mut pipe).take(16).read_until(b'\n',&mut line){
-                        Ok(n) if n>0=>match line.as_slice(){
-                            b"PAUSE\n"=>exchange::PAUSED.store(true,Ordering::Release),
-                            b"RESUME\n"=>exchange::PAUSED.store(false,Ordering::Release),
-                            _=>break,
+                        Ok(n) if n>0=>{
+                            // Python/Windows text pipes emit CRLF. Require exactly
+                            // one complete line; no whitespace or arbitrary command.
+                            let Some(command)=line.strip_suffix(b"\n")else{break;};
+                            let command=command.strip_suffix(b"\r").unwrap_or(command);
+                            match command{
+                                b"PAUSE" if allow_pause=>exchange::PAUSED.store(true,Ordering::Release),
+                                b"RESUME" if allow_pause=>exchange::PAUSED.store(false,Ordering::Release),
+                                cmd if allow_volume&&cmd.starts_with(b"VOLUME ")=>{
+                                    let value=std::str::from_utf8(&cmd[7..]).ok().filter(|s|!s.is_empty()&&s.len()<=3&&s.bytes().all(|b|b.is_ascii_digit())).and_then(|s|s.parse::<u8>().ok());
+                                    if let Some(v)=value.filter(|v|*v<=100){audio::VOLUME.store(v,Ordering::Release);}else{break;}
+                                },
+                                _=>break,
+                            }
                         },
                         _=>break,
                     }
