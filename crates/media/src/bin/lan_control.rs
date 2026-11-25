@@ -1,5 +1,5 @@
 //! Explicit, encrypted one-shot LAN control. Test mode is inert. Native mode
-//! requires both visible local terminals, explicit consent, a primary display
+//! requires visible local consent (terminal or desktop supervisor), a primary display
 //! and ordinary OS permissions. No unattended or privileged mode.
 use gstreamer_webrtc::WebRTCPeerConnectionState;
 use prost::Message as ProstMessage;
@@ -87,24 +87,32 @@ impl Backend for Inert{
     fn button(&mut self,b:u8,down:bool)->InputResult<()>{self.events.borrow_mut().push(format!("button:{b}:{down}"));Ok(())}
     fn scroll_steps(&mut self,_:i32,_:i32)->InputResult<()>{Ok(())}
 }
-fn serve<B:Backend,F:FnMut(u32)->MediaResult<Vec<u8>>>(peer:&Peer,channel:&ControlChannel,mut d:Dispatcher<B>,mut frame:F,test:bool)->MediaResult<(u32,u32)>{
-    let started=Instant::now();let mut last=started;let mut next=started;let mut frames=0;let mut events=0;
+fn serve<B:Backend,F:FnMut(u32)->MediaResult<Option<Vec<u8>>>>(peer:&Peer,channel:&ControlChannel,mut d:Dispatcher<B>,mut frame:F,test:bool)->MediaResult<(u32,u32)>{
+    let started=Instant::now();let mut last=started;let mut next=started;let mut frames=0;let mut events=0;let mut last_frame=started;
     let result: MediaResult<()>=(||{loop{
         connected(peer,channel)?;
         if started.elapsed()>=Duration::from_secs(if test{12}else{30})||last.elapsed()>Duration::from_secs(2){return Err("Control deadline or heartbeat lost".into());}
         for _ in 0..64{
+            connected(peer,channel)?;
             let Some(data)=channel.receive()? else{break};
             if data==HEARTBEAT{last=Instant::now();}else if data==STOP{return Ok(());}else{d.dispatch(&data)?;events+=1;}
         }
         if Instant::now()>=next{
-            let pixels=frame(frames)?;
-            connected(peer,channel)?;
-            if started.elapsed()>=Duration::from_secs(if test{12}else{30})||last.elapsed()>Duration::from_secs(2){return Err("Control deadline during capture".into());}
-            peer.push_rgba(pixels)?;frames+=1;next=Instant::now()+Duration::from_millis(100);
+            if let Some(pixels)=frame(frames)? {
+                connected(peer,channel)?;
+                if started.elapsed()>=Duration::from_secs(if test{12}else{30})||last.elapsed()>Duration::from_secs(2){return Err("Control deadline during capture".into());}
+                peer.push_rgba(pixels)?;frames+=1;last_frame=Instant::now();
+            }
+            next=Instant::now()+Duration::from_millis(25);
+        }
+        if last_frame.elapsed()>Duration::from_secs(2){
+            return Err("Capture stalled; stopping input".into());
         }
         std::thread::sleep(Duration::from_millis(5));
     }})();
-    d.close()?;result?;channel.send(ACK)?;Ok((frames,events))
+    d.close()?;
+    out("INPUT_RELEASED")?;
+    result?;channel.send(ACK)?;Ok((frames,events))
 }
 fn host(mut wire:SecureWire,id:DeviceIdentity,expected:PublicKey,test:bool,display:Option<u32>)->MediaResult<()>{
     let Message::Request{session,controller,nonce,requested}=recv(&mut wire,None)? else{return Err("Expected request".into())};
@@ -138,7 +146,7 @@ fn host(mut wire:SecureWire,id:DeviceIdentity,expected:PublicKey,test:bool,displ
         out("CONNECTED TEST CONTROL")?;
         let backend=Inert::default();let log=backend.events.clone();
         let d=Dispatcher::new(gate,backend,area)?;
-        let result=serve(&peer,&channel,d,|n|Ok(frame(n)),true)?;
+        let result=serve(&peer,&channel,d,|n|Ok(Some(frame(n))),true)?;
         if log.borrow().as_slice()!=["move","key:4:true","key:4:false"]{return Err("Inert input/release verification failed".into());}
         result
     }else{
@@ -198,6 +206,7 @@ fn controller(mut wire:SecureWire,id:DeviceIdentity,expected:PublicKey,test:bool
     channel.send(STOP)?;let until=Instant::now()+Duration::from_secs(3);
     loop{peer.check_health()?;if let Some(b)=channel.receive()?{if b==ACK{break;}else{return Err("Unexpected response".into());}}
         if Instant::now()>=until{return Err("Release ACK timeout".into());}std::thread::sleep(Duration::from_millis(10));}
+    out("INPUT_RELEASED")?;
     send(&mut wire,Message::Finished{session})?;out(&format!("PASS CONTROLLER CONTROL: decoded_frames={frames}, release_ack=true"))
 }
 fn run()->MediaResult<()>{
@@ -210,10 +219,16 @@ fn run()->MediaResult<()>{
         (false,Some("--control"))=>(false,None),
         _=>return Err("Use --test or --control (host requires display ID)".into()),
     };
+    let supervised=match a.next().as_deref(){
+        None=>false,Some("--desktop-session")=>true,_=>return Err("Unexpected argument".into())
+    };
     if a.next().is_some()||!remote_ex_signaling::local_address(address){return Err("Specific private address required".into());}
+    if supervised && (io::stdin().is_terminal()||io::stdout().is_terminal()){
+        return Err("Supervised control requires local supervisor pipes".into());
+    }
     if !test{
         if !cfg!(all(feature="native-control",any(target_os="windows",target_os="macos"))){return Err("Native control not compiled for this platform".into());}
-        if !io::stdin().is_terminal()||!io::stdout().is_terminal(){return Err("Real control requires visible interactive local terminals".into());}
+        if !supervised && (!io::stdin().is_terminal()||!io::stdout().is_terminal()){return Err("Real control requires explicit local consent in a visible terminal or desktop UI".into());}
     }
     ctrlc::set_handler(||CANCEL.store(true,Ordering::Release)).map_err(error)?;
     let id=DeviceIdentity::generate();let noise=NoiseIdentity::generate().map_err(error)?;
@@ -231,6 +246,16 @@ fn run()->MediaResult<()>{
     };
     out(&format!("CONSENT (type {consent})"))?;
     if input()?!=consent||canceled(){return Err("Consent denied".into());}
+    if supervised {
+        // A closed parent pipe or any additional byte revokes local consent.
+        // Never process::exit from this thread; the input owner must release.
+        std::thread::spawn(||{
+            use std::io::Read;
+            let mut b=[0u8;1];
+            let _=io::stdin().lock().read(&mut b);
+            CANCEL.store(true,Ordering::Release);
+        });
+    }
     let wire=if host{let l=Wire::bind(address).map_err(error)?;out(&format!("LISTENING {}",l.local_addr().map_err(error)?))?;Wire::accept_listener(l).map_err(error)?}else{Wire::connect(address).map_err(error)?};
     let wire=SecureWire::handshake(wire,noise,pn,!host).map_err(error)?;
     if host{crate::host(wire,id,expected,test,display)}else{controller(wire,id,expected,test)}
@@ -269,7 +294,7 @@ fn real_host(peer:&Peer,channel:&ControlChannel,gate:SessionGate,wire:&mut Secur
         }
     }
     let backend=NativeBackend::new()?;let area=backend.primary_area()?;let geom=Geometry::from_area(area)?;
-    let get_monitor=||->MediaResult<Monitor>{
+    let get_monitor=move ||->MediaResult<Monitor>{
         let m=Monitor::all().map_err(error)?.into_iter().find(|m|m.id().ok()==Some(display)).ok_or("Authorized display disconnected")?;
         if !m.is_primary().map_err(error)?||m.width().map_err(error)?!=area.width||m.height().map_err(error)?!=area.height{
             return Err("Only matching primary-display coordinates are supported".into());
@@ -279,15 +304,44 @@ fn real_host(peer:&Peer,channel:&ControlChannel,gate:SessionGate,wire:&mut Secur
     let d=Dispatcher::new(gate,backend,area)?;
     send(wire,geom.message(session))?;exchange_ready(wire,session)?;
     out("CONNECTED CONTROL — keyboard/mouse authorized, Ctrl-C stops")?;
-    serve(peer,channel,d,|_|{
-        let m=get_monitor()?;
-        let image=m.capture_image().map_err(error)?;
-        if image.width()==0||image.height()==0||u64::from(image.width())*u64::from(image.height())>32_000_000||
-            u64::from(image.width())*u64::from(area.height)!=u64::from(image.height())*u64::from(area.width){
-            return Err("Capture geometry changed or exceeds limits".into());
+    // A blocked native screenshot cannot hold the input dispatcher hostage.
+    // Only the main owner has the OS input backend. The capture worker sends
+    // bounded frames and never injects or releases input. Start after Ready.
+    use std::sync::{Arc,mpsc::{sync_channel,TrySendError,TryRecvError}};
+    let (tx,rx)=sync_channel::<MediaResult<Vec<u8>>>(1);
+    let stop=Arc::new(AtomicBool::new(false));
+    let worker_stop=stop.clone();
+    std::thread::spawn(move || {
+        while !canceled()&&!worker_stop.load(Ordering::Acquire){
+            let next=Instant::now()+Duration::from_millis(100);
+            let result=(||->MediaResult<Vec<u8>>{
+                let m=get_monitor()?;
+                let image=m.capture_image().map_err(error)?;
+                if image.width()==0||image.height()==0||u64::from(image.width())*u64::from(image.height())>32_000_000||
+                    u64::from(image.width())*u64::from(area.height)!=u64::from(image.height())*u64::from(area.width){
+                    return Err("Capture geometry changed or exceeds limits".into());
+                }
+                let image=DynamicImage::ImageRgba8(image).resize_exact(geom.width,geom.height,FilterType::Triangle).into_rgba8();
+                let mut canvas=RgbaImage::from_pixel(CONFIG.width,CONFIG.height,Rgba([0,0,0,255]));
+                imageops::replace(&mut canvas,&image,i64::from(geom.x),i64::from(geom.y));
+                Ok(canvas.into_raw())
+            })();
+            if canceled()||worker_stop.load(Ordering::Acquire){break;}
+            let failed=result.is_err();
+            match tx.try_send(result){
+                Ok(())=>{},
+                Err(TrySendError::Full(_)) if !failed=>{},
+                _=>break,
+            }
+            if failed{break;}
+            std::thread::sleep(next.saturating_duration_since(Instant::now()));
         }
-        let image=DynamicImage::ImageRgba8(image).resize_exact(geom.width,geom.height,FilterType::Triangle).into_rgba8();
-        let mut canvas=RgbaImage::from_pixel(CONFIG.width,CONFIG.height,Rgba([0,0,0,255]));
-        imageops::replace(&mut canvas,&image,i64::from(geom.x),i64::from(geom.y));Ok(canvas.into_raw())
-    },false)
+    });
+    let result=serve(peer,channel,d,|_|match rx.try_recv(){
+        Ok(frame)=>frame.map(Some),
+        Err(TryRecvError::Empty)=>Ok(None),
+        Err(TryRecvError::Disconnected)=>Err("Capture worker stopped".into()),
+    },false);
+    stop.store(true,Ordering::Release);
+    result
 }
