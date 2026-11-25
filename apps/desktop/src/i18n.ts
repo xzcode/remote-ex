@@ -1,4 +1,14 @@
 export const en = {
+  server: "Server connection", presenceTitle: "Register this device", presenceActive: "Server registration active",
+  presenceDescription: "Development presence preview (up to five minutes). All incoming connection requests are refused. No screen or keyboard/mouse access.",
+  presenceMode: "Connection mode", presenceSecure: "Secure WSS (verified certificate)", presenceDevelopment: "Local development (loopback WS)",
+  presenceUrl: "Signaling server URL", presenceServerId: "Expected server ID", presencePinHelp: "Obtain the complete 64-character server ID from your administrator independently. The server certificate and hostname must also be trusted.",
+  presenceStorageConsent: "Use the system credential store for a persistent device identity (optional; may prompt for permission).",
+  presenceLoopbackNotice: "Plain WS is restricted to numeric IPv4 loopback. Temporary device identity only.",
+  presenceRegister: "Register / go online", presenceDisconnect: "Go offline", presenceDeviceId: "Device ID",
+  presencePersistent: "Persistent identity, stored in the system credential store.", presenceTemporary: "Temporary identity, regenerated for a new registration.",
+  presenceHeartbeats: "Heartbeat replies", presenceDeclined: "Requests declined",
+  presenceOffline: "Offline", presenceConnecting: "Registering", presenceOnline: "Online", presenceStopping: "Going offline…", presenceFailed: "Registration failed",
   controlMode: "Remote control (experimental)", controlDescription: "Explicitly authorize screen, keyboard and mouse control on a private LAN, limited to the primary display and 30 seconds. Keep the host application visible.",
   controlHostConsent: "I verified the device and explicitly permit viewing the selected primary display and controlling keyboard and mouse for this session.",
   controlControllerConsent: "I verified the host and authorize sending input from the focused control window.",
@@ -35,10 +45,20 @@ export const en = {
   capture: "Capture once", clear: "Clear preview", busy: "Working…", preview: "Local preview",
   previewEmpty: "No image captured", error: "Operation failed", noDisplays: "No available displays in the current desktop session.", browser: "Native desktop runtime is required.",
   language: "Language", appearance: "Appearance", system: "Follow system", light: "Light", dark: "Dark", black: "Pure black",
-  saved: "Preferences are stored on this device.", version: "M1 · Local capture preview", noRemote: "LAN development build",
+  saved: "Preferences are stored on this device.", version: "M1 / M2 · Development", noRemote: "Development build",
 } as const;
 export type TextKey = keyof typeof en;
 export const zh: Record<TextKey, string> = {
+  server: "服务器连接", presenceTitle: "注册本机设备", presenceActive: "设备注册进行中",
+  presenceDescription: "开发版在线状态预览（最长五分钟）。所有传入连接请求都会被拒绝，不允许读取屏幕或控制键鼠。",
+  presenceMode: "连接模式", presenceSecure: "安全 WSS（校验证书）", presenceDevelopment: "本机开发（回环 WS）",
+  presenceUrl: "信令服务器地址", presenceServerId: "预期服务器 ID", presencePinHelp: "请通过独立可信渠道获取完整64位服务器 ID；同时必须通过服务器证书与域名校验。",
+  presenceStorageConsent: "使用系统凭据存储保存持久设备身份（可选，可能弹出授权提示）。",
+  presenceLoopbackNotice: "明文 WS 仅允许数字 IPv4 回环地址，只使用临时设备身份。",
+  presenceRegister: "注册并上线", presenceDisconnect: "下线", presenceDeviceId: "设备 ID",
+  presencePersistent: "持久身份，保存在系统凭据存储中。", presenceTemporary: "临时身份，下次注册时重新生成。",
+  presenceHeartbeats: "心跳响应次数", presenceDeclined: "已拒绝连接请求",
+  presenceOffline: "离线", presenceConnecting: "正在注册", presenceOnline: "在线", presenceStopping: "正在下线…", presenceFailed: "注册失败",
   controlMode: "远程控制（实验版）", controlDescription: "在私有局域网内明确授权屏幕、键盘和鼠标控制，暂限主显示器及30秒。被控端须保持应用可见。",
   controlHostConsent: "我已核对设备，明确授权本次会话查看选定主显示器并控制键盘和鼠标。",
   controlControllerConsent: "我已核对被控端，授权从聚焦的控制窗口发送键鼠操作。",
@@ -75,5 +95,5 @@ export const zh: Record<TextKey, string> = {
   capture: "采集一次", clear: "清除预览", busy: "处理中…", preview: "本地预览",
   previewEmpty: "尚未采集图像", error: "操作失败", noDisplays: "当前桌面会话没有可用显示器。", browser: "需要原生桌面运行环境。",
   language: "语言", appearance: "外观", system: "跟随系统", light: "浅色", dark: "深色", black: "纯黑",
-  saved: "偏好设置保存在当前设备。", version: "M1 · 本地采集预览", noRemote: "局域网开发版本",
+  saved: "偏好设置保存在当前设备。", version: "M1 / M2 · 开发版本", noRemote: "开发版本",
 };

@@ -56,3 +56,6 @@ label { font-weight: 600; user-select: none; }
 .lan-panel select { max-width: 100%; }
 
 .view-notice { padding: 12px; border: 1px solid var(--accent); border-radius: 6px; line-height: 1.5; font-weight: 600; }
+
+.presence-metrics { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+.presence-metrics > div { display:flex; flex-direction:column; gap:6px; padding:12px; border:1px solid var(--border); border-radius:6px; }
