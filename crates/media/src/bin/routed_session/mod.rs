@@ -16,18 +16,22 @@ use std::{io::{self, Read, Write, IsTerminal},sync::atomic::{AtomicBool,Ordering
 #[cfg(all(feature="native-control",any(target_os="windows",target_os="macos")))]
 mod native;
 mod exchange;
+mod audio;
 static CANCEL:AtomicBool=AtomicBool::new(false);
 fn canceled()->bool{CANCEL.load(Ordering::Acquire)}
 #[derive(Clone,Copy,PartialEq,Eq)]
-enum Profile{Test,View,Control,Exchange(exchange::Mode)}
+enum Profile{Test,View,Control,Exchange(exchange::Mode),Audio(bool)}
 impl Profile{
-    fn code(self)->u8{match self{Self::Test=>0,Self::View=>1,Self::Control=>2,Self::Exchange(mode)=>mode.code()}}
-    fn grant(self)->u8{if self==Self::View||matches!(self,Self::Exchange(_)){VIEW}else{VIEW|INPUT}}
+    fn code(self)->u8{match self{Self::Test=>0,Self::View=>1,Self::Control=>2,Self::Exchange(mode)=>mode.code(),Self::Audio(test)=>if test{9}else{10}}}
+    fn grant(self)->u8{if self==Self::View||matches!(self,Self::Exchange(_)|Self::Audio(_)){VIEW}else{VIEW|INPUT}}
     fn consent(self,host:bool)->&'static str{match(self,host){
         (Self::Test,_)=>"ALLOW ROUTED TEST",(Self::View,true)=>"ALLOW ROUTED SCREEN",
         (Self::View,false)=>"ALLOW ROUTED VIEW",(Self::Control,true)=>"ALLOW ROUTED SCREEN AND INPUT",
         (Self::Control,false)=>"ALLOW ROUTED INPUT",
         (Self::Exchange(mode),_)=>mode.consent(host),
+        (Self::Audio(true),_)=>"ALLOW TEST AUDIO",
+        (Self::Audio(false),true)=>"ALLOW SEND SYSTEM AUDIO",
+        (Self::Audio(false),false)=>"ALLOW PLAY SYSTEM AUDIO",
     }}
 }
 const HEARTBEAT:&[u8]=b"remote-ex-routed/heartbeat/v1";
@@ -171,7 +175,7 @@ async fn finish(conn:&mut Connection,session:&str)->MediaResult<()>{
     }
 }
 
-async fn host(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey,relay_only:bool,profile:Profile,display:Option<u32>,quality:&str,exchange_path:Option<&std::path::Path>)->MediaResult<()>{
+async fn host(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey,relay_only:bool,profile:Profile,display:Option<u32>,quality:&str,exchange_path:Option<&std::path::Path>,volume:u8)->MediaResult<()>{
     let grant=profile.grant();
     let Server::Incoming{session,controller,controller_key,requested,controller_nonce}=recv(conn).await?
         else{return Err("Expected incoming device request".into());};
@@ -208,6 +212,11 @@ async fn host(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey,relay_o
     peer.set_description(false,&answer)?;
     ice(&peer,conn,&mut cipher,relay_only).await?;
     ready(&peer,&channel,&answer.sdp,true)?;
+    if let Profile::Audio(test)=profile{
+        wait_data(&peer,&channel,conn,READY).await?;channel.send(READY_ACK)?;
+        audio::send(&peer,&channel,conn,test).await?;channel.send(audio::HOST_DONE)?;
+        finish(conn,&session).await?;return out("PASS ROUTED HOST: audio complete");
+    }
     if let Profile::Exchange(mode)=profile{
         wait_data(&peer,&channel,conn,READY).await?;channel.send(READY_ACK)?;
         exchange::run(&peer,&channel,conn,&session,mode,true,exchange_path).await?;
@@ -255,7 +264,7 @@ async fn host(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey,relay_o
     finish(conn,&session).await?;
     out(&format!("PASS ROUTED HOST: sent_frames={frames}, input_released=true"))
 }
-async fn controller(mut owned:Connection,id:&DeviceIdentity,expected:PublicKey,relay_only:bool,profile:Profile,quality:&str,exchange_path:Option<&std::path::Path>)->MediaResult<()>{
+async fn controller(mut owned:Connection,id:&DeviceIdentity,expected:PublicKey,relay_only:bool,profile:Profile,quality:&str,exchange_path:Option<&std::path::Path>,volume:u8)->MediaResult<()>{
     let conn=&mut owned;
     let grant=profile.grant();
     let target=hex(&fingerprint(&expected));
@@ -295,6 +304,13 @@ async fn controller(mut owned:Connection,id:&DeviceIdentity,expected:PublicKey,r
     cipher.send(conn,Signal::Proof{signature:hex(&local)}).await?;
     ice(&peer,conn,&mut cipher,relay_only).await?;
     ready(&peer,&channel,&offer.sdp,false)?;
+    if let Profile::Audio(test)=profile{
+        channel.send(READY)?;wait_data(&peer,&channel,conn,READY_ACK).await?;
+        audio::play(&peer,&channel,conn,test,volume).await?;
+        wait_data(&peer,&channel,conn,audio::HOST_DONE).await?;
+        conn.send(Client::Close{session:session.clone()}).await?;finish(conn,&session).await?;
+        return out("PASS ROUTED CONTROLLER: audio complete");
+    }
     if let Profile::Exchange(mode)=profile{
         channel.send(READY)?;wait_data(&peer,&channel,conn,READY_ACK).await?;
         exchange::run(&peer,&channel,conn,&session,mode,false,exchange_path).await?;
@@ -360,7 +376,7 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
     let url=a.next().ok_or("Missing WSS URL")?;
     let pin=decode_hex::<32>(&a.next().ok_or("Missing server ID")?).map_err(error)?;
     let endpoint=Endpoint::secure(&url,pin)?;
-    let mut ca=None;let mut relay_only=false;let mut profile=Profile::Test;let mut display=None;let mut supervised=false;let mut persistent=false;let mut defer_test_registration=false;let mut quality="compat".to_owned();let mut exchange_path=None;
+    let mut ca=None;let mut relay_only=false;let mut profile=Profile::Test;let mut display=None;let mut supervised=false;let mut persistent=false;let mut defer_test_registration=false;let mut quality="compat".to_owned();let mut exchange_path=None;let mut volume=75u8;
     while let Some(arg)=a.next(){match arg.as_str(){
         "--ca" if ca.is_none()=>ca=Some(a.next().ok_or("Missing CA path")?),
         "--relay-only" if !relay_only=>relay_only=true,
@@ -368,6 +384,9 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
         "--desktop-session" if !supervised=>supervised=true,
         "--defer-test-registration" if !native_allowed&&!defer_test_registration=>defer_test_registration=true,
         "--persistent" if !persistent=>persistent=true,
+        "--audio" if native_allowed&&profile==Profile::Test=>profile=Profile::Audio(false),
+        "--audio-test" if !native_allowed&&profile==Profile::Test=>profile=Profile::Audio(true),
+        "--volume"=>{volume=a.next().ok_or("Missing volume")?.parse().map_err(error)?;if volume>100{return Err("Volume out of range".into());}},
         "--exchange" if profile==Profile::Test=>{
             let mode=exchange::Mode::parse(&a.next().ok_or("Missing exchange kind")?,&a.next().ok_or("Missing sender role")?)?;
             profile=Profile::Exchange(mode);
@@ -379,6 +398,10 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
     }}
     if defer_test_registration&&(!supervised||persistent||profile!=Profile::Test){return Err("Test registration barrier requires synthetic temporary supervised mode".into());}
     if native_allowed&&profile==Profile::Test{return Err("Choose a separate view, control or exchange profile".into());}
+    if let Profile::Audio(test)=profile{
+        if !test&&host&&!cfg!(target_os="windows"){return Err("System audio capture currently requires Windows WASAPI loopback; microphone fallback is disabled".into());}
+        quality="compat".into();
+    }
     if let Profile::Exchange(mode)=profile{
         if mode.kind!=remote_ex_desktop_features::exchange::Kind::File&&!cfg!(all(feature="native-control",any(target_os="windows",target_os="macos"))){return Err("Native clipboard unavailable".into());}
         if !native_allowed&&mode.kind!=remote_ex_desktop_features::exchange::Kind::File{return Err("Diagnostic cannot access clipboard".into());}
@@ -416,7 +439,7 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
         std::thread::spawn(||{let mut b=[0u8;1];let _=io::stdin().lock().read(&mut b);CANCEL.store(true,Ordering::Release);});
     }
     if host{
-        let result=self::host(&mut conn,&id,expected,relay_only,profile,display,&quality,exchange_path.as_deref()).await;
+        let result=self::host(&mut conn,&id,expected,relay_only,profile,display,&quality,exchange_path.as_deref(),volume).await;
         let close=conn.close().await;result?;close
-    }else{controller(conn,&id,expected,relay_only,profile,&quality,exchange_path.as_deref()).await}
+    }else{controller(conn,&id,expected,relay_only,profile,&quality,exchange_path.as_deref(),volume).await}
 }

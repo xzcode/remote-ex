@@ -1,4 +1,5 @@
 export const en = {
+  audioMode:"System audio (experimental)",audioVolume:"Playback volume",audioNotice:"Windows host system-audio loopback; Windows/macOS playback. Separate audio session, not microphone capture.",audioSendConsent:"I explicitly authorize sharing my current system output audio with this verified device.",audioPlayConsent:"I explicitly authorize playback of audio from this verified device.",
   exchangeFile:"File transfer",exchangeText:"Clipboard text",exchangeImage:"Clipboard image",exchangeSender:"Sender role",exchangeSource:"Selected local source file (absolute path)",exchangeDestination:"New local destination file (absolute path)",
   exchangeNotice:"One explicit transfer only. File limit 64 MiB; no overwrite. Clipboard access requires separate approval. Both peers select the same type and sender role.",
   exchangeSendConsent:"I explicitly allow sending the selected file or current clipboard content to this verified peer.",exchangeReceiveConsent:"I explicitly allow receiving this type of content from the verified peer into the selected new file or clipboard.",
@@ -65,6 +66,7 @@ export const en = {
 } as const;
 export type TextKey = keyof typeof en;
 export const zh: Record<TextKey, string> = {
+  audioMode:"系统声音（实验版）",audioVolume:"播放音量",audioNotice:"Windows 被控端系统声音回录，Windows/macOS 播放。独立音频会话，不采集麦克风。",audioSendConsent:"我明确授权向此已核对设备发送当前系统输出声音。",audioPlayConsent:"我明确授权播放此已核对设备发送的声音。",
   exchangeFile:"文件传输",exchangeText:"剪贴板文本",exchangeImage:"剪贴板图片",exchangeSender:"发送方角色",exchangeSource:"本机选定的源文件（绝对路径）",exchangeDestination:"本机新文件目标（绝对路径）",
   exchangeNotice:"单次明确授权传输，文件上限64 MiB，不覆盖已有文件。剪贴板需单独授权。两端请选择相同类型与发送方角色。",
   exchangeSendConsent:"我明确授权向已核对的对端发送选定文件或当前剪贴板内容。",exchangeReceiveConsent:"我明确授权接收已核对对端的该类型内容到选定的新文件或剪贴板。",

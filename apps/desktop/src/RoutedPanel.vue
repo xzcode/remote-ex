@@ -8,8 +8,8 @@ type Device={device_id:string;public_key:string;label:string};
 type Display={id:number;name:string;width:number;height:number;primary:boolean};
 const props=defineProps<{t:(key:TextKey)=>string}>();
 const emit=defineEmits<{active:[value:boolean]}>();
-const native=isTauri(),role=ref<"host"|"controller">("controller"),mode=ref<"test"|"view"|"control"|"file"|"text"|"png">("test");
-const sender=ref<"host"|"controller">("controller"),transferPath=ref("");
+const native=isTauri(),role=ref<"host"|"controller">("controller"),mode=ref<"test"|"view"|"control"|"file"|"text"|"png"|"audio">("test");
+const sender=ref<"host"|"controller">("controller"),transferPath=ref(""),volume=ref(75);
 const isExchange=computed(()=>["file","text","png"].includes(mode.value));
 const isDisplay=computed(()=>mode.value==="view"||mode.value==="control");
 const url=ref(""),serverId=ref(""),ca=ref(""),relay=ref(false),persistent=ref(false);
@@ -64,7 +64,7 @@ async function makeInvitation(){
 function prepare(){
  approved.value=false;submitted.value=false;
  return command("routed_prepare",{role:role.value,mode:mode.value,url:url.value.trim(),serverId:serverId.value.trim(),
- displayId:role.value==="host"&&isDisplay.value?displayId.value:null,relayOnly:relay.value,persistent:persistent.value,storageConsent:persistent.value,caPath:ca.value.trim()||null,saveHistory:saveHistory.value,quality:quality.value,sender:isExchange.value?sender.value:null,transferPath:mode.value==="file"?transferPath.value.trim():null});
+ displayId:role.value==="host"&&isDisplay.value?displayId.value:null,relayOnly:relay.value,persistent:persistent.value,storageConsent:persistent.value,caPath:ca.value.trim()||null,saveHistory:saveHistory.value,quality:quality.value,sender:isExchange.value?sender.value:null,transferPath:mode.value==="file"?transferPath.value.trim():null,volume:volume.value});
 }
 function confirm(){if(!canConfirm.value)return;submitted.value=true;return command("routed_confirm",{deviceId:peerId.value.trim(),peerKey:peerKey.value.trim(),approved:true});}
 onMounted(()=>{void poll();timer=window.setInterval(poll,400);});
@@ -75,17 +75,18 @@ onBeforeUnmount(()=>{disposed=true;if(timer!==undefined)window.clearInterval(tim
  <header class="preview-head"><h2>{{ t("routedTitle") }}</h2><span class="status" role="status">{{ status }}</span></header>
  <p>{{ t("routedDescription") }}</p>
  <div v-if="snapshot.active&&isDisplay" class="view-notice">{{ t(role==="host"?"routedHostNotice":"controlControllerNotice") }}</div>
- <div class="field"><label>{{ t("invitationCode") }}</label><textarea v-model="invitation" maxlength="2048" :readonly="snapshot.active" rows="2"/><div class="actions"><button :disabled="busy||snapshot.active||!invitation.trim()" @click="readInvitation">{{ t("invitationImport") }}</button><button :disabled="busy||role!=='host'||!snapshot.device_id||isExchange" @click="makeInvitation">{{ t("invitationCreate") }}</button></div><p class="muted">{{ t("invitationNotice") }}</p></div>
+ <div class="field"><label>{{ t("invitationCode") }}</label><textarea v-model="invitation" maxlength="2048" :readonly="snapshot.active" rows="2"/><div class="actions"><button :disabled="busy||snapshot.active||!invitation.trim()" @click="readInvitation">{{ t("invitationImport") }}</button><button :disabled="busy||role!=='host'||!snapshot.device_id||isExchange||mode==='audio'" @click="makeInvitation">{{ t("invitationCreate") }}</button></div><p class="muted">{{ t("invitationNotice") }}</p></div>
  <div class="field">
   <label>{{ t("presenceUrl") }}</label><input v-model="url" placeholder="wss://…/v1/ws" maxlength="512" :disabled="busy||snapshot.active"/>
   <label>{{ t("presenceServerId") }}</label><input v-model="serverId" maxlength="64" class="key-input" :disabled="busy||snapshot.active"/>
   <label>{{ t("routedCa") }}</label><input v-model="ca" maxlength="1024" :disabled="busy||snapshot.active"/>
-  <label>{{ t("sessionProfile") }}</label><select v-model="mode" :disabled="busy||snapshot.active"><option value="test">{{ t("secureTest") }}</option><option value="view">{{ t("screenView") }}</option><option value="control">{{ t("controlMode") }}</option><option value="file">{{ t("exchangeFile") }}</option><option value="text">{{ t("exchangeText") }}</option><option value="png">{{ t("exchangeImage") }}</option></select>
+  <label>{{ t("sessionProfile") }}</label><select v-model="mode" :disabled="busy||snapshot.active"><option value="test">{{ t("secureTest") }}</option><option value="view">{{ t("screenView") }}</option><option value="control">{{ t("controlMode") }}</option><option value="file">{{ t("exchangeFile") }}</option><option value="text">{{ t("exchangeText") }}</option><option value="png">{{ t("exchangeImage") }}</option><option value="audio">{{ t("audioMode") }}</option></select>
   <label>{{ t("lanRole") }}</label><select v-model="role" :disabled="busy||snapshot.active"><option value="controller">{{ t("lanController") }}</option><option value="host">{{ t("lanHost") }}</option></select>
   <template v-if="role==='host'&&isDisplay">
    <label>{{ t("display") }}</label><div class="actions"><select v-model="displayId" :disabled="busy||snapshot.active"><option :value="null" disabled>{{ t("select") }}</option><option v-for="d in displays" :key="d.id" :value="d.id">{{ d.name }} · {{ d.width }} × {{ d.height }}</option></select><button :disabled="busy||snapshot.active" @click="loadDisplays">{{ t("refresh") }}</button></div>
   </template>
   <template v-if="isExchange"><label>{{ t("exchangeSender") }}</label><select v-model="sender" :disabled="busy||snapshot.active"><option value="controller">{{ t("lanController") }}</option><option value="host">{{ t("lanHost") }}</option></select><template v-if="mode==='file'"><label>{{ t(role===sender?"exchangeSource":"exchangeDestination") }}</label><input v-model="transferPath" maxlength="2048" :disabled="busy||snapshot.active"/></template><p class="muted">{{ t("exchangeNotice") }}</p></template>
+  <template v-if="mode==='audio'"><label>{{ t("audioVolume") }}: {{ volume }}%</label><input type="range" v-model.number="volume" min="0" max="100" :disabled="busy||snapshot.active"/><p class="muted">{{ t("audioNotice") }}</p></template>
   <label>{{ t("qualityPreset") }}</label><select v-model="quality" :disabled="busy||snapshot.active"><option value="compat">540p · 10 fps</option><option value="low">480p · 15 fps</option><option value="balanced">720p · 30 fps</option><option value="high">1080p · 30 fps</option><option value="qhd">1440p · 30 fps</option><option value="uhd">2160p · 30 fps</option></select><p class="muted">{{ t("qualityNotice") }}</p>
   <label class="check-label"><input type="checkbox" v-model="relay" :disabled="busy||snapshot.active"/>{{ t("routedRelay") }}</label>
   <label class="check-label"><input type="checkbox" v-model="persistent" :disabled="busy||snapshot.active"/>{{ t("presenceStorageConsent") }}</label>
@@ -98,7 +99,7 @@ onBeforeUnmount(()=>{disposed=true;if(timer!==undefined)window.clearInterval(tim
   <label>{{ t("routedPeerId") }}</label><input v-model="peerId" maxlength="64" class="key-input" :disabled="busy||submitted||!!chosen"/>
   <label>{{ t("lanPeerKey") }}</label><input v-model="peerKey" maxlength="64" class="key-input" :disabled="busy||submitted||!!chosen"/>
   <p class="muted">{{ t("routedVerify") }}</p>
-  <label class="check-label"><input type="checkbox" v-model="approved" :disabled="busy||submitted"/>{{ t(isExchange?(role===sender?"exchangeSendConsent":"exchangeReceiveConsent"):mode==="test"?"routedTestConsent":mode==="view"?(role==="host"?"viewHostConsent":"viewControllerConsent"):(role==="host"?"controlHostConsent":"controlControllerConsent")) }}</label>
+  <label class="check-label"><input type="checkbox" v-model="approved" :disabled="busy||submitted"/>{{ t(mode==="audio"?(role==="host"?"audioSendConsent":"audioPlayConsent"):isExchange?(role===sender?"exchangeSendConsent":"exchangeReceiveConsent"):mode==="test"?"routedTestConsent":mode==="view"?(role==="host"?"viewHostConsent":"viewControllerConsent"):(role==="host"?"controlHostConsent":"controlControllerConsent")) }}</label>
   <button class="primary" :disabled="!canConfirm" @click="confirm">{{ t("lanApprove") }}</button>
  </div>
  <p v-if="snapshot.decoded_fps!=null" class="muted">{{ t("decodedFps") }}: {{ snapshot.decoded_fps.toFixed(1) }} · {{ t("decodedThroughput") }}: {{ ((snapshot.decoded_bps??0)/1000000).toFixed(1) }} Mb/s</p>

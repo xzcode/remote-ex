@@ -34,6 +34,8 @@ def main():
     relay_only="--relay-only" in sys.argv[3:]
     exchange_sender=next((arg.split("=",1)[1] for arg in sys.argv[3:] if arg.startswith("--file-exchange=")),None)
     if exchange_sender not in (None,"host","controller"):raise RuntimeError("Invalid file sender role")
+    audio_test="--audio-test" in sys.argv[3:]
+    if audio_test and exchange_sender:raise RuntimeError("Choose one test profile")
     peers=[]
     with tempfile.TemporaryDirectory() as directory:
         cert=os.path.join(directory,"cert.pem")
@@ -83,6 +85,8 @@ def main():
             source=os.path.join(directory,"source.bin");target=os.path.join(directory,"received.bin")
             payload=bytes(range(256))*257
             host_flags=list(flags);controller_flags=list(flags)
+            if audio_test:
+                host_flags.append("--audio-test");controller_flags.append("--audio-test")
             if exchange_sender:
                 with open(source,"wb") as stream:stream.write(payload)
                 for role,args in (("host",host_flags),("controller",controller_flags)):
@@ -99,6 +103,9 @@ def main():
                 for role,pair,key in (("host",host,ck),("controller",controller,hk)):
                     consent="ALLOW SEND FILE" if role==exchange_sender else "ALLOW RECEIVE FILE"
                     pair[0].stdin.write(key+"\n"+consent+"\n");pair[0].stdin.flush()
+            elif audio_test:
+                for pair,key in ((host,ck),(controller,hk)):
+                    pair[0].stdin.write(key+"\nALLOW TEST AUDIO\n");pair[0].stdin.flush()
             else:
                 approve(host,ck)
                 approve(controller,hk)
@@ -106,6 +113,9 @@ def main():
             expect(controller,"PASS ROUTED CONTROLLER:",deadline)
             for proc,_ in peers[-2:]:
                 if proc.wait(timeout=5)!=0:raise RuntimeError("peer exited unsuccessfully")
+            if audio_test:
+                print("PASS: synthetic audio transport and verified sample count",flush=True)
+                return
             if exchange_sender:
                 with open(target,"rb") as stream:
                     if stream.read()!=payload:raise RuntimeError("Transferred payload mismatch")

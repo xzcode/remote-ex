@@ -64,7 +64,7 @@ fn stage(shared: &Mutex<Snapshot>, next: Stage, detail: Option<String>) {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
-enum Profile { Diagnostic, SecureTest, Screen, Control, RoutedTest, RoutedView, RoutedControl, RoutedFileHost, RoutedFileController, RoutedTextHost, RoutedTextController, RoutedPngHost, RoutedPngController }
+enum Profile { Diagnostic, SecureTest, Screen, Control, RoutedTest, RoutedView, RoutedControl, RoutedFileHost, RoutedFileController, RoutedTextHost, RoutedTextController, RoutedPngHost, RoutedPngController, RoutedAudio }
 impl Profile {
     fn parse(value: &str) -> Result<Self, String> {
         match value {
@@ -75,9 +75,9 @@ impl Profile {
             _ => Err("Unknown session profile".into()),
         }
     }
-    fn routed(self)->bool{matches!(self,Self::RoutedTest|Self::RoutedView|Self::RoutedControl)||self.exchange().is_some()}
+    fn routed(self)->bool{matches!(self,Self::RoutedTest|Self::RoutedView|Self::RoutedControl)||self.exchange().is_some()||self==Self::RoutedAudio}
     fn exchange(self)->Option<(&'static str,bool)>{match self{Self::RoutedFileHost=>Some(("file",true)),Self::RoutedFileController=>Some(("file",false)),Self::RoutedTextHost=>Some(("text",true)),Self::RoutedTextController=>Some(("text",false)),Self::RoutedPngHost=>Some(("png",true)),Self::RoutedPngController=>Some(("png",false)),_=>None}}
-    fn graceful(self)->bool{self.requires_release()||self.exchange().is_some()}
+    fn graceful(self)->bool{self.requires_release()||self.exchange().is_some()||self==Self::RoutedAudio}
     fn requires_release(self)->bool{matches!(self,Self::Control|Self::RoutedControl|Self::RoutedView)}
     fn key_len(self) -> usize { if self == Self::Diagnostic || self.routed() { 64 } else { 128 } }
     fn consent(self, host: bool) -> &'static str {
@@ -96,6 +96,7 @@ impl Profile {
             Self::RoutedFileHost|Self::RoutedFileController=>if self.exchange().unwrap().1==host{"ALLOW SEND FILE"}else{"ALLOW RECEIVE FILE"},
             Self::RoutedTextHost|Self::RoutedTextController=>if self.exchange().unwrap().1==host{"ALLOW SEND CLIPBOARD TEXT"}else{"ALLOW RECEIVE CLIPBOARD TEXT"},
             Self::RoutedPngHost|Self::RoutedPngController=>if self.exchange().unwrap().1==host{"ALLOW SEND CLIPBOARD IMAGE"}else{"ALLOW RECEIVE CLIPBOARD IMAGE"},
+            Self::RoutedAudio=>if host{"ALLOW SEND SYSTEM AUDIO"}else{"ALLOW PLAY SYSTEM AUDIO"},
         }
     }
 }
@@ -127,8 +128,8 @@ fn sidecar_path(profile: Profile) -> Result<PathBuf, String> {
         (Profile::RoutedTest,false)=>"routed_diagnostic",
         (p,true) if p.exchange().is_some()=>"routed_control.exe",
         (p,false) if p.exchange().is_some()=>"routed_control",
-        (Profile::RoutedView|Profile::RoutedControl,true)=>"routed_control.exe",
-        (Profile::RoutedView|Profile::RoutedControl,false)=>"routed_control",
+        (Profile::RoutedView|Profile::RoutedControl|Profile::RoutedAudio,true)=>"routed_control.exe",
+        (Profile::RoutedView|Profile::RoutedControl|Profile::RoutedAudio,false)=>"routed_control",
         (_, true) => "lan_view.exe",
         (_, false) => "lan_view",
     };
@@ -369,7 +370,7 @@ impl SessionManager {
                 command.arg("--desktop-session");
             }
             p if p.routed()=>return Err("Use the routed connection entry point".into()),
-            Profile::RoutedTest|Profile::RoutedView|Profile::RoutedControl|Profile::RoutedFileHost|Profile::RoutedFileController|Profile::RoutedTextHost|Profile::RoutedTextController|Profile::RoutedPngHost|Profile::RoutedPngController=>return Err("Use the routed connection entry point".into()),
+            Profile::RoutedTest|Profile::RoutedView|Profile::RoutedControl|Profile::RoutedFileHost|Profile::RoutedFileController|Profile::RoutedTextHost|Profile::RoutedTextController|Profile::RoutedPngHost|Profile::RoutedPngController|Profile::RoutedAudio=>return Err("Use the routed connection entry point".into()),
             Profile::Screen => {
                 if host {
                     let display = display_id.ok_or("Choose the specific display to share")?;
@@ -380,7 +381,7 @@ impl SessionManager {
         }
         self.spawn(command,profile,host,None)
     }
-    fn prepare_routed(&self,role:&str,url:&str,server_id:&str,profile:Profile,display_id:Option<u32>,relay_only:bool,persistent:bool,storage_consent:bool,ca_path:Option<String>,history_path:Option<PathBuf>,quality:&str,transfer_path:Option<String>)->Result<Snapshot,String>{
+    fn prepare_routed(&self,role:&str,url:&str,server_id:&str,profile:Profile,display_id:Option<u32>,relay_only:bool,persistent:bool,storage_consent:bool,ca_path:Option<String>,history_path:Option<PathBuf>,quality:&str,transfer_path:Option<String>,volume:u8)->Result<Snapshot,String>{
         if !profile.routed()||url.len()>512{return Err("Invalid routed session configuration".into());}
         if persistent&&!storage_consent{return Err("Persistent routed identity requires explicit native storage consent".into());}
         let pin=remote_ex_signaling::decode_hex::<32>(server_id).map_err(|_|"Invalid expected server ID")?;
@@ -393,6 +394,11 @@ impl SessionManager {
             Profile::RoutedView|Profile::RoutedControl=>{
                 command.arg(if profile==Profile::RoutedView{"--view"}else{"--control"});
                 if host{command.arg(display_id.ok_or("Choose primary display")?.to_string());}
+            },
+            Profile::RoutedAudio=>{
+                if host&&!cfg!(windows){return Err("System audio source requires Windows WASAPI loopback".into());}
+                if volume>100{return Err("Volume out of range".into());}
+                command.arg("--audio").arg("--volume").arg(volume.to_string());
             },
             p if p.exchange().is_some()=>{
                 let(kind,host_sends)=p.exchange().unwrap();
@@ -498,17 +504,17 @@ pub fn lan_prepare(window: WebviewWindow, manager: State<'_, SessionManager>, ro
     require_main(&window)?; manager.prepare(&role, &address, preview, Profile::parse(&profile)?, display_id)
 }
 #[tauri::command]
-pub fn routed_prepare(window:WebviewWindow,manager:State<'_,SessionManager>,role:String,url:String,server_id:String,mode:String,display_id:Option<u32>,relay_only:bool,persistent:bool,storage_consent:bool,ca_path:Option<String>,save_history:Option<bool>,quality:Option<String>,sender:Option<String>,transfer_path:Option<String>)->Result<Snapshot,String>{
+pub fn routed_prepare(window:WebviewWindow,manager:State<'_,SessionManager>,role:String,url:String,server_id:String,mode:String,display_id:Option<u32>,relay_only:bool,persistent:bool,storage_consent:bool,ca_path:Option<String>,save_history:Option<bool>,quality:Option<String>,sender:Option<String>,transfer_path:Option<String>,volume:Option<u8>)->Result<Snapshot,String>{
     require_main(&window)?;
     let profile=match (mode.as_str(),sender.as_deref()){
-        ("test",_)=>Profile::RoutedTest,("view",_)=>Profile::RoutedView,("control",_)=>Profile::RoutedControl,
+        ("test",_)=>Profile::RoutedTest,("view",_)=>Profile::RoutedView,("control",_)=>Profile::RoutedControl,("audio",_)=>Profile::RoutedAudio,
         ("file",Some("host"))=>Profile::RoutedFileHost,("file",Some("controller"))=>Profile::RoutedFileController,
         ("text",Some("host"))=>Profile::RoutedTextHost,("text",Some("controller"))=>Profile::RoutedTextController,
         ("png",Some("host"))=>Profile::RoutedPngHost,("png",Some("controller"))=>Profile::RoutedPngController,
         _=>return Err("Invalid routed mode or direction".into()),
     };
     let history=if save_history.unwrap_or(false){Some(crate::trust::database_path(&window)?)}else{None};
-    manager.prepare_routed(&role,url.trim(),server_id.trim(),profile,display_id,relay_only,persistent,storage_consent,ca_path,history,quality.as_deref().unwrap_or("compat"),transfer_path)
+    manager.prepare_routed(&role,url.trim(),server_id.trim(),profile,display_id,relay_only,persistent,storage_consent,ca_path,history,quality.as_deref().unwrap_or("compat"),transfer_path,volume.unwrap_or(75))
 }
 #[tauri::command]
 pub fn lan_confirm(window: WebviewWindow, manager: State<'_, SessionManager>, peer_key: String, approved: bool) -> Result<Snapshot, String> {
