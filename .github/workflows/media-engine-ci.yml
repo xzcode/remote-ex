@@ -1,0 +1,27 @@
+name: Native media engine
+on:
+  push:
+    branches: [master]
+    paths: ['crates/media/**', '.github/workflows/media-engine-ci.yml']
+  pull_request:
+    paths: ['crates/media/**', '.github/workflows/media-engine-ci.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: native-media-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  loopback:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native media dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libgstreamer-plugins-bad1.0-dev gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-nice
+      - name: Media bounds tests
+        run: cargo test --manifest-path crates/media/Cargo.toml
+      - name: WebRTC video loopback
+        run: timeout 75s cargo run --manifest-path crates/media/Cargo.toml --bin loopback

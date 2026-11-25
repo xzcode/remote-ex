@@ -1,0 +1,352 @@
+#![forbid(unsafe_code)]
+//! Native video primitives. No public listener, discovery, remote authorization,
+//! desktop capture or input injection is provided by this crate.
+//! A future authenticated session owner must control creation and shutdown.
+use gstreamer as gst;
+use gst::prelude::*;
+use gstreamer_app as app;
+use gstreamer_sdp as sdp;
+use gstreamer_webrtc as rtc;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    mpsc::{self, Receiver, SyncSender, TrySendError},
+    Arc,
+};
+use std::time::Duration;
+
+pub type MediaResult<T> = Result<T, String>;
+const EVENT_LIMIT: usize = 256;
+const SDP_LIMIT: usize = 64 * 1024;
+const ICE_LIMIT: usize = 4096;
+const PROMISE_TIMEOUT: Duration = Duration::from_secs(8);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VideoConfig {
+    pub width: u32,
+    pub height: u32,
+    pub fps: u32,
+    pub bitrate: u32,
+}
+impl Default for VideoConfig {
+    fn default() -> Self {
+        Self { width: 640, height: 360, fps: 30, bitrate: 1_200_000 }
+    }
+}
+impl VideoConfig {
+    pub fn validate(self) -> MediaResult<Self> {
+        if !(16..=3840).contains(&self.width) || !(16..=2160).contains(&self.height)
+            || self.width % 2 != 0 || self.height % 2 != 0
+            || !(1..=60).contains(&self.fps) || !(100_000..=20_000_000).contains(&self.bitrate)
+        {
+            return Err("Unsupported video configuration".into());
+        }
+        Ok(self)
+    }
+    pub fn rgba_bytes(self) -> usize {
+        self.width as usize * self.height as usize * 4
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Source {
+    TestPattern,
+    NativeRgba,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DescriptionKind { Offer, Answer }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Description {
+    pub kind: DescriptionKind,
+    pub sdp: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IceCandidate {
+    pub mline: u32,
+    pub candidate: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Event {
+    NegotiationNeeded,
+    Ice(IceCandidate),
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct FrameInfo {
+    pub width: u32,
+    pub height: u32,
+    pub bytes: usize,
+    pub pts_ns: Option<u64>,
+}
+
+pub struct Peer {
+    pipeline: gst::Pipeline,
+    webrtc: gst::Element,
+    input: Option<app::AppSrc>,
+    output: Option<app::AppSink>,
+    config: VideoConfig,
+    events: Receiver<Event>,
+    overflow: Arc<AtomicBool>,
+    running: bool,
+}
+
+fn queue_event(sender: &SyncSender<Event>, overflow: &AtomicBool, event: Event) {
+    if let Err(TrySendError::Full(_)) = sender.try_send(event) {
+        overflow.store(true, Ordering::Release);
+    }
+}
+
+fn make_pipeline(description: &str) -> MediaResult<gst::Pipeline> {
+    gst::parse::launch(description).map_err(|e| e.to_string())?
+        .downcast::<gst::Pipeline>().map_err(|_| "Expected GStreamer pipeline".into())
+}
+
+fn named(pipeline: &gst::Pipeline, name: &str) -> MediaResult<gst::Element> {
+    pipeline.by_name(name).ok_or_else(|| format!("Missing element: {name}"))
+}
+
+impl Peer {
+    /// Builds a one-way native sender. Callers may supply native tightly packed
+    /// RGBA frames; do not push screenshots through the ordinary UI IPC.
+    pub fn sender(config: VideoConfig, source: Source) -> MediaResult<Self> {
+        gst::init().map_err(|e| e.to_string())?;
+        let config = config.validate()?;
+        let source_text = match source {
+            Source::TestPattern => "videotestsrc is-live=true pattern=ball",
+            Source::NativeRgba => "appsrc name=raw is-live=true do-timestamp=true format=time block=false max-buffers=2 max-bytes=0 max-time=0 leaky-type=downstream",
+        };
+        let caps_format = if source == Source::NativeRgba { "RGBA" } else { "I420" };
+        let pipeline = make_pipeline(&format!(
+            "webrtcbin name=rtc bundle-policy=max-bundle latency=100 \
+             {source_text} ! video/x-raw,format={caps_format},width={w},height={h},framerate={fps}/1 \
+             ! queue max-size-buffers=2 max-size-bytes=0 max-size-time=0 leaky=downstream \
+             ! videoconvert ! video/x-raw,format=I420 \
+             ! vp8enc deadline=1 cpu-used=8 target-bitrate={bitrate} keyframe-max-dist={fps} \
+             ! rtpvp8pay pt=96 picture-id-mode=15-bit \
+             ! application/x-rtp,media=video,encoding-name=VP8,clock-rate=90000,payload=96 ! rtc.",
+            w=config.width, h=config.height, fps=config.fps, bitrate=config.bitrate,
+        ))?;
+        let input = if source == Source::NativeRgba {
+            let raw = named(&pipeline, "raw")?.downcast::<app::AppSrc>()
+                .map_err(|_| "Invalid appsrc")?;
+            let caps = gst::Caps::builder("video/x-raw")
+                .field("format", "RGBA")
+                .field("width", config.width as i32)
+                .field("height", config.height as i32)
+                .field("framerate", gst::Fraction::new(config.fps as i32, 1))
+                .build();
+            raw.set_caps(Some(&caps));
+            Some(raw)
+        } else { None };
+        Self::new(pipeline, input, None, config)
+    }
+
+    /// Receives VP8 RTP over WebRTC. Decoded frames remain in native GstSample
+    /// buffers. Native rendering can consume the sample without serializing it.
+    pub fn receiver(config: VideoConfig) -> MediaResult<Self> {
+        gst::init().map_err(|e| e.to_string())?;
+        let config = config.validate()?;
+        let pipeline = make_pipeline(&format!(
+            "webrtcbin name=rtc bundle-policy=max-bundle latency=100 \
+             queue name=rx max-size-buffers=12 max-size-bytes=0 max-size-time=0 \
+             ! rtpvp8depay ! vp8dec ! videoconvert ! videoscale \
+             ! video/x-raw,format=RGBA,width={w},height={h} \
+             ! appsink name=decoded sync=false max-buffers=2 drop=true",
+            w=config.width, h=config.height
+        ))?;
+        let out = named(&pipeline, "decoded")?.downcast::<app::AppSink>()
+            .map_err(|_| "Invalid appsink")?;
+        let mut peer = Self::new(pipeline, None, Some(out), config)?;
+        let sink = named(&peer.pipeline, "rx")?.static_pad("sink").ok_or("Missing RTP sink")?;
+        let failure = peer.overflow.clone();
+        peer.webrtc.connect_pad_added(move |_, pad| {
+            if pad.direction() != gst::PadDirection::Src { return; }
+            if sink.is_linked() || pad.link(&sink).is_err() {
+                failure.store(true, Ordering::Release);
+            }
+        });
+        // Keep the explicit receive branch alive before the first pad is added.
+        peer.running = false;
+        Ok(peer)
+    }
+
+    fn new(
+        pipeline: gst::Pipeline, input: Option<app::AppSrc>, output: Option<app::AppSink>,
+        config: VideoConfig,
+    ) -> MediaResult<Self> {
+        let webrtc = named(&pipeline, "rtc")?;
+        let (tx, rx) = mpsc::sync_channel(EVENT_LIMIT);
+        let overflow = Arc::new(AtomicBool::new(false));
+        {
+            let tx = tx.clone();
+            let overflow = overflow.clone();
+            webrtc.connect("on-negotiation-needed", false, move |_| {
+                queue_event(&tx, &overflow, Event::NegotiationNeeded);
+                None
+            });
+        }
+        {
+            let overflow = overflow.clone();
+            webrtc.connect("on-ice-candidate", false, move |args| {
+                let parsed = args.get(1).and_then(|v| v.get::<u32>().ok())
+                    .zip(args.get(2).and_then(|v| v.get::<String>().ok()));
+                if let Some((mline, candidate)) = parsed {
+                    if candidate.len() <= ICE_LIMIT {
+                        queue_event(&tx, &overflow, Event::Ice(IceCandidate { mline, candidate }));
+                    } else {
+                        overflow.store(true, Ordering::Release);
+                    }
+                } else {
+                    overflow.store(true, Ordering::Release);
+                }
+                None
+            });
+        }
+        Ok(Self { pipeline, webrtc, input, output, config, events: rx, overflow, running: false })
+    }
+
+    pub fn start(&mut self) -> MediaResult<()> {
+        if self.running { return Err("Peer already running".into()); }
+        self.pipeline.set_state(gst::State::Playing).map_err(|e| e.to_string())?;
+        self.running = true;
+        Ok(())
+    }
+
+    pub fn connection_state(&self) -> rtc::WebRTCPeerConnectionState {
+        self.webrtc.property("connection-state")
+    }
+
+    pub fn check_health(&self) -> MediaResult<()> {
+        if self.overflow.load(Ordering::Acquire) {
+            return Err("Media event overflow or unexpected RTP stream".into());
+        }
+        if matches!(self.connection_state(), rtc::WebRTCPeerConnectionState::Failed | rtc::WebRTCPeerConnectionState::Closed) {
+            return Err("WebRTC peer failed or closed".into());
+        }
+        if let Some(bus) = self.pipeline.bus() {
+            while let Some(message) = bus.pop() {
+                use gst::MessageView;
+                match message.view() {
+                    MessageView::Error(e) => return Err(format!("GStreamer: {}", e.error())),
+                    MessageView::Eos(_) => return Err("Unexpected end of media".into()),
+                    _ => {}
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn drain_events(&self) -> MediaResult<Vec<Event>> {
+        self.check_health()?;
+        Ok(self.events.try_iter().take(EVENT_LIMIT).collect())
+    }
+
+    pub fn create_description(&self, kind: DescriptionKind) -> MediaResult<Description> {
+        if !self.running { return Err("Peer is not running".into()); }
+        let (signal, field) = match kind {
+            DescriptionKind::Offer => ("create-offer", "offer"),
+            DescriptionKind::Answer => ("create-answer", "answer"),
+        };
+        let (tx, rx) = mpsc::sync_channel(1);
+        let promise = gst::Promise::with_change_func(move |result| {
+            let value = result.map_err(|e| format!("{e:?}")).and_then(|reply| {
+                reply.ok_or_else(|| "Missing SDP reply".to_string())?
+                    .get::<rtc::WebRTCSessionDescription>(field).map_err(|e| e.to_string())
+            }).and_then(|description| description.sdp().as_text().map_err(|e| e.to_string()));
+            let _ = tx.try_send(value);
+        });
+        self.webrtc.emit_by_name::<()>(signal, &[&None::<gst::Structure>, &promise]);
+        let text = rx.recv_timeout(PROMISE_TIMEOUT).map_err(|_| "SDP creation timed out")??;
+        if text.is_empty() || text.len() > SDP_LIMIT { return Err("SDP exceeds limits".into()); }
+        Ok(Description { kind, sdp: text })
+    }
+
+    /// Only call with descriptions obtained from a verified, authorized peer.
+    /// This primitive does not itself authenticate an SDP fingerprint.
+    pub fn set_description(&self, local: bool, description: &Description) -> MediaResult<()> {
+        if !self.running || description.sdp.is_empty() || description.sdp.len() > SDP_LIMIT {
+            return Err("Invalid description or peer state".into());
+        }
+        let parsed = sdp::SDPMessage::parse_buffer(description.sdp.as_bytes()).map_err(|e| e.to_string())?;
+        let kind = match description.kind {
+            DescriptionKind::Offer => rtc::WebRTCSDPType::Offer,
+            DescriptionKind::Answer => rtc::WebRTCSDPType::Answer,
+        };
+        let native = rtc::WebRTCSessionDescription::new(kind, parsed);
+        let (tx, rx) = mpsc::sync_channel(1);
+        let promise = gst::Promise::with_change_func(move |result| {
+            let result = result.map_err(|e| format!("{e:?}")).and_then(|reply| {
+                if let Some(reply) = reply {
+                    if reply.has_field("error") { return Err(format!("SDP rejected: {reply:?}")); }
+                }
+                Ok(())
+            });
+            let _ = tx.try_send(result);
+        });
+        let signal = if local { "set-local-description" } else { "set-remote-description" };
+        self.webrtc.emit_by_name::<()>(signal, &[&native, &promise]);
+        rx.recv_timeout(PROMISE_TIMEOUT).map_err(|_| "SDP application timed out")?
+    }
+
+    pub fn add_ice(&self, ice: &IceCandidate) -> MediaResult<()> {
+        if !self.running || ice.mline != 0 || ice.candidate.len() > ICE_LIMIT || ice.candidate.is_empty() {
+            return Err("Invalid ICE candidate or peer state".into());
+        }
+        self.webrtc.emit_by_name::<()>("add-ice-candidate", &[&ice.mline, &ice.candidate]);
+        Ok(())
+    }
+
+    /// Accepts a frame owned by the native capture adapter, with tight RGBA stride.
+    /// GStreamer appsrc has a bounded leaky queue; stale frames are dropped.
+    pub fn push_rgba(&self, pixels: Vec<u8>) -> MediaResult<()> {
+        if !self.running || pixels.len() != self.config.rgba_bytes() {
+            return Err("Unexpected frame size or stopped sender".into());
+        }
+        let input = self.input.as_ref().ok_or("No native frame source")?;
+        input.push_buffer(gst::Buffer::from_mut_slice(pixels)).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub fn pull_frame(&self, timeout: Duration) -> MediaResult<Option<gst::Sample>> {
+        self.check_health()?;
+        let out = self.output.as_ref().ok_or("No receive sink")?;
+        let timeout_ms = timeout.as_millis().min(500) as u64;
+        Ok(out.try_pull_sample(gst::ClockTime::from_mseconds(timeout_ms)))
+    }
+
+    pub fn frame_info(sample: &gst::Sample) -> MediaResult<FrameInfo> {
+        let caps = sample.caps().ok_or("Missing frame caps")?;
+        let structure = caps.structure(0).ok_or("Missing frame structure")?;
+        let width = structure.get::<i32>("width").map_err(|e| e.to_string())?;
+        let height = structure.get::<i32>("height").map_err(|e| e.to_string())?;
+        let buffer = sample.buffer().ok_or("Missing frame buffer")?;
+        if width <= 0 || height <= 0 || width > 3840 || height > 2160 {
+            return Err("Invalid decoded dimensions".into());
+        }
+        Ok(FrameInfo {
+            width: width as u32, height: height as u32, bytes: buffer.size(),
+            pts_ns: buffer.pts().map(|t| t.nseconds()),
+        })
+    }
+}
+
+impl Drop for Peer {
+    fn drop(&mut self) {
+        let _ = self.pipeline.set_state(gst::State::Null);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn config_bounds() {
+        assert!(VideoConfig::default().validate().is_ok());
+        assert!(VideoConfig { width: 0, ..VideoConfig::default() }.validate().is_err());
+        assert!(VideoConfig { width: 641, ..VideoConfig::default() }.validate().is_err());
+        assert!(VideoConfig { fps: 61, ..VideoConfig::default() }.validate().is_err());
+    }
+}

@@ -1,0 +1,14 @@
+[package]
+name = "remote-ex-media"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Native GStreamer dependency isolation: portable core CI does not build this crate.
+[workspace]
+
+[dependencies]
+gstreamer = { version = "0.23", features = ["v1_20"] }
+gstreamer-app = { version = "0.23", features = ["v1_20"] }
+gstreamer-sdp = { version = "0.23", features = ["v1_20"] }
+gstreamer-webrtc = { version = "0.23", features = ["v1_20"] }
