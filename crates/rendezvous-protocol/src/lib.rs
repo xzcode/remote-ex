@@ -8,6 +8,7 @@ pub const VERSION: u16 = 1;
 pub const MAX_MESSAGE: usize = 96 * 1024;
 pub const MAX_SDP: usize = 48 * 1024;
 pub const MAX_ICE: usize = 4096;
+pub const EXTENDED_ROUTE_SECONDS:u32=420;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -27,6 +28,7 @@ pub enum Client {
     Decision { session: String, grant: Option<u8>, host_nonce: Option<String> },
     Signal { session: String, payload: Signal },
     IceConfig { session: String },
+    ExtendLease { session:String },
     Close { session: String },
 }
 
@@ -62,6 +64,7 @@ pub enum Server {
     Decision { session: String, grant: Option<u8>, host_key: String, host_nonce: Option<String> },
     Signal { session: String, payload: Signal },
     IceConfig { session: String, config: IceConfig },
+    LeaseGranted { session:String,seconds:u32 },
     Closed { session: String, reason: String },
     Error { code: String },
 }
@@ -93,7 +96,7 @@ impl Client {
                 && grant.is_some() == host_nonce.is_some()
                 && host_nonce.as_ref().is_none_or(|nonce| canonical::<32>(nonce)) => Ok(()),
             Self::Signal { session, payload } if canonical::<16>(session) => payload.validate(),
-            Self::IceConfig { session } | Self::Close { session } if canonical::<16>(session) => Ok(()),
+            Self::IceConfig { session } | Self::ExtendLease { session } | Self::Close { session } if canonical::<16>(session) => Ok(()),
             _ => Err("invalid message"),
         }
     }
@@ -143,6 +146,7 @@ impl Server {
                 && host_nonce.as_ref().is_none_or(|n| canonical::<32>(n)) => Ok(()),
             Self::Signal { session, payload } if canonical::<16>(session) => payload.validate(),
             Self::IceConfig { session, config } if canonical::<16>(session) => config.validate(),
+            Self::LeaseGranted{session,seconds} if canonical::<16>(session)&&*seconds==EXTENDED_ROUTE_SECONDS=>Ok(()),
             Self::Closed { session, reason } if canonical::<16>(session) && short_code(reason) => Ok(()),
             Self::Error { code } if short_code(code) => Ok(()),
             _ => Err("invalid server message"),

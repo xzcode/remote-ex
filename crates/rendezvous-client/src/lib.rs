@@ -7,7 +7,7 @@ use futures_util::{SinkExt,StreamExt};
 use remote_ex_rendezvous_protocol::{Client,ClientFrame,Server,ServerFrame,VERSION,MAX_MESSAGE};
 use remote_ex_security::{DeviceIdentity,Fingerprint};
 use remote_ex_signaling::{decode_hex,hex};
-use std::{collections::VecDeque,sync::Arc,time::Duration};
+use std::{collections::VecDeque,sync::Arc,time::{Duration,Instant}};
 use tokio::{net::TcpStream,time::timeout};
 use tokio_tungstenite::{connect_async_tls_with_config,Connector,MaybeTlsStream,WebSocketStream,tungstenite::{Message,protocol::WebSocketConfig}};
 use url::{Url,Host};
@@ -44,6 +44,8 @@ pub struct Connection {
     device_id: String,
     failed: bool,
     pending:VecDeque<Server>,
+    last_ping:Instant,
+    ping_pending:Option<Instant>,
 }
 impl Connection {
     pub async fn register(endpoint: Endpoint, identity:&DeviceIdentity)->Result<Self>{
@@ -70,7 +72,7 @@ impl Connection {
         let cfg=WebSocketConfig::default().max_message_size(Some(MAX_MESSAGE)).max_frame_size(Some(MAX_MESSAGE)).max_write_buffer_size(2*MAX_MESSAGE);
         let (ws,_)=timeout(CONNECT_LIMIT,connect_async_tls_with_config(endpoint.url.as_str(),Some(cfg),true,Some(Connector::Rustls(Arc::new(tls)))))
             .await.map_err(|_|"Signaling connection timed out")?.map_err(|_|"Signaling connection or TLS verification failed")?;
-        let mut conn=Self{ws,device_id:hex(&identity.fingerprint()),failed:false,pending:VecDeque::new()};
+        let mut conn=Self{ws,device_id:hex(&identity.fingerprint()),failed:false,pending:VecDeque::new(),last_ping:Instant::now(),ping_pending:None};
         let Server::Challenge{server,nonce}=conn.receive(IO_LIMIT).await? else{return Err("Expected registration challenge".into());};
         let server=decode_hex::<32>(&server).map_err(|_|"Invalid server identity")?;
         let nonce=decode_hex::<32>(&nonce).map_err(|_|"Invalid registration nonce")?;
@@ -128,6 +130,44 @@ impl Connection {
             Ok(Err(e))=>{self.failed=true;Err(e)},
             Err(_)=>{self.failed=true;Err("Signaling receive timed out".into())}
         }
+    }
+    /// Both route members opt into the one-time bounded lease before ICE.
+    pub async fn request_extended_lease(&mut self,session:&str)->Result<()>{
+        if !self.pending.is_empty(){return Err("Unexpected pending records before lease".into());}
+        self.send(Client::ExtendLease{session:session.into()}).await?;
+        match self.receive(Duration::from_secs(10)).await?{
+            Server::LeaseGranted{session:id,seconds} if id==session&&seconds==remote_ex_rendezvous_protocol::EXTENDED_ROUTE_SECONDS=>Ok(()),
+            _=>Err("Extended route lease not granted".into()),
+        }
+    }
+    /// Application heartbeats; unexpected records or missing pong stop the
+    /// session. No implicit reconnect.
+    pub async fn route_tick(&mut self)->Result<()>{
+        if self.ping_pending.is_some_and(|at|at.elapsed()>=IO_LIMIT){return Err("Signaling heartbeat timed out".into());}
+        if self.ping_pending.is_none()&&self.last_ping.elapsed()>=Duration::from_secs(10){
+            self.send(Client::Ping).await?;
+            let now=Instant::now();self.last_ping=now;self.ping_pending=Some(now);
+        }
+        tokio::select!{
+            biased;
+            event=self.receive(IO_LIMIT)=>{
+                match event?{
+                    Server::Pong if self.ping_pending.take().is_some()=>Ok(()),
+                    _=>Err("Routed session interrupted".into()),
+                }
+            }
+            _=tokio::time::sleep(Duration::from_millis(10))=>Ok(()),
+        }
+    }
+    pub async fn finish_route(&mut self,session:&str)->Result<()>{
+        for _ in 0..2{
+            match self.receive(IO_LIMIT).await?{
+                Server::Pong if self.ping_pending.take().is_some()=>continue,
+                Server::Closed{session:id,reason} if id==session&&reason=="closed"=>return Ok(()),
+                _=>return Err("Expected explicit route closure".into()),
+            }
+        }
+        Err("Expected explicit route closure".into())
     }
     /// Request operator-configured ICE credentials once after the encrypted
     /// handshake. Preserve up to four racing ciphertext records in order.

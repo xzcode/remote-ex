@@ -72,6 +72,8 @@ jobs:
           timeout 100s python3 scripts/test_routed_diagnostic.py target/debug/remote-ex-rendezvous crates/media/target/debug/routed_diagnostic --catalog-batch-test
       - name: Simultaneous VP8 video and Opus RTP audio with inert input
         run: timeout 110s python3 scripts/test_routed_diagnostic.py target/debug/remote-ex-rendezvous crates/media/target/debug/routed_diagnostic --av-test
+      - name: Extended routed session with actual decoder resolution switches (forced TURN)
+        run: timeout 170s python3 scripts/test_routed_diagnostic.py target/debug/remote-ex-rendezvous crates/media/target/debug/routed_diagnostic --extended-test --relay-only
       - name: Explicit host-reviewed file changes in temporary fixture
         run: |
           timeout 110s python3 scripts/test_routed_diagnostic.py target/debug/remote-ex-rendezvous crates/media/target/debug/routed_diagnostic --manage-test

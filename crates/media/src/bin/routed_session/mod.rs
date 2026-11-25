@@ -20,16 +20,18 @@ mod audio;
 mod clipboard_sync;
 mod catalog;
 mod manage;
+mod runtime_quality;
 static CANCEL:AtomicBool=AtomicBool::new(false);
 fn canceled()->bool{CANCEL.load(Ordering::Acquire)}
 #[derive(Clone,Copy,PartialEq,Eq)]
-enum Profile{Test,View,Control,Exchange(exchange::Mode),Audio(bool),ClipboardSync(bool),Catalog,AvTest,AvView,AvControl,Manage,CatalogBatch}
+enum Profile{Test,View,Control,Exchange(exchange::Mode),Audio(bool),ClipboardSync(bool),Catalog,AvTest,AvView,AvControl,Manage,CatalogBatch,ExtendedTest,ExtendedView,ExtendedControl,ExtendedAvView,ExtendedAvControl}
 impl Profile{
-    fn code(self)->u8{match self{Self::Test=>0,Self::View=>1,Self::Control=>2,Self::Exchange(mode)=>mode.code(),Self::Audio(test)=>if test{9}else{10},Self::ClipboardSync(test)=>if test{13}else{14},Self::Catalog=>15,Self::AvTest=>16,Self::AvView=>17,Self::AvControl=>18,Self::Manage=>19,Self::CatalogBatch=>20}}
-    fn av(self)->bool{matches!(self,Self::AvTest|Self::AvView|Self::AvControl)}
-    fn native_view(self)->bool{matches!(self,Self::View|Self::AvView)}
-    fn native_control(self)->bool{matches!(self,Self::Control|Self::AvControl)}
-    fn synthetic(self)->bool{matches!(self,Self::Test|Self::AvTest)}
+    fn code(self)->u8{match self{Self::Test=>0,Self::View=>1,Self::Control=>2,Self::Exchange(mode)=>mode.code(),Self::Audio(test)=>if test{9}else{10},Self::ClipboardSync(test)=>if test{13}else{14},Self::Catalog=>15,Self::AvTest=>16,Self::AvView=>17,Self::AvControl=>18,Self::Manage=>19,Self::CatalogBatch=>20,Self::ExtendedTest=>21,Self::ExtendedView=>22,Self::ExtendedControl=>23,Self::ExtendedAvView=>24,Self::ExtendedAvControl=>25}}
+    fn av(self)->bool{matches!(self,Self::AvTest|Self::AvView|Self::AvControl|Self::ExtendedAvView|Self::ExtendedAvControl)}
+    fn native_view(self)->bool{matches!(self,Self::View|Self::AvView|Self::ExtendedView|Self::ExtendedAvView)}
+    fn native_control(self)->bool{matches!(self,Self::Control|Self::AvControl|Self::ExtendedControl|Self::ExtendedAvControl)}
+    fn synthetic(self)->bool{matches!(self,Self::Test|Self::AvTest|Self::ExtendedTest)}
+    fn extended(self)->bool{matches!(self,Self::ExtendedTest|Self::ExtendedView|Self::ExtendedControl|Self::ExtendedAvView|Self::ExtendedAvControl)}
     fn grant(self)->u8{if self.native_view()||matches!(self,Self::Exchange(_)|Self::Audio(_)|Self::ClipboardSync(_)|Self::Catalog|Self::CatalogBatch|Self::Manage){VIEW}else{VIEW|INPUT}}
     fn consent(self,host:bool)->&'static str{match(self,host){
         (Self::Test,_)=>"ALLOW ROUTED TEST",(Self::View,true)=>"ALLOW ROUTED SCREEN",
@@ -52,6 +54,11 @@ impl Profile{
         (Self::AvView,false)=>"ALLOW ROUTED VIEW AND PLAY AUDIO",
         (Self::AvControl,true)=>"ALLOW ROUTED SCREEN AUDIO AND INPUT",
         (Self::AvControl,false)=>"ALLOW ROUTED INPUT AND PLAY AUDIO",
+        (Self::ExtendedTest,_)=>"ALLOW EXTENDED SYNTHETIC TEST",
+        (Self::ExtendedView,true)=>"ALLOW ROUTED SCREEN",(Self::ExtendedView,false)=>"ALLOW ROUTED VIEW",
+        (Self::ExtendedControl,true)=>"ALLOW ROUTED SCREEN AND INPUT",(Self::ExtendedControl,false)=>"ALLOW ROUTED INPUT",
+        (Self::ExtendedAvView,true)=>"ALLOW ROUTED SCREEN AND AUDIO",(Self::ExtendedAvView,false)=>"ALLOW ROUTED VIEW AND PLAY AUDIO",
+        (Self::ExtendedAvControl,true)=>"ALLOW ROUTED SCREEN AUDIO AND INPUT",(Self::ExtendedAvControl,false)=>"ALLOW ROUTED INPUT AND PLAY AUDIO",
     }}
 }
 const HEARTBEAT:&[u8]=b"remote-ex-routed/heartbeat/v1";
@@ -172,16 +179,7 @@ fn gate(proof:&VerifiedSession)->MediaResult<SessionGate>{
 
 // Poll the authenticated data channel while also watching the rendezvous
 // connection. A close/error stops this synthetic session; no reconnect.
-async fn tick(conn:&mut Connection)->MediaResult<()>{
-    tokio::select!{
-        biased;
-        event=conn.receive(Duration::from_secs(5))=>{
-            let _=event?;
-            Err("Routed session interrupted".into())
-        }
-        _=tokio::time::sleep(Duration::from_millis(10))=>Ok(()),
-    }
-}
+async fn tick(conn:&mut Connection)->MediaResult<()>{conn.route_tick().await}
 async fn wait_data(peer:&Peer,channel:&ControlChannel,conn:&mut Connection,expected:&[u8])->MediaResult<()>{
     let deadline=Instant::now()+Duration::from_secs(5);
     while Instant::now()<deadline{
@@ -193,12 +191,7 @@ async fn wait_data(peer:&Peer,channel:&ControlChannel,conn:&mut Connection,expec
     }
     Err("Test data timeout".into())
 }
-async fn finish(conn:&mut Connection,session:&str)->MediaResult<()>{
-    match recv(conn).await?{
-        Server::Closed{session:id,reason} if id==session && reason=="closed"=>Ok(()),
-        _=>Err("Expected explicit route closure".into()),
-    }
-}
+async fn finish(conn:&mut Connection,session:&str)->MediaResult<()>{conn.finish_route(session).await}
 
 async fn host(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey,relay_only:bool,profile:Profile,display:Option<u32>,extra_displays:Vec<u32>,quality:&str,exchange_path:Option<&std::path::Path>,volume:u8,resume:&exchange::ResumeOptions,secondary:bool)->MediaResult<()>{
     let grant=profile.grant();
@@ -219,6 +212,7 @@ async fn host(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey,relay_o
     let mut cipher=RouteCipher::establish(conn,&binding,id,Role::Host).await?;
 
     let config=negotiate_quality(conn,&mut cipher,quality).await?;
+    if profile.extended(){conn.request_extended_lease(&session).await?;}
     let ice_config=conn.request_ice(&session).await?;
     let mut peer=if profile.av(){Peer::sender_av(config,Source::NativeRgba)?}else{Peer::sender(config,Source::NativeRgba)?};
     peer.configure_ice(&ice_config,relay_only)?;drop(ice_config);
@@ -281,10 +275,12 @@ async fn host(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey,relay_o
     wait_data(&peer,&channel,conn,READY).await?;
     channel.send(READY_ACK)?;
     let mut audio_capture=if profile.av(){Some(audio::Capture::new(true)?)}else{None};
+    let mut stream=runtime_quality::HostQuality::default();
+    if profile.extended(){stream.publish(&peer,&channel)?;}
     let mut audio_count=0u32;
     out("CONNECTED ROUTED TEST")?;
     let result:MediaResult<u32>=async{
-        let deadline=Instant::now()+Duration::from_secs(12);
+        let deadline=Instant::now()+Duration::from_secs(if profile.extended(){95}else{12});
         let mut frames=0;let mut events=0;let mut next=Instant::now();
         while Instant::now()<deadline{
             connected(&peer,&channel)?;
@@ -295,6 +291,8 @@ async fn host(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey,relay_o
                     if profile.av()&&audio_count<50{return Err("Insufficient A/V test audio samples".into());}
                     return Ok(frames);
                 }
+                if profile.extended()&&bytes==HEARTBEAT{continue;}
+                if profile.extended()&&bytes.first()==Some(&runtime_quality::REQUEST){stream.request(&bytes,&peer,&channel)?;continue;}
                 if events>=2{return Err("Unexpected extra simulated input".into());}
                 dispatcher.dispatch(&bytes)?;
                 events+=1;
@@ -337,6 +335,7 @@ async fn controller(mut owned:Connection,id:&DeviceIdentity,expected:PublicKey,r
     let binding=RouteBinding{session:sid,controller:id.public_key(),host:expected,controller_nonce:cn,host_nonce:decode_hex::<32>(&nonce).map_err(error)?,requested:grant,granted,profile:profile.code(),relay_only};
     let mut cipher=RouteCipher::establish(conn,&binding,id,Role::Controller).await?;
     let config=negotiate_quality(conn,&mut cipher,quality).await?;
+    if profile.extended(){conn.request_extended_lease(&session).await?;}
     let ice_config=conn.request_ice(&session).await?;
     let mut peer=if profile.av(){Peer::receiver_av(config,profile==Profile::AvTest)?}else{Peer::receiver(config)?};
     peer.configure_ice(&ice_config,relay_only)?;drop(ice_config);peer.start()?;
@@ -417,6 +416,7 @@ async fn controller(mut owned:Connection,id:&DeviceIdentity,expected:PublicKey,r
     for(sequence,event)in [(1,InputEvent::PointerMove(PointerMove{x:100,y:200})),(2,InputEvent::Key(Key{usage:4,down:true}))]{
         channel.send(&InputEnvelope{version:VERSION,session_id:sid.to_vec(),sequence,event:Some(event)}.encode_to_vec())?;
     }
+    if profile==Profile::ExtendedTest{return runtime_quality::test_controller(&peer,&channel,conn,&session,config).await;}
     let deadline=Instant::now()+Duration::from_secs(12);let mut frames=0;let mut audio_frames=0u32;let mut audio_nonzero=false;
     while frames<30||(profile.av()&&(audio_frames<50||!audio_nonzero)){
         connected(&peer,&channel)?;
@@ -458,7 +458,7 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
     let url=a.next().ok_or("Missing WSS URL")?;
     let pin=decode_hex::<32>(&a.next().ok_or("Missing server ID")?).map_err(error)?;
     let endpoint=Endpoint::secure(&url,pin)?;
-    let mut ca=None;let mut relay_only=false;let mut profile=Profile::Test;let mut display=None;let mut supervised=false;let mut persistent=false;let mut defer_test_registration=false;let mut quality="compat".to_owned();let mut exchange_path=None;let mut volume=75u8;let mut extra_displays=Vec::new();let mut identity_slot=None;let mut resume=exchange::ResumeOptions::default();let mut shared_controller=false;let mut secondary=false;
+    let mut ca=None;let mut relay_only=false;let mut profile=Profile::Test;let mut display=None;let mut supervised=false;let mut persistent=false;let mut defer_test_registration=false;let mut quality="compat".to_owned();let mut exchange_path=None;let mut volume=75u8;let mut extra_displays=Vec::new();let mut identity_slot=None;let mut resume=exchange::ResumeOptions::default();let mut shared_controller=false;let mut secondary=false;let mut extended=false;
     while let Some(arg)=a.next(){match arg.as_str(){
         "--ca" if ca.is_none()=>ca=Some(a.next().ok_or("Missing CA path")?),
         "--relay-only" if !relay_only=>relay_only=true,
@@ -468,6 +468,8 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
         "--persistent" if !persistent=>persistent=true,
         "--shared-controller" if !shared_controller=>shared_controller=true,
         "--secondary-control" if !secondary&&native_allowed&&host=>secondary=true,
+        "--extended" if !extended&&native_allowed=>extended=true,
+        "--extended-test" if !native_allowed&&profile==Profile::Test=>profile=Profile::ExtendedTest,
         "--identity-slot" if identity_slot.is_none()=>{
             let n=a.next().ok_or("Missing identity slot")?.parse::<u8>().map_err(error)?;
             remote_ex_security::identity_store::credential_name(n)?;identity_slot=Some(n);
@@ -498,6 +500,11 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
         "--control" if native_allowed&&profile==Profile::Test=>{profile=Profile::Control;if host{display=Some(a.next().ok_or("Select display ID")?.parse::<u32>().map_err(error)?);}},
         _=>return Err("Unexpected argument".into()),
     }}
+    if extended{
+        profile=match profile{Profile::View=>Profile::ExtendedView,Profile::Control=>Profile::ExtendedControl,Profile::AvView=>Profile::ExtendedAvView,Profile::AvControl=>Profile::ExtendedAvControl,_=>return Err("Extended sessions require a native view/control profile".into())};
+        if !supervised{return Err("Extended sessions require visible desktop supervision".into());}
+    }
+    if profile==Profile::ExtendedTest&&!supervised{return Err("Extended test requires supervised synthetic mode".into());}
     if secondary&&(!profile.native_control()||!cfg!(any(target_os="windows",target_os="macos"))){return Err("Experimental secondary control requires Windows or macOS host control".into());}
     if shared_controller&&(host||!(profile.synthetic()||profile.native_view()||profile.native_control())||persistent&&identity_slot.unwrap_or(0)!=0){return Err("Shared identity is only for outgoing view/control/test using slot one identity".into());}
     if identity_slot.is_some()&&!persistent{return Err("Identity slot requires explicit persistent storage opt-in".into());}
@@ -564,6 +571,7 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
     if expected==[0;32]||expected==id.public_key(){return Err("Invalid peer key".into());}
     if let Profile::Exchange(mode)=profile{out(&format!("TRANSFER {} {:?}",if mode.sending(host){"SEND"}else{"RECEIVE"},mode.kind))?;}
     let consent=if secondary{if profile.av(){"ALLOW SELECTED DISPLAY AUDIO AND INPUT"}else{"ALLOW SELECTED DISPLAY AND INPUT"}}else{profile.consent(host)};
+    let consent=if extended{format!("{consent} FOR UP TO 300 SECONDS")}else{consent.to_owned()};
     out(&format!("CONSENT (type {consent}; one-shot)"))?;
     if input()? !=consent||canceled(){return Err("Local consent denied".into());}
     audio::VOLUME.store(volume,Ordering::Release);

@@ -35,6 +35,8 @@ struct Session {
     noise_step: u8,
     sealed_count: [u8;2],
     ice_issued: [bool;2],
+    lease_requested:[bool;2],
+    extended:bool,
 }
 #[derive(Default)]
 pub struct Hub {
@@ -107,6 +109,7 @@ impl Hub {
                 self.decision(connection, &session, grant, host_nonce, now),
             Client::Signal { session, payload } => self.signal(connection, &session, payload),
             Client::IceConfig { session } => Some(self.ice_config(connection,&session)),
+            Client::ExtendLease{session}=>self.extend_lease(connection,&session,now),
             Client::Close { session } => {
                 if self.devices[&connection].session.as_deref() != Some(session.as_str()) {
                     return Some(error("session_unavailable"));
@@ -140,7 +143,7 @@ impl Hub {
         self.devices.get_mut(&host).unwrap().session=Some(session.clone());
         self.sessions.insert(session.clone(), Session {
             controller:connection,host,requested,controller_nonce,grant:None,
-            deadline: now + PENDING_TTL, offer: false, answer: false, proofs: [false;2], ice_count: [0;2], noise_step:0, sealed_count:[0;2], ice_issued:[false;2],
+            deadline: now + PENDING_TTL, offer: false, answer: false, proofs: [false;2], ice_count: [0;2], noise_step:0, sealed_count:[0;2], ice_issued:[false;2],lease_requested:[false;2],extended:false,
         });
         Server::Requested { session, target }
     }
@@ -164,11 +167,27 @@ impl Hub {
         if grant.is_none() { self.finish(session, "declined"); }
         None
     }
+    fn extend_lease(&mut self,connection:u64,session:&str,now:Instant)->Option<Server>{
+        let Some(s)=self.sessions.get_mut(session)else{return Some(error("session_unavailable"));};
+        let role=if s.controller==connection{0}else if s.host==connection{1}else{return Some(error("session_unavailable"));};
+        if s.grant.is_none()||s.noise_step!=2||s.sealed_count.iter().any(|&n|n==0)||s.ice_issued.iter().any(|&v|v)||s.lease_requested[role]||s.extended{return Some(error("lease_unavailable"));}
+        s.lease_requested[role]=true;
+        if !s.lease_requested.iter().all(|v|*v){return None;}
+        s.extended=true;
+        s.deadline=now+Duration::from_secs(u64::from(crate::protocol::EXTENDED_ROUTE_SECONDS));
+        let peers=[s.controller,s.host];
+        for peer in peers{
+            if !self.deliver(peer,Server::LeaseGranted{session:session.into(),seconds:crate::protocol::EXTENDED_ROUTE_SECONDS}){
+                self.finish(session,"peer_unavailable");return Some(error("session_unavailable"));
+            }
+        }
+        None
+    }
     fn ice_config(&mut self,connection:u64,session:&str)->Server{
         let Some(s)=self.sessions.get_mut(session)else{return error("session_unavailable");};
         let role=if s.controller==connection{0}else if s.host==connection{1}else{return error("session_unavailable");};
-        if s.grant.is_none()||s.noise_step!=2||s.sealed_count.iter().any(|&n|n==0)||s.ice_issued[role]{return error("ice_config_unavailable");}
-        let config=match &self.issuer{Some(issuer)=>match issuer.issue(&self.devices[&connection].id,session){Ok(c)=>c,Err(_)=>return error("ice_config_unavailable")},None=>crate::protocol::IceConfig::default()};
+        if s.grant.is_none()||s.noise_step!=2||s.sealed_count.iter().any(|&n|n==0)||s.ice_issued[role]||s.lease_requested.iter().any(|&v|v)&&!s.extended{return error("ice_config_unavailable");}
+        let config=match &self.issuer{Some(issuer)=>match issuer.issue_for_route(&self.devices[&connection].id,session,s.extended){Ok(c)=>c,Err(_)=>return error("ice_config_unavailable")},None=>crate::protocol::IceConfig::default()};
         s.ice_issued[role]=true;Server::IceConfig{session:session.into(),config}
     }
     fn signal(&mut self, connection:u64, session: &str, payload: Signal) -> Option<Server> {
@@ -249,6 +268,28 @@ mod tests {
         let Some(Server::Presence{items})=h.handle(&a,1,Client::Lookup{targets:targets.clone()},now)else{panic!("lookup")};
         assert!(items[0].online);assert!(!items[1].online);
         assert!(matches!(h.handle(&a,1,Client::Lookup{targets},now),Some(Server::Error{..})));
+    }
+    #[test]
+    fn extended_lease_requires_both_exact_route_members_and_never_renews(){
+        let mut h=Hub::default();let now=Instant::now();let(a,mut arx)=device(&mut h,1);let(b,mut brx)=device(&mut h,2);let(c,_)=device(&mut h,3);
+        let Some(Server::Requested{session,..})=h.handle(&a,1,Client::Request{target:b.clone(),requested:VIEW,controller_nonce:"01".repeat(32)},now)else{panic!("request")};
+        brx.try_recv().unwrap();
+        let lease=Client::ExtendLease{session:session.clone()};
+        assert!(matches!(h.handle(&a,1,lease.clone(),now),Some(Server::Error{..})));
+        h.handle(&b,2,Client::Decision{session:session.clone(),grant:Some(VIEW),host_nonce:Some("02".repeat(32))},now);
+        arx.try_recv().unwrap();
+        {let s=h.sessions.get_mut(&session).unwrap();s.noise_step=2;s.sealed_count=[1,1];}
+        assert!(h.handle(&a,1,lease.clone(),now).is_none());
+        assert!(arx.try_recv().is_err());assert!(!h.sessions[&session].extended);
+        assert!(matches!(h.handle(&c,3,lease.clone(),now),Some(Server::Error{..})));
+        assert!(matches!(h.handle(&a,1,lease.clone(),now),Some(Server::Error{..})));
+        assert!(matches!(h.handle(&a,1,Client::IceConfig{session:session.clone()},now),Some(Server::Error{..})));
+        assert!(h.handle(&b,2,lease.clone(),now).is_none());
+        assert!(matches!(arx.try_recv().unwrap(),Server::LeaseGranted{seconds:420,..}));
+        assert!(matches!(brx.try_recv().unwrap(),Server::LeaseGranted{seconds:420,..}));
+        assert!(matches!(h.handle(&b,2,lease,now),Some(Server::Error{..})));
+        h.prune(now+Duration::from_secs(121));assert!(h.sessions.contains_key(&session));
+        h.prune(now+Duration::from_secs(420));assert!(h.sessions.is_empty());
     }
     #[test]
     fn pending_expiry_and_rate_limit() {

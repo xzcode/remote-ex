@@ -7,6 +7,7 @@ use sha1::Sha1;
 use std::{io::Read,time::{SystemTime,UNIX_EPOCH}};
 use zeroize::Zeroizing;
 const TTL:u64=180;
+const EXTENDED_TTL:u64=540;
 pub struct IceIssuer { stun:Option<String>,turn:Option<(String,Zeroizing<Vec<u8>>)> }
 impl IceIssuer {
     pub fn new(stun:Option<String>,turn:Option<(String,Vec<u8>)>)->Result<Self,&'static str>{
@@ -33,17 +34,17 @@ impl IceIssuer {
         };
         Ok(Self::new(stun,turn)?)
     }
-    pub fn issue(&self,device:&str,session:&str)->Result<IceConfig,&'static str>{
+    pub fn issue_for_route(&self,device:&str,session:&str,extended:bool)->Result<IceConfig,&'static str>{
         let now=SystemTime::now().duration_since(UNIX_EPOCH).map_err(|_|"system clock invalid")?.as_secs();
-        self.issue_at(device,session,now)
+        self.issue_at(device,session,now,if extended{EXTENDED_TTL}else{TTL})
     }
-    fn issue_at(&self,device:&str,session:&str,now:u64)->Result<IceConfig,&'static str>{
+    fn issue_at(&self,device:&str,session:&str,now:u64,ttl:u64)->Result<IceConfig,&'static str>{
         // Inputs originate only from authenticated, canonical hub identifiers.
         if device.len()!=64||session.len()!=32||!device.bytes().chain(session.bytes()).all(|b|b.is_ascii_hexdigit()){
             return Err("invalid TURN scope");
         }
         let turn=if let Some((url,secret))=&self.turn{
-            let expires_at=now.checked_add(TTL).ok_or("expiry overflow")?;
+            let expires_at=now.checked_add(ttl).ok_or("expiry overflow")?;
             let username=format!("{expires_at}:{device}-{session}");
             let mut mac=Hmac::<Sha1>::new_from_slice(secret).map_err(|_|"TURN issuer error")?;
             mac.update(username.as_bytes());
@@ -60,11 +61,12 @@ mod tests{
     fn rest_credentials_have_expiry_scope_and_hmac(){
         let secret=vec![b'x';32];
         let issuer=IceIssuer::new(None,Some(("turn://relay.example.com:3478".into(),secret.clone()))).unwrap();
-        let c=issuer.issue_at(&"01".repeat(32),&"02".repeat(16),1_700_000_000).unwrap().turn.unwrap();
+        let c=issuer.issue_at(&"01".repeat(32),&"02".repeat(16),1_700_000_000,TTL).unwrap().turn.unwrap();
         assert_eq!(c.expires_at,1_700_000_180);
+        let extended=issuer.issue_at(&"01".repeat(32),&"02".repeat(16),1_700_000_000,EXTENDED_TTL).unwrap().turn.unwrap();assert_eq!(extended.expires_at,1_700_000_540);
         assert!(c.username.starts_with("1700000180:"));
         let mut mac=Hmac::<Sha1>::new_from_slice(&secret).unwrap();mac.update(c.username.as_bytes());
         assert_eq!(c.password,STANDARD.encode(mac.finalize().into_bytes()));
-        assert!(issuer.issue_at("invalid",&"02".repeat(16),1).is_err());
+        assert!(issuer.issue_at("invalid",&"02".repeat(16),1,TTL).is_err());
     }
 }

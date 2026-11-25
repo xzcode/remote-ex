@@ -51,6 +51,7 @@ def main():
     if directory_test and (not exchange_sender or resume_test or pause_test):raise RuntimeError("Choose a separate directory transfer test")
     clipboard_test="--clipboard-sync-test" in sys.argv[3:]
     if clipboard_test and exchange_sender:raise RuntimeError("Choose one test profile")
+    extended_test="--extended-test" in sys.argv[3:]
     av_test="--av-test" in sys.argv[3:]
     audio_test="--audio-test" in sys.argv[3:]
     if audio_test and exchange_sender:raise RuntimeError("Choose one test profile")
@@ -66,7 +67,7 @@ def main():
         pin="07"*32
         env=dict(os.environ,REMOTE_EX_SIGNAL_BIND="127.0.0.1:0",
                  REMOTE_EX_TLS_CERT=cert,REMOTE_EX_TLS_KEY=key,REMOTE_EX_SERVER_ID=pin)
-        deadline=time.monotonic()+100
+        deadline=time.monotonic()+(160 if extended_test else 100)
         try:
             if relay_only:
                 # CI-only private interface, not an open or Internet relay.
@@ -127,6 +128,8 @@ def main():
                 host_flags.extend(["--desktop-session",flag,source]);controller_flags.extend(["--desktop-session",flag,target])
             if clipboard_test:
                 host_flags.extend(["--clipboard-sync-test","--desktop-session"]);controller_flags.extend(["--clipboard-sync-test","--desktop-session"])
+            if extended_test:
+                host_flags.extend(["--extended-test","--desktop-session"]);controller_flags.extend(["--extended-test","--desktop-session"])
             if av_test:
                 host_flags.extend(["--av-test","--desktop-session"]);controller_flags.extend(["--av-test","--desktop-session"])
             if audio_test:
@@ -198,6 +201,9 @@ def main():
             elif clipboard_test:
                 for pair,key in ((host,ck),(controller,hk)):
                     pair[0].stdin.write(key+"\nALLOW TEST CLIPBOARD SYNC\n");pair[0].stdin.flush()
+            elif extended_test:
+                for pair,key in ((host,ck),(controller,hk)):
+                    pair[0].stdin.write(key+"\nALLOW EXTENDED SYNTHETIC TEST\n");pair[0].stdin.flush()
             elif av_test:
                 for pair,key in ((host,ck),(controller,hk)):
                     pair[0].stdin.write(key+"\nALLOW TEST AUDIO VIDEO\n");pair[0].stdin.flush()
@@ -236,10 +242,17 @@ def main():
                 time.sleep(2.2)
                 pair[0].stdin.write("RESUME\n");pair[0].stdin.flush()
                 expect(pair,"TRANSFER_RESUMED",deadline)
+            if extended_test:
+                expect(controller,"ADAPTIVE_LOW ",deadline)
+                expect(controller,"ADAPTIVE_FULL ",deadline)
             expect(host,"PASS ROUTED HOST:",deadline)
-            expect(controller,"PASS ROUTED CONTROLLER:",deadline)
+            result=expect(controller,"PASS ROUTED CONTROLLER:",deadline)
+            if extended_test and "extended_seconds=" not in result:raise RuntimeError("Extended duration missing")
             for proc,_ in peers[-2:]:
                 if proc.wait(timeout=5)!=0:raise RuntimeError("peer exited unsuccessfully")
+            if extended_test:
+                print("PASS: actual VP8 low/full resolution switching and >60-second authenticated session",flush=True)
+                return
             if manage_directory_test:
                 for path,expected in ((os.path.join("renamed-folder","sub","keep.txt"),b"folder"),(os.path.join(reviewed["recovery"],"1-remove","sub","keep.txt"),b"remove"),(os.path.join("restored","sub","keep.txt"),b"saved")):
                     with open(os.path.join(source,path),"rb") as stream:

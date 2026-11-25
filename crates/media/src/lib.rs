@@ -137,7 +137,7 @@ impl Peer {
             "webrtcbin name=rtc bundle-policy=max-bundle latency=100 \
              {source_text} ! video/x-raw,format={caps_format},width={w},height={h},framerate={fps}/1 \
              ! queue max-size-buffers=2 max-size-bytes=0 max-size-time=0 leaky=downstream \
-             ! videoconvert ! video/x-raw,format=I420 \
+             ! videoconvert ! videoscale add-borders=false ! videorate drop-only=true ! capsfilter name=encode_caps caps=\"video/x-raw,format=I420,width={w},height={h},framerate={fps}/1\" \
              ! vp8enc name=encoder deadline=1 cpu-used=8 target-bitrate={bitrate} keyframe-max-dist={fps} \
              ! rtpvp8pay pt=96 picture-id-mode=15-bit \
              ! application/x-rtp,media=video,encoding-name=VP8,clock-rate=90000,payload=96 ! rtc. {audio_branch}",
@@ -200,7 +200,7 @@ impl Peer {
         let pipeline = make_pipeline(&format!(
             "webrtcbin name=rtc bundle-policy=max-bundle latency=100 \
              queue name=rx max-size-buffers=12 max-size-bytes=0 max-size-time=0 \
-             ! rtpvp8depay ! vp8dec ! videoconvert ! videoscale \
+             ! rtpvp8depay ! vp8dec name=decoder ! videoconvert ! videoscale add-borders=false \
              ! video/x-raw,format=RGBA,width={w},height={h} \
              ! {output_branch} {audio_branch}",
             w=config.width, h=config.height
@@ -315,6 +315,26 @@ impl Peer {
         if !(100_000..=self.config.bitrate).contains(&bitrate){return Err("Invalid adaptive bitrate".into());}
         let encoder=named(&self.pipeline,"encoder")?;
         encoder.set_property("target-bitrate",bitrate as i32);Ok(())
+    }
+    /// Change actual encoded VP8 dimensions/rate within authenticated maximum.
+    pub fn set_stream_quality(&self,quality:VideoConfig)->MediaResult<()>{
+        quality.validate()?;
+        if !self.running||self.input.is_none()||quality.width>self.config.width||quality.height>self.config.height||quality.fps>self.config.fps||quality.bitrate>self.config.bitrate{return Err("Runtime quality exceeds negotiated ceiling".into());}
+        let caps=gst::Caps::builder("video/x-raw").field("format","I420")
+            .field("width",quality.width as i32).field("height",quality.height as i32)
+            .field("framerate",gst::Fraction::new(quality.fps as i32,1)).build();
+        named(&self.pipeline,"encode_caps")?.set_property("caps",&caps);
+        self.set_video_bitrate(quality.bitrate)
+    }
+    /// Decoder output BEFORE scaling to the fixed viewer canvas.
+    pub fn decoded_stream_dimensions(&self)->MediaResult<Option<(u32,u32)>>{
+        let decoder=named(&self.pipeline,"decoder")?;
+        let Some(caps)=decoder.static_pad("src").and_then(|p|p.current_caps())else{return Ok(None)};
+        let s=caps.structure(0).ok_or("Missing decoder caps")?;
+        let w=s.get::<i32>("width").map_err(|e|e.to_string())?;
+        let h=s.get::<i32>("height").map_err(|e|e.to_string())?;
+        if w<16||h<16||w as u32>self.config.width||h as u32>self.config.height{return Err("Decoded stream exceeds negotiated maximum".into());}
+        Ok(Some((w as u32,h as u32)))
     }
     pub fn connection_state(&self) -> rtc::WebRTCPeerConnectionState {
         self.webrtc.property("connection-state")

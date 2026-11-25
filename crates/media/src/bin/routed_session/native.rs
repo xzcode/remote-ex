@@ -78,7 +78,7 @@ fn capture(displays:Vec<(u32,DisplayArea)>,input:bool,config:VideoConfig,seconda
     Capture{rx,stop,layout,count}
 }
 async fn serve<B:Backend>(peer:&Peer,channel:&ControlChannel,conn:&mut Connection,session:&str,
-    mut dispatcher:Dispatcher<B>,capture:Capture,input:bool,av:bool)->MediaResult<()>{
+    mut dispatcher:Dispatcher<B>,capture:Capture,input:bool,av:bool,extended:bool)->MediaResult<()>{
     // The native capture worker is already authorized and independent. Do not
     // acknowledge readiness or accept input before its first successful frame.
     let first_deadline=Instant::now()+Duration::from_secs(3);
@@ -96,6 +96,8 @@ async fn serve<B:Backend>(peer:&Peer,channel:&ControlChannel,conn:&mut Connectio
     channel.send(READY_ACK)?;
     out(if input{"CONNECTED ROUTED CONTROL"}else{"CONNECTED ROUTED VIEW"})?;
     if !input{channel.send(&[VIEW_LAYOUT_ACK,initial.layout as u8,capture.count as u8])?;}
+    let mut stream=runtime_quality::HostQuality::default();if extended{stream.publish(peer,channel)?;}
+    let limit=if extended{runtime_quality::NATIVE_SECONDS}else{30};
     let started=Instant::now();let mut last=started;let mut last_frame=started;
     let mut stats=remote_ex_media::stats::Sampler::default();
     let mut last_audio=Instant::now();
@@ -105,13 +107,14 @@ async fn serve<B:Backend>(peer:&Peer,channel:&ControlChannel,conn:&mut Connectio
         loop{
             if canceled(){return Ok(());}
             connected(peer,channel)?;
-            if started.elapsed()>=Duration::from_secs(30){return Ok(());}
+            if started.elapsed()>=Duration::from_secs(limit){return Ok(());}
             if last.elapsed()>Duration::from_secs(2)||last_frame.elapsed()>Duration::from_secs(2){return Err("Control heartbeat or video stalled".into());}
             for _ in 0..32{
                 if canceled(){return Ok(());}
                 let Some(bytes)=channel.receive()? else{break;};
                 if bytes==STOP{return Ok(());}
                 if bytes==HEARTBEAT{last=Instant::now();}
+                else if extended&&bytes.first()==Some(&runtime_quality::REQUEST){stream.request(&bytes,peer,channel)?;}
                 else if bytes==SWITCH_VIEW&&!input&&capture.count>1{
                     if last_switch.elapsed()<Duration::from_millis(250){return Err("Display switch rate exceeded".into());}
                     let next=(capture.layout.load(Ordering::Acquire)+1)%(capture.count+1);
@@ -142,7 +145,8 @@ async fn serve<B:Backend>(peer:&Peer,channel:&ControlChannel,conn:&mut Connectio
             }
             if let Some(sample)=stats.poll(peer){
                 out(&sample.line())?;
-                if let Some(loss)=sample.loss_pct{
+                if extended{stream.observe(peer,channel,sample.loss_pct,sample.rtt_ms)?;}
+                else if let Some(loss)=sample.loss_pct{
                     let old=bitrate;
                     if loss>5.0{bitrate=(bitrate*3/4).max(floor);good=0;}
                     else if loss<1.0{good=good.saturating_add(1);if good>=3{bitrate=(bitrate+ceiling/10).min(ceiling);good=0;}}else{good=0;}
@@ -183,38 +187,43 @@ pub(super) async fn host(peer:&Peer,channel:&ControlChannel,conn:&mut Connection
         if secondary{
             let backend=windows_display::ScopedBackend::new(display,area)?;
             let d=Dispatcher::new(gate,backend,area)?;
-            return serve(peer,channel,conn,session,d,capture(displays,true,config,true),true,profile.av()).await;
+            return serve(peer,channel,conn,session,d,capture(displays,true,config,true),true,profile.av(),profile.extended()).await;
         }
         #[cfg(target_os="macos")]
         if secondary{
             let backend=macos_display::ScopedBackend::new(display,area)?;
             let d=Dispatcher::new(gate,backend,area)?;
-            return serve(peer,channel,conn,session,d,capture(displays,true,config,true),true,profile.av()).await;
+            return serve(peer,channel,conn,session,d,capture(displays,true,config,true),true,profile.av(),profile.extended()).await;
         }
         let backend=NativeBackend::new()?;
         if backend.primary_area()?!=area{return Err("Primary display DPI/geometry mismatch".into());}
         let d=Dispatcher::new(gate,backend,area)?;
-        serve(peer,channel,conn,session,d,capture(displays,true,config,false),true,profile.av()).await
+        serve(peer,channel,conn,session,d,capture(displays,true,config,false),true,profile.av(),profile.extended()).await
     }else{
         // Never instantiate a native input backend in the view-only profile.
         let d=Dispatcher::new(gate,Inert::default(),area)?;
-        serve(peer,channel,conn,session,d,capture(displays,false,config,false),false,profile.av()).await
+        serve(peer,channel,conn,session,d,capture(displays,false,config,false),false,profile.av(),profile.extended()).await
     }
 }
 pub(super) async fn controller(peer:&Peer,channel:&ControlChannel,mut conn:Connection,session:String,sid:[u8;16],geometry:Geometry,profile:Profile,screens:u8)->MediaResult<()>{
     // The native viewer must run on the main thread. Monitor the existing
     // authenticated WSS connection on a runtime worker, not the GUI thread.
-    let (done,wait)=tokio::sync::oneshot::channel::<()>();
+    let (done,mut wait)=tokio::sync::oneshot::channel::<()>();
     let monitor=tokio::spawn(async move{
-        let result:MediaResult<()>=async{tokio::select!{
-            _=wait=>{conn.send(Client::Close{session:session.clone()}).await?;finish(&mut conn,&session).await},
-            event=conn.receive(Duration::from_secs(40))=>{let _=event?;Err("Routed session interrupted".into())}
-        }}.await;
+        let result:MediaResult<()>=async{
+            loop{
+                match wait.try_recv(){
+                    Ok(())=>{conn.send(Client::Close{session:session.clone()}).await?;break finish(&mut conn,&session).await;},
+                    Err(tokio::sync::oneshot::error::TryRecvError::Closed)=>break Err("Viewer supervision ended".into()),
+                    Err(tokio::sync::oneshot::error::TryRecvError::Empty)=>tick(&mut conn).await?,
+                }
+            }
+        }.await;
         if result.is_err(){CANCEL.store(true,Ordering::Release);}
         let close=conn.close().await;result?;close
     });
     out(if profile.native_control(){"CONNECTED ROUTED CONTROL"}else{"CONNECTED ROUTED VIEW"})?;
-    let result=viewer::run(peer,channel,sid,geometry,profile.native_control(),screens,profile.av());
+    let result=viewer::run(peer,channel,sid,geometry,profile.native_control(),screens,profile.av(),profile.extended());
     if profile.av(){peer.mute_audio();}
     let (frames,released)=match result{
         Ok(v)=>v,
@@ -228,6 +237,7 @@ pub(super) async fn controller(peer:&Peer,channel:&ControlChannel,mut conn:Conne
             match channel.receive()?{
                 Some(b) if b==ACK=>break,
                 Some(b) if profile.native_view()&&b.len()==3&&b[0]==VIEW_LAYOUT_ACK&&b[2]==screens&&b[1]<=screens=>{},
+                Some(b) if profile.extended()&&b.first()==Some(&runtime_quality::STATUS)=>{runtime_quality::status(&b)?;},
                 Some(_)=>return Err("Unexpected control response while closing".into()),
                 None=>{},
             }

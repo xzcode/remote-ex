@@ -141,3 +141,10 @@
 - macOS 采用明确选定单屏的实验路径，保留系统录屏/辅助功能权限和 30 秒会话上限。XCap 0.9.10 macOS 使用 CGDirectDisplayID 与 CGDisplayBounds；Enigo 0.6.1 的鼠标位置通过主屏尺寸与 NSEvent 换算，不能直接用于混合 DPI。新 Quartz 适配独立查询/核对全局点坐标，拒绝镜像/非唯一显示器、几何变化、鼠标未到达授权位置；截图允许与逻辑尺寸同比例的 Retina 像素。鼠标移动、三键/拖动/滚轮使用 CGEvent，键盘复用 Enigo；按下需实际指针处于选定屏且 AX focused window 完整在其内，释放不因焦点变化受阻。前台窗口本机变化可能竞态；拒绝未知焦点、额外按键；未验证双击、鼠标侧键（不支持）及真实 Retina/多显示器表现。Windows 单屏路径保留，双方桌面监督器使用相同更新授权语句。
 - 参考： https://github.com/nashaofu/xcap/blob/v0.9.10/src/macos/impl_monitor.rs ; https://github.com/enigo-rs/enigo/blob/v0.6.1/src/macos/macos_impl.rs ; https://developer.apple.com/documentation/coregraphics/cgdisplaybounds(_:); https://developer.apple.com/documentation/applicationservices/axuielement_h 。新增无 OS 输入的几何/按键映射测试；原生构建与实机待验。
 - 仍需动态分辨率和长连接稳定性（包括信令/媒体/权限生命周期），不将 M3 标为验收完成，不部署或发布。
+
+
+## 第十轮（运行中画质与长会话整合）
+- 第九批 288d992 Core #45661710443、Media #45661710540 实际成功，目录恢复 fixture 已通过；Desktop #45661710583 与 native build #45661710456 记录时仍在执行，macOS 次屏实机未验。
+- 新签名 profile21 为纯 synthetic 延长测试；22/23/24/25 为显式可见监督 extended view/control/A-V。普通 profile 与默认30秒仍保留，必须双方同时选择、核对公钥并再次批准，固定上限300秒，禁止自动重连/续权。双方在 Noise 认证和加密质量交换后各请求一次 420 秒 server routing lease，ICE 前完成；旧服务明确拒绝，不静默降级。TURN TTL 仅扩展路由为540秒；原180秒保持。WSS 应用 Ping/Pong 每10秒、5秒无响应失败，接收端监督不再固定40秒退出；父进程总时限480秒，退出/撤销保留输入清理。
+- 实际 VP8 encoder capsfilter 可在初始授权上限内切换 full/75%/50% 像素尺寸、帧率、码率；接收端固定逻辑 canvas，不扩大显示器或输入范围。F9 和本地工具栏切换自动/全/均衡/低，控制记录受签名 profile 约束。自动三次连续坏样本降低、八次连续好样本恢复，未知不恢复；显示请求配置及实际 decoder src caps，区分原有解码吞吐指标。实际码率/帧率不承诺，捕获和原始 canvas 仍为初始分辨率。
+- 新增 lease 双端/过期/拒绝复用测试，TURN TTL 测试，质量策略单测，实际三进程 synthetic VP8 降低/恢复 decoder caps、保持接收 canvas、72秒会话与 inert release，Linux 强制 TURN、Win/macOS 双平台直接连接构建验证。新代码/测试尚未取得 CI 结果；72秒通过也不等于5分钟实机验收，仍需真实连接、Retina、多屏、A/V、长连接故障及授权安全验收。无新依赖，无部署/发布。

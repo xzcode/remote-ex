@@ -30,6 +30,7 @@ struct Viewer<'a>{
     pixels:Vec<u32>,frames:u32,metric_frames:u32,metric_bytes:u64,last_metric:Instant,last_frame:Instant,
     stats:remote_ex_media::stats::Sampler,started:Instant,heartbeat:Instant,
     released:bool,error:Option<String>,next_frame:Instant,fps:f64,
+    extended:bool,quality_mode:u8,quality_pending:Option<(u8,Instant)>,actual_stream:Option<(u32,u32)>,
 }
 impl Viewer<'_>{
     fn emit(&mut self,event:Event)->MediaResult<()>{
@@ -82,12 +83,17 @@ impl Viewer<'_>{
             1=>if let Some(w)=&self.window{w.set_fullscreen(if w.fullscreen().is_some(){None}else{Some(Fullscreen::Borderless(w.current_monitor()))});},
             2 if self.allow_input=>self.input_enabled=!self.input_enabled,
             3 if !self.allow_input&&self.screens>1&&!self.switch_pending=>{self.channel.send(SWITCH_VIEW)?;self.switch_pending=true;},
+            4 if self.extended&&self.quality_pending.is_none()=>{
+                let next=(self.quality_mode+1)%4;
+                self.channel.send(&[runtime_quality::REQUEST,next])?;
+                self.quality_pending=Some((next,Instant::now()));
+            },
             _=>{},
         }
         Ok(())
     }
     fn poll(&mut self,el:&ActiveEventLoop)->MediaResult<()>{
-        if canceled()||self.started.elapsed()>=Duration::from_secs(28){el.exit();return Ok(());}
+        if canceled()||self.started.elapsed()>=Duration::from_secs(if self.extended{runtime_quality::NATIVE_SECONDS-2}else{28}){el.exit();return Ok(());}
         for _ in 0..4{
             match self.channel.receive()?{
                 None=>break,
@@ -95,9 +101,16 @@ impl Viewer<'_>{
                 Some(b) if !self.allow_input&&b.len()==3&&b[0]==VIEW_LAYOUT_ACK&&b[2]==self.screens&&b[1]<=self.screens=>{
                     self.view_index=Some(b[1]);self.switch_pending=false;
                 },
+                Some(b) if self.extended&&b.first()==Some(&runtime_quality::STATUS)=>{
+                    let(mode,level)=runtime_quality::status(&b)?;
+                    self.quality_mode=mode;
+                    if self.quality_pending.is_some_and(|(requested,_)|requested==mode){self.quality_pending=None;}
+                    runtime_quality::log_status(self.peer.config(),mode,level)?;
+                },
                 Some(_)=>return Err("Unexpected viewer control response".into()),
             }
         }
+        if self.quality_pending.is_some_and(|(_,at)|at.elapsed()>Duration::from_secs(5)){return Err("Stream quality response timed out".into());}
         connected(self.peer,self.channel)?;
         if self.av{let volume=audio::VOLUME.load(Ordering::Acquire);if volume!=self.volume{self.peer.set_audio_volume(volume)?;self.volume=volume;out(&format!("AUDIO_VOLUME {volume}"))?;}}
         if self.heartbeat.elapsed()>=Duration::from_millis(300){self.channel.send(HEARTBEAT)?;self.heartbeat=Instant::now();}
@@ -108,7 +121,8 @@ impl Viewer<'_>{
             let data=map.as_slice();
             if info.width!=config.width||info.height!=config.height||data.len()!=self.pixels.len()*4{return Err("Unexpected decoded frame geometry".into());}
             for(dst,p)in self.pixels.iter_mut().zip(data.chunks_exact(4)){*dst=(u32::from(p[0])<<16)|(u32::from(p[1])<<8)|u32::from(p[2]);}
-            self.frames+=1;self.metric_frames+=1;self.metric_bytes+=data.len()as u64;self.last_frame=Instant::now();
+            if self.extended{let actual=self.peer.decoded_stream_dimensions()?;if actual!=self.actual_stream{self.actual_stream=actual;if let Some((w,h))=actual{out(&format!("STREAM_DECODED {w} {h}"))?;}}}
+            self.frames=self.frames.saturating_add(1);self.metric_frames+=1;self.metric_bytes+=data.len()as u64;self.last_frame=Instant::now();
         }
         if self.last_frame.elapsed()>Duration::from_secs(2){return Err("Video stalled; input stopped".into());}
         if let Some(sample)=self.stats.poll(self.peer){println!("{}",sample.line());}
@@ -135,14 +149,15 @@ impl Viewer<'_>{
                 }
             }
         }
-        let labels=["Disconnect","Fullscreen",if !self.allow_input{"View only"}else if self.input_enabled{"Pause input"}else{"Enable input"},if self.screens>1{if self.switch_pending{"Switching..."}else{"Next screen"}}else{""}];
+        let labels=["Disconnect","Fullscreen",if !self.allow_input{"View only"}else if self.input_enabled{"Pause input"}else{"Enable input"},if self.screens>1{if self.switch_pending{"Switching..."}else{"Next screen"}}else{""},if !self.extended{""}else if self.quality_pending.is_some(){"Changing..."}else{match self.quality_mode{0=>"Quality Auto",1=>"Quality Full",2=>"Quality Mid",_=>"Quality Low"}}];
         for(i,label)in labels.iter().enumerate(){
             let x=i as u32*cell;if x>=w||label.is_empty(){continue;}
             for y in 0..self.toolbar{for xx in x..(x+cell-1).min(w){buffer[(y*w+xx)as usize]=if i==0{0x742d32}else{0x263441};}}
             draw_text(&mut buffer,w,h,x+5*scale,9*scale,label,scale);
         }
         let summary=if let Some(i)=self.view_index{if i==self.screens{format!("All | {:.0} fps",self.fps)}else{format!("{}/{} | {:.0} fps",i+1,self.screens,self.fps)}}else{format!("{:.0} fps",self.fps)};
-        if 4*cell<w{draw_text(&mut buffer,w,h,4*cell+5*scale,9*scale,&summary,scale);}
+        let offset=if self.extended{5}else{4};
+        if offset*cell<w{draw_text(&mut buffer,w,h,offset*cell+5*scale,9*scale,&summary,scale);}
         buffer.present().map_err(error)
     }
     fn fail(&mut self,el:&ActiveEventLoop,e:String){self.error=Some(e);el.exit();}
@@ -206,8 +221,9 @@ impl ApplicationHandler for Viewer<'_>{
                         if event.state==ElementState::Pressed&&!event.repeat&&!is_synthetic&&self.focused{
                             if code==K::Escape{self.disarm()?;el.exit();return Ok(());}
                             if code==K::F11{self.local_action(1,el)?;return Ok(());}
+                            if code==K::F9&&self.extended{self.local_action(4,el)?;return Ok(());}
                         }
-                        if code!=K::Escape&&code!=K::F11{
+                        if code!=K::Escape&&code!=K::F11&&!(code==K::F9&&self.extended){
                             if let Some(key)=hid(code){
                                 if event.state==ElementState::Pressed{self.physical_keys.insert(key);}else{self.physical_keys.remove(&key);}
                                 if !is_synthetic{self.reconcile()?;}
@@ -237,7 +253,7 @@ impl ApplicationHandler for Viewer<'_>{
         el.set_control_flow(ControlFlow::WaitUntil(self.next_frame));
     }
 }
-pub(super) fn run(peer:&Peer,channel:&ControlChannel,session:[u8;16],geometry:Geometry,allow_input:bool,screens:u8,av:bool)->MediaResult<(u32,bool)>{
+pub(super) fn run(peer:&Peer,channel:&ControlChannel,session:[u8;16],geometry:Geometry,allow_input:bool,screens:u8,av:bool,extended:bool)->MediaResult<(u32,bool)>{
     let c=peer.config();let now=Instant::now();
     let event_loop:EventLoop<()>=EventLoop::new().map_err(error)?;
     let mut v=Viewer{peer,channel,session,geometry:Rect{x:geometry.x,y:geometry.y,width:geometry.width,height:geometry.height},
@@ -245,7 +261,7 @@ pub(super) fn run(peer:&Peer,channel:&ControlChannel,session:[u8;16],geometry:Ge
         toolbar:0,scale:1,fit:None,last_cursor:None,focused:false,armed:false,physical_keys:BTreeSet::new(),physical_buttons:BTreeSet::new(),
         sent_keys:BTreeSet::new(),sent_buttons:BTreeSet::new(),previous:None,seq:0,pixels:vec![0;(c.width*c.height)as usize],
         frames:0,metric_frames:0,metric_bytes:0,last_metric:now,last_frame:now,stats:Default::default(),started:now,
-        heartbeat:now-Duration::from_secs(1),released:false,error:None,next_frame:now,fps:0.};
+        heartbeat:now-Duration::from_secs(1),released:false,error:None,next_frame:now,fps:0.,extended,quality_mode:0,quality_pending:None,actual_stream:None};
     let result=event_loop.run_app(&mut v).map_err(error);
     let release=v.disarm();
     result?;release?;
