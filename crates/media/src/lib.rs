@@ -127,7 +127,7 @@ impl Peer {
              {source_text} ! video/x-raw,format={caps_format},width={w},height={h},framerate={fps}/1 \
              ! queue max-size-buffers=2 max-size-bytes=0 max-size-time=0 leaky=downstream \
              ! videoconvert ! video/x-raw,format=I420 \
-             ! vp8enc deadline=1 cpu-used=8 target-bitrate={bitrate} keyframe-max-dist={fps} \
+             ! vp8enc name=encoder deadline=1 cpu-used=8 target-bitrate={bitrate} keyframe-max-dist={fps} \
              ! rtpvp8pay pt=96 picture-id-mode=15-bit \
              ! application/x-rtp,media=video,encoding-name=VP8,clock-rate=90000,payload=96 ! rtc.",
             w=config.width, h=config.height, fps=config.fps, bitrate=config.bitrate,
@@ -255,6 +255,12 @@ impl Peer {
         Ok(())
     }
 
+    pub fn config(&self)->VideoConfig{self.config}
+    pub fn set_video_bitrate(&self,bitrate:u32)->MediaResult<()> {
+        if !(100_000..=self.config.bitrate).contains(&bitrate){return Err("Invalid adaptive bitrate".into());}
+        let encoder=named(&self.pipeline,"encoder")?;
+        encoder.set_property("target-bitrate",bitrate as i32);Ok(())
+    }
     pub fn connection_state(&self) -> rtc::WebRTCPeerConnectionState {
         self.webrtc.property("connection-state")
     }

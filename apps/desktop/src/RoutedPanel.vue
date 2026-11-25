@@ -3,7 +3,7 @@ import {computed,ref,watch,onMounted,onBeforeUnmount,nextTick} from "vue";
 import {invoke,isTauri} from "@tauri-apps/api/core";
 import type {TextKey} from "./i18n";
 type Stage="idle"|"starting"|"awaiting_approval"|"connecting"|"listening"|"connected"|"stopping"|"passed"|"failed"|"canceled";
-type Snapshot={stage:Stage;active:boolean;local_key:string|null;device_id:string|null;detail:string|null;profile:string;input_released:boolean};
+type Snapshot={stage:Stage;active:boolean;local_key:string|null;device_id:string|null;detail:string|null;profile:string;input_released:boolean;decoded_fps?:number|null;decoded_bps?:number|null};
 type Device={device_id:string;public_key:string;label:string};
 type Display={id:number;name:string;width:number;height:number;primary:boolean};
 const props=defineProps<{t:(key:TextKey)=>string}>();
@@ -12,7 +12,7 @@ const native=isTauri(),role=ref<"host"|"controller">("controller"),mode=ref<"tes
 const url=ref(""),serverId=ref(""),ca=ref(""),relay=ref(false),persistent=ref(false);
 const displays=ref<Display[]>([]),displayId=ref<number|null>(null),trusted=ref<Device[]>([]),chosen=ref(""),peerId=ref(""),peerKey=ref("");
 const approved=ref(false),submitted=ref(false),busy=ref(false),error=ref("");
-const saveHistory=ref(false),invitation=ref("");
+const saveHistory=ref(false),invitation=ref(""),quality=ref("compat");
 type Invitation={url:string;server_id:string;device_id:string;public_key:string;mode:"test"|"view"|"control";expires_at:number};
 const snapshot=ref<Snapshot>({stage:"idle",active:false,local_key:null,device_id:null,detail:null,profile:"routed_test",input_released:false});
 let timer:number|undefined,disposed=false,polling=false,revision=0;
@@ -39,7 +39,7 @@ async function command(name:string,args:Record<string,unknown>={}){
 }
 async function loadDisplays(){
  if(busy.value||snapshot.value.active)return;busy.value=true;error.value="";
- try{displays.value=(await invoke<Display[]>("list_displays")).filter(d=>d.primary);displayId.value=null;if(!displays.value.length)error.value=props.t("noDisplays");}
+ try{displays.value=(await invoke<Display[]>("list_displays")).filter(d=>mode.value==="view"||d.primary);displayId.value=null;if(!displays.value.length)error.value=props.t("noDisplays");}
  catch(e){error.value=String(e);}finally{busy.value=false;}
 }
 async function loadTrusted(){
@@ -61,7 +61,7 @@ async function makeInvitation(){
 function prepare(){
  approved.value=false;submitted.value=false;
  return command("routed_prepare",{role:role.value,mode:mode.value,url:url.value.trim(),serverId:serverId.value.trim(),
- displayId:role.value==="host"&&mode.value!=="test"?displayId.value:null,relayOnly:relay.value,persistent:persistent.value,storageConsent:persistent.value,caPath:ca.value.trim()||null,saveHistory:saveHistory.value});
+ displayId:role.value==="host"&&mode.value!=="test"?displayId.value:null,relayOnly:relay.value,persistent:persistent.value,storageConsent:persistent.value,caPath:ca.value.trim()||null,saveHistory:saveHistory.value,quality:quality.value});
 }
 function confirm(){if(!canConfirm.value)return;submitted.value=true;return command("routed_confirm",{deviceId:peerId.value.trim(),peerKey:peerKey.value.trim(),approved:true});}
 onMounted(()=>{void poll();timer=window.setInterval(poll,400);});
@@ -82,6 +82,7 @@ onBeforeUnmount(()=>{disposed=true;if(timer!==undefined)window.clearInterval(tim
   <template v-if="role==='host'&&mode!=='test'">
    <label>{{ t("display") }}</label><div class="actions"><select v-model="displayId" :disabled="busy||snapshot.active"><option :value="null" disabled>{{ t("select") }}</option><option v-for="d in displays" :key="d.id" :value="d.id">{{ d.name }} · {{ d.width }} × {{ d.height }}</option></select><button :disabled="busy||snapshot.active" @click="loadDisplays">{{ t("refresh") }}</button></div>
   </template>
+  <label>{{ t("qualityPreset") }}</label><select v-model="quality" :disabled="busy||snapshot.active"><option value="compat">540p · 10 fps</option><option value="low">480p · 15 fps</option><option value="balanced">720p · 30 fps</option><option value="high">1080p · 30 fps</option><option value="qhd">1440p · 30 fps</option><option value="uhd">2160p · 30 fps</option></select><p class="muted">{{ t("qualityNotice") }}</p>
   <label class="check-label"><input type="checkbox" v-model="relay" :disabled="busy||snapshot.active"/>{{ t("routedRelay") }}</label>
   <label class="check-label"><input type="checkbox" v-model="persistent" :disabled="busy||snapshot.active"/>{{ t("presenceStorageConsent") }}</label>
   <label class="check-label"><input type="checkbox" v-model="saveHistory" :disabled="busy||snapshot.active"/>{{ t("deviceSaveHistory") }}</label>
@@ -96,6 +97,7 @@ onBeforeUnmount(()=>{disposed=true;if(timer!==undefined)window.clearInterval(tim
   <label class="check-label"><input type="checkbox" v-model="approved" :disabled="busy||submitted"/>{{ t(mode==="test"?"routedTestConsent":mode==="view"?(role==="host"?"viewHostConsent":"viewControllerConsent"):(role==="host"?"controlHostConsent":"controlControllerConsent")) }}</label>
   <button class="primary" :disabled="!canConfirm" @click="confirm">{{ t("lanApprove") }}</button>
  </div>
+ <p v-if="snapshot.decoded_fps!=null" class="muted">{{ t("decodedFps") }}: {{ snapshot.decoded_fps.toFixed(1) }} · {{ t("decodedThroughput") }}: {{ ((snapshot.decoded_bps??0)/1000000).toFixed(1) }} Mb/s</p>
  <p v-if="snapshot.input_released" class="muted">{{ t("controlReleased") }}</p>
  <p v-if="error||snapshot.detail" class="error" role="alert">{{ error||snapshot.detail }}</p>
  <p v-if="!native" class="muted">{{ t("browser") }}</p>

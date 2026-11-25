@@ -17,7 +17,6 @@ use std::{io::{self, Read, Write, IsTerminal},sync::atomic::{AtomicBool,Ordering
 mod native;
 static CANCEL:AtomicBool=AtomicBool::new(false);
 fn canceled()->bool{CANCEL.load(Ordering::Acquire)}
-const CONFIG: VideoConfig = VideoConfig{width:960,height:540,fps:10,bitrate:1_500_000};
 #[derive(Clone,Copy,PartialEq,Eq)]
 enum Profile{Test,View,Control}
 impl Profile{
@@ -33,13 +32,13 @@ const HEARTBEAT:&[u8]=b"remote-ex-routed/heartbeat/v1";
 #[derive(Clone,Copy,Debug)]
 struct Geometry{x:u32,y:u32,width:u32,height:u32}
 impl Geometry{
-    fn from_area(area:DisplayArea)->MediaResult<Self>{
+    fn from_area(area:DisplayArea,config:VideoConfig)->MediaResult<Self>{
         area.validate()?;
-        let(w,h)=if u64::from(area.width)*u64::from(CONFIG.height)>=u64::from(area.height)*u64::from(CONFIG.width){
-            (CONFIG.width,(u64::from(area.height)*u64::from(CONFIG.width)/u64::from(area.width))as u32)
-        }else{((u64::from(area.width)*u64::from(CONFIG.height)/u64::from(area.height))as u32,CONFIG.height)};
+        let(w,h)=if u64::from(area.width)*u64::from(config.height)>=u64::from(area.height)*u64::from(config.width){
+            (config.width,(u64::from(area.height)*u64::from(config.width)/u64::from(area.width))as u32)
+        }else{((u64::from(area.width)*u64::from(config.height)/u64::from(area.height))as u32,config.height)};
         if w<2||h<2{return Err("Unsupported display geometry".into());}
-        Ok(Self{x:(CONFIG.width-w)/2,y:(CONFIG.height-h)/2,width:w,height:h})
+        Ok(Self{x:(config.width-w)/2,y:(config.height-h)/2,width:w,height:h})
     }
     fn signal(self)->Signal{Signal::Geometry{x:self.x,y:self.y,width:self.width,height:self.height}}
 }
@@ -73,7 +72,7 @@ fn connected(peer:&Peer,channel:&ControlChannel)->MediaResult<()>{
     if peer.connection_state()!=WebRTCPeerConnectionState::Connected||!channel.is_open(){return Err("Control disconnected".into());}Ok(())
 }
 
-fn frame(n:u32)->Vec<u8>{let mut p=vec![0;CONFIG.rgba_bytes()];for(i,px)in p.chunks_exact_mut(4).enumerate(){px[0]=((i as u32%CONFIG.width+n*7)%256)as u8;px[1]=((i as u32/CONFIG.width)%256)as u8;px[2]=120;px[3]=255;}p}
+fn frame(n:u32,config:VideoConfig)->Vec<u8>{let mut p=vec![0;config.rgba_bytes()];for(i,px)in p.chunks_exact_mut(4).enumerate(){px[0]=((i as u32%config.width+n*7)%256)as u8;px[1]=((i as u32/config.width)%256)as u8;px[2]=120;px[3]=255;}p}
 #[derive(Default)]
 struct Inert{position:(i32,i32),events:std::rc::Rc<std::cell::RefCell<Vec<String>>>}
 impl Backend for Inert{
@@ -170,7 +169,7 @@ async fn finish(conn:&mut Connection,session:&str)->MediaResult<()>{
     }
 }
 
-async fn host(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey,relay_only:bool,profile:Profile,display:Option<u32>)->MediaResult<()>{
+async fn host(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey,relay_only:bool,profile:Profile,display:Option<u32>,quality:&str)->MediaResult<()>{
     let grant=profile.grant();
     let Server::Incoming{session,controller,controller_key,requested,controller_nonce}=recv(conn).await?
         else{return Err("Expected incoming device request".into());};
@@ -188,10 +187,11 @@ async fn host(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey,relay_o
     let binding=RouteBinding{session:sid,controller:expected,host:id.public_key(),controller_nonce:nonce,host_nonce:hn,requested:grant,granted:grant,profile:profile.code(),relay_only};
     let mut cipher=RouteCipher::establish(conn,&binding,id,Role::Host).await?;
 
-    let config=conn.request_ice(&session).await?;
-    let mut peer=Peer::sender(CONFIG,Source::NativeRgba)?;
-    peer.configure_ice(&config,relay_only)?;drop(config);
-    peer.start()?;peer.push_rgba(frame(0))?;
+    let config=negotiate_quality(conn,&mut cipher,quality).await?;
+    let ice_config=conn.request_ice(&session).await?;
+    let mut peer=Peer::sender(config,Source::NativeRgba)?;
+    peer.configure_ice(&ice_config,relay_only)?;drop(ice_config);
+    peer.start()?;peer.push_rgba(frame(0,config))?;
     let channel=peer.create_control_channel()?;
     let offer=offer(&peer)?;
     peer.set_description(true,&offer)?;
@@ -213,7 +213,7 @@ async fn host(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey,relay_o
         {let _=display;return Err("Native routed mode unavailable".into());}
     }
     let backend=Inert::default();let log=backend.events.clone();
-    let mut dispatcher=Dispatcher::new(gate(&proof)?,backend,DisplayArea{x:0,y:0,width:CONFIG.width,height:CONFIG.height})?;
+    let mut dispatcher=Dispatcher::new(gate(&proof)?,backend,DisplayArea{x:0,y:0,width:config.width,height:config.height})?;
     wait_data(&peer,&channel,conn,READY).await?;
     channel.send(READY_ACK)?;
     out("CONNECTED ROUTED TEST")?;
@@ -233,8 +233,8 @@ async fn host(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey,relay_o
                 events+=1;
             }
             if Instant::now()>=next{
-                peer.push_rgba(frame(frames))?;frames+=1;
-                next=Instant::now()+Duration::from_millis(100);
+                peer.push_rgba(frame(frames,config))?;frames+=1;
+                next=Instant::now()+Duration::from_millis(1000/u64::from(config.fps));
             }
             tick(conn).await?;
         }
@@ -247,7 +247,7 @@ async fn host(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey,relay_o
     finish(conn,&session).await?;
     out(&format!("PASS ROUTED HOST: sent_frames={frames}, input_released=true"))
 }
-async fn controller(mut owned:Connection,id:&DeviceIdentity,expected:PublicKey,relay_only:bool,profile:Profile)->MediaResult<()>{
+async fn controller(mut owned:Connection,id:&DeviceIdentity,expected:PublicKey,relay_only:bool,profile:Profile,quality:&str)->MediaResult<()>{
     let conn=&mut owned;
     let grant=profile.grant();
     let target=hex(&fingerprint(&expected));
@@ -266,9 +266,10 @@ async fn controller(mut owned:Connection,id:&DeviceIdentity,expected:PublicKey,r
     let approved=pending.approve_local(granted).map_err(error)?;
     let binding=RouteBinding{session:sid,controller:id.public_key(),host:expected,controller_nonce:cn,host_nonce:decode_hex::<32>(&nonce).map_err(error)?,requested:grant,granted,profile:profile.code(),relay_only};
     let mut cipher=RouteCipher::establish(conn,&binding,id,Role::Controller).await?;
-    let config=conn.request_ice(&session).await?;
-    let mut peer=Peer::receiver(CONFIG)?;
-    peer.configure_ice(&config,relay_only)?;drop(config);peer.start()?;
+    let config=negotiate_quality(conn,&mut cipher,quality).await?;
+    let ice_config=conn.request_ice(&session).await?;
+    let mut peer=Peer::receiver(config)?;
+    peer.configure_ice(&ice_config,relay_only)?;drop(ice_config);peer.start()?;
     let channel=peer.create_control_channel()?;
     let Signal::Offer{sdp}=cipher.receive(conn).await? else{return Err("Expected offer".into());};
     if !valid_sdp(&sdp){return Err("Unexpected offer profile".into());}
@@ -291,6 +292,7 @@ async fn controller(mut owned:Connection,id:&DeviceIdentity,expected:PublicKey,r
         {
             let Signal::Geometry{x,y,width,height}=cipher.receive(conn).await? else{return Err("Missing authorized display geometry".into());};
             let geometry=Geometry{x,y,width,height};
+            if x.checked_add(width).is_none_or(|n|n>config.width)||y.checked_add(height).is_none_or(|n|n>config.height){return Err("Geometry exceeds negotiated canvas".into());}
             channel.send(READY)?;
             wait_data(&peer,&channel,conn,READY_ACK).await?;
             return native::controller(&peer,&channel,owned,session,sid,geometry,profile).await;
@@ -310,7 +312,7 @@ async fn controller(mut owned:Connection,id:&DeviceIdentity,expected:PublicKey,r
         if Instant::now()>=deadline{return Err("Routed decode timeout".into());}
         if let Some(sample)=peer.pull_frame(Duration::from_millis(25))?{
             let info=Peer::frame_info(&sample)?;
-            if info.width!=CONFIG.width||info.height!=CONFIG.height{return Err("Unexpected frame dimensions".into());}
+            if info.width!=config.width||info.height!=config.height{return Err("Unexpected frame dimensions".into());}
             frames+=1;
         }
         tick(conn).await?;
@@ -320,6 +322,12 @@ async fn controller(mut owned:Connection,id:&DeviceIdentity,expected:PublicKey,r
     conn.send(Client::Close{session:session.clone()}).await?;
     finish(conn,&session).await?;
     out(&format!("PASS ROUTED CONTROLLER: decoded_frames={frames}, release_ack=true"))
+}
+async fn negotiate_quality(conn:&mut Connection,cipher:&mut RouteCipher,name:&str)->MediaResult<VideoConfig>{
+    let q=remote_ex_desktop_features::quality::preset(name)?;
+    cipher.send(conn,Signal::Quality{preset:name.into()}).await?;
+    match cipher.receive(conn).await?{Signal::Quality{preset} if preset==name=>{},_=>return Err("Both peers must approve the same quality preset".into())}
+    VideoConfig{width:q.width,height:q.height,fps:q.fps,bitrate:q.bitrate}.validate()
 }
 fn roots(path:&str)->MediaResult<rustls::RootCertStore>{
     let file=std::fs::File::open(path).map_err(error)?;
@@ -337,10 +345,11 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
     let url=a.next().ok_or("Missing WSS URL")?;
     let pin=decode_hex::<32>(&a.next().ok_or("Missing server ID")?).map_err(error)?;
     let endpoint=Endpoint::secure(&url,pin)?;
-    let mut ca=None;let mut relay_only=false;let mut profile=Profile::Test;let mut display=None;let mut supervised=false;let mut persistent=false;let mut defer_test_registration=false;
+    let mut ca=None;let mut relay_only=false;let mut profile=Profile::Test;let mut display=None;let mut supervised=false;let mut persistent=false;let mut defer_test_registration=false;let mut quality="compat".to_owned();
     while let Some(arg)=a.next(){match arg.as_str(){
         "--ca" if ca.is_none()=>ca=Some(a.next().ok_or("Missing CA path")?),
         "--relay-only" if !relay_only=>relay_only=true,
+        "--quality"=>{quality=a.next().ok_or("Missing quality preset")?;remote_ex_desktop_features::quality::preset(&quality)?;},
         "--desktop-session" if !supervised=>supervised=true,
         "--defer-test-registration" if !native_allowed&&!defer_test_registration=>defer_test_registration=true,
         "--persistent" if !persistent=>persistent=true,
@@ -381,7 +390,7 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
         std::thread::spawn(||{let mut b=[0u8;1];let _=io::stdin().lock().read(&mut b);CANCEL.store(true,Ordering::Release);});
     }
     if host{
-        let result=self::host(&mut conn,&id,expected,relay_only,profile,display).await;
+        let result=self::host(&mut conn,&id,expected,relay_only,profile,display,&quality).await;
         let close=conn.close().await;result?;close
-    }else{controller(conn,&id,expected,relay_only,profile).await}
+    }else{controller(conn,&id,expected,relay_only,profile,&quality).await}
 }

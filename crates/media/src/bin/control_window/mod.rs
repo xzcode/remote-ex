@@ -1,5 +1,5 @@
 //! Native viewer, focus-gated input; no global input hooks.
-use super::{canceled,connected,poll_release,Geometry,CONFIG,HEARTBEAT};
+use super::{canceled,connected,poll_release,Geometry,HEARTBEAT};
 use minifb::{Key as K,MouseButton,MouseMode,Window,WindowOptions};
 use prost::Message as _;
 use remote_ex_media::{MediaResult,Peer,ControlChannel};
@@ -25,8 +25,9 @@ fn pointer(g:Geometry,x:f32,y:f32)->Option<(u32,u32)>{
     Some((norm(x,g.x,g.width),norm(y,g.y,g.height)))
 }
 pub fn run(peer:&Peer,channel:&ControlChannel,session:[u8;16],geometry:Geometry,allow_input:bool)->MediaResult<(u32,bool)>{
-    let(w,h)=(CONFIG.width as usize,CONFIG.height as usize);
-    let mut window=Window::new(if allow_input{"Remote EX — authorized control (Esc disconnects)"}else{"Remote EX — view only (Esc disconnects)"},w,h,WindowOptions{resize:false,..Default::default()}).map_err(|e|e.to_string())?;
+    let config=peer.config();
+    let(w,h)=(config.width as usize,config.height as usize);
+    let mut window=Window::new(if allow_input{"Remote EX — authorized control (Esc disconnects)"}else{"Remote EX — view only (Esc disconnects)"},w,h,WindowOptions{resize:true,scale_mode:minifb::ScaleMode::AspectRatioStretch,..Default::default()}).map_err(|e|e.to_string())?;
     window.set_target_fps(60);
     let mut seq=0u64;
     let mut emit=|event:Event|->MediaResult<()>{
@@ -38,6 +39,7 @@ pub fn run(peer:&Peer,channel:&ControlChannel,session:[u8;16],geometry:Geometry,
     let mut armed=false;let mut previous=None;let mut last_frame=Instant::now();
     let mut heartbeat=Instant::now()-Duration::from_secs(1);let started=Instant::now();
     let mut peer_released=false;
+    let mut metric_at=Instant::now();let mut metric_frames=0u32;let mut metric_bytes=0u64;
     let result: MediaResult<u32>=(||{
         while window.is_open()&&!canceled()&&started.elapsed()<Duration::from_secs(28){
             if poll_release(channel)?{peer_released=true;break;}
@@ -48,16 +50,30 @@ pub fn run(peer:&Peer,channel:&ControlChannel,session:[u8;16],geometry:Geometry,
                 let b=sample.buffer().ok_or("Missing native frame")?;
                 let map=b.map_readable().map_err(|_|"Cannot map decoded frame")?;
                 let data=map.as_slice();
-                if info.width!=CONFIG.width||info.height!=CONFIG.height||data.len()!=w*h*4{return Err("Unsupported decoded frame stride".into());}
+                if info.width!=config.width||info.height!=config.height||data.len()!=w*h*4{return Err("Unsupported decoded frame stride".into());}
                 for(dst,p)in buffer.iter_mut().zip(data.chunks_exact(4)){*dst=(u32::from(p[0])<<16)|(u32::from(p[1])<<8)|u32::from(p[2]);}
-                count+=1;last_frame=Instant::now();
+                count+=1;metric_frames+=1;metric_bytes+=data.len() as u64;last_frame=Instant::now();
             }
             window.update_with_buffer(&buffer,w,h).map_err(|e|e.to_string())?;
+            if metric_at.elapsed()>=Duration::from_secs(1){
+                let seconds=metric_at.elapsed().as_secs_f64();
+                let fps=metric_frames as f64/seconds;
+                window.set_title(&format!("Remote EX — {}×{} | {:.1} fps | Esc disconnects",w,h,fps));
+                // These are measured decoded frame throughput, not network bitrate.
+                println!("VIEW_STATS {:.1} {}",fps,(metric_bytes as f64*8.0/seconds) as u64);
+                metric_at=Instant::now();metric_frames=0;metric_bytes=0;
+            }
             if canceled()||window.is_key_down(K::Escape){break;}
             if poll_release(channel)?{peer_released=true;break;}
             if last_frame.elapsed()>Duration::from_secs(2){return Err("Video stalled; input stopped".into());}
             if !allow_input{continue;}
-            let pos=window.get_mouse_pos(MouseMode::Discard).and_then(|(x,y)|pointer(geometry,x,y));
+            let pos=window.get_unscaled_mouse_pos(MouseMode::Discard).and_then(|(x,y)|{
+                let(ww,wh)=window.get_size();
+                let scale=(ww as f32/w as f32).min(wh as f32/h as f32);
+                if !scale.is_finite()||scale<=0.0{return None;}
+                let left=(ww as f32-w as f32*scale)/2.0;let top=(wh as f32-h as f32*scale)/2.0;
+                pointer(geometry,(x-left)/scale,(y-top)/scale)
+            });
             let current_keys:BTreeSet<u16>=window.get_keys().into_iter().filter_map(hid).collect();
             let current_buttons:BTreeSet<u8>=[(1,MouseButton::Left),(2,MouseButton::Middle),(3,MouseButton::Right)].into_iter().filter_map(|(n,b)|window.get_mouse_down(b).then_some(n)).collect();
             if count==0||!window.is_active()||pos.is_none(){
