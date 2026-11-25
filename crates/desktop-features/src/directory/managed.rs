@@ -2,7 +2,7 @@
 //! specific reviewed batch to the session, source fingerprints and destination.
 //! All mutations are relative to the locally opened directory capability.
 //! No recursive deletion, arbitrary paths, overwrite, shell or execution.
-use super::{Catalog,Entry,component,relative,check_metadata,MAX_DEPTH,MAX_ENTRIES};
+use super::{Catalog,Entry,component,check_metadata,MAX_DEPTH,MAX_ENTRIES};
 use crate::{checkpoint::digest,exchange::MAX_FILE};
 use cap_std::{ambient_authority,fs::{Dir,OpenOptions}};
 use serde::{Deserialize,Serialize};

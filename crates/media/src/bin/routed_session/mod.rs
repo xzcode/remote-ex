@@ -19,17 +19,18 @@ mod exchange;
 mod audio;
 mod clipboard_sync;
 mod catalog;
+mod manage;
 static CANCEL:AtomicBool=AtomicBool::new(false);
 fn canceled()->bool{CANCEL.load(Ordering::Acquire)}
 #[derive(Clone,Copy,PartialEq,Eq)]
-enum Profile{Test,View,Control,Exchange(exchange::Mode),Audio(bool),ClipboardSync(bool),Catalog,AvTest,AvView,AvControl}
+enum Profile{Test,View,Control,Exchange(exchange::Mode),Audio(bool),ClipboardSync(bool),Catalog,AvTest,AvView,AvControl,Manage}
 impl Profile{
-    fn code(self)->u8{match self{Self::Test=>0,Self::View=>1,Self::Control=>2,Self::Exchange(mode)=>mode.code(),Self::Audio(test)=>if test{9}else{10},Self::ClipboardSync(test)=>if test{13}else{14},Self::Catalog=>15,Self::AvTest=>16,Self::AvView=>17,Self::AvControl=>18}}
+    fn code(self)->u8{match self{Self::Test=>0,Self::View=>1,Self::Control=>2,Self::Exchange(mode)=>mode.code(),Self::Audio(test)=>if test{9}else{10},Self::ClipboardSync(test)=>if test{13}else{14},Self::Catalog=>15,Self::AvTest=>16,Self::AvView=>17,Self::AvControl=>18,Self::Manage=>19}}
     fn av(self)->bool{matches!(self,Self::AvTest|Self::AvView|Self::AvControl)}
     fn native_view(self)->bool{matches!(self,Self::View|Self::AvView)}
     fn native_control(self)->bool{matches!(self,Self::Control|Self::AvControl)}
     fn synthetic(self)->bool{matches!(self,Self::Test|Self::AvTest)}
-    fn grant(self)->u8{if self.native_view()||matches!(self,Self::Exchange(_)|Self::Audio(_)|Self::ClipboardSync(_)|Self::Catalog){VIEW}else{VIEW|INPUT}}
+    fn grant(self)->u8{if self.native_view()||matches!(self,Self::Exchange(_)|Self::Audio(_)|Self::ClipboardSync(_)|Self::Catalog|Self::Manage){VIEW}else{VIEW|INPUT}}
     fn consent(self,host:bool)->&'static str{match(self,host){
         (Self::Test,_)=>"ALLOW ROUTED TEST",(Self::View,true)=>"ALLOW ROUTED SCREEN",
         (Self::View,false)=>"ALLOW ROUTED VIEW",(Self::Control,true)=>"ALLOW ROUTED SCREEN AND INPUT",
@@ -42,6 +43,8 @@ impl Profile{
         (Self::ClipboardSync(false),_)=>"ALLOW LIVE CLIPBOARD TEXT SYNC",
         (Self::Catalog,true)=>"ALLOW LIST AND DOWNLOAD SELECTED ROOT",
         (Self::Catalog,false)=>"ALLOW BROWSE AND RECEIVE ONE FILE",
+        (Self::Manage,true)=>"ALLOW REVIEW FILE CHANGES",
+        (Self::Manage,false)=>"ALLOW PROPOSE FILE CHANGES",
         (Self::AvTest,_)=>"ALLOW TEST AUDIO VIDEO",
         (Self::AvView,true)=>"ALLOW ROUTED SCREEN AND AUDIO",
         (Self::AvView,false)=>"ALLOW ROUTED VIEW AND PLAY AUDIO",
@@ -235,6 +238,12 @@ async fn host(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey,relay_o
     peer.set_description(false,&answer)?;
     ice(&peer,conn,&mut cipher,relay_only).await?;
     ready(&peer,&channel,&answer.sdp,true)?;
+    if profile==Profile::Manage{
+        wait_data(&peer,&channel,conn,READY).await?;channel.send(READY_ACK)?;
+        manage::host(&peer,&channel,conn,exchange_path.ok_or("Choose approved local root")?,sid).await?;
+        channel.send(manage::HOST_DONE)?;finish(conn,&session).await?;
+        return out("PASS ROUTED HOST: reviewed file changes complete");
+    }
     if profile==Profile::Catalog{
         wait_data(&peer,&channel,conn,READY).await?;channel.send(READY_ACK)?;
         catalog::host(&peer,&channel,conn,exchange_path.ok_or("Select local directory")?).await?;
@@ -346,6 +355,13 @@ async fn controller(mut owned:Connection,id:&DeviceIdentity,expected:PublicKey,r
     cipher.send(conn,Signal::Proof{signature:hex(&local)}).await?;
     ice(&peer,conn,&mut cipher,relay_only).await?;
     ready(&peer,&channel,&offer.sdp,false)?;
+    if profile==Profile::Manage{
+        channel.send(READY)?;wait_data(&peer,&channel,conn,READY_ACK).await?;
+        manage::controller(&peer,&channel,conn,sid).await?;
+        wait_data(&peer,&channel,conn,manage::HOST_DONE).await?;
+        conn.send(Client::Close{session:session.clone()}).await?;finish(conn,&session).await?;
+        return out("PASS ROUTED CONTROLLER: reviewed file changes complete");
+    }
     if profile==Profile::Catalog{
         channel.send(READY)?;wait_data(&peer,&channel,conn,READY_ACK).await?;
         catalog::controller(&peer,&channel,conn,exchange_path.ok_or("Choose local destination")?).await?;
@@ -454,6 +470,7 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
             let n=a.next().ok_or("Missing identity slot")?.parse::<u8>().map_err(error)?;
             remote_ex_security::identity_store::credential_name(n)?;identity_slot=Some(n);
         },
+        "--manage" if profile==Profile::Test=>{profile=Profile::Manage;if host{exchange_path=Some(std::path::PathBuf::from(a.next().ok_or("Choose approved local directory")?));}},
         "--catalog" if profile==Profile::Test=>{profile=Profile::Catalog;exchange_path=Some(std::path::PathBuf::from(a.next().ok_or("Choose local catalog root or destination")?));},
         "--clipboard-sync" if native_allowed&&profile==Profile::Test=>profile=Profile::ClipboardSync(false),
         "--clipboard-sync-test" if !native_allowed&&profile==Profile::Test=>profile=Profile::ClipboardSync(true),
@@ -483,7 +500,7 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
     if identity_slot.is_some()&&!persistent{return Err("Identity slot requires explicit persistent storage opt-in".into());}
     if defer_test_registration&&(!supervised||persistent||profile!=Profile::Test){return Err("Test registration barrier requires synthetic temporary supervised mode".into());}
     if native_allowed&&profile==Profile::Test{return Err("Choose a separate view, control or exchange profile".into());}
-    if profile==Profile::Catalog{
+    if matches!(profile,Profile::Catalog|Profile::Manage){
         if !supervised{return Err("Catalog requires explicit visible desktop supervision".into());}
         quality="compat".into();
     }
@@ -551,13 +568,14 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
         let allow_pause=matches!(profile,Profile::Exchange(m) if m.kind==remote_ex_desktop_features::exchange::Kind::File&&m.sending(host));
         let allow_volume=(profile==Profile::Audio(false)||profile.av())&&!host;
         let allow_catalog=profile==Profile::Catalog&&!host;
+        let allow_manage=profile==Profile::Manage;
         std::thread::spawn(move||{
             use std::io::BufRead;
             let mut pipe=io::stdin().lock();
-            if allow_pause||allow_volume||allow_catalog{
+            if allow_pause||allow_volume||allow_catalog||allow_manage{
                 loop{
                     let mut line=Vec::new();
-                    match (&mut pipe).take(16).read_until(b'\n',&mut line){
+                    match (&mut pipe).take(if allow_manage{1024}else{16}).read_until(b'\n',&mut line){
                         Ok(n) if n>0=>{
                             // Python/Windows text pipes emit CRLF. Require exactly
                             // one complete line; no whitespace or arbitrary command.
@@ -573,6 +591,12 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
                                 cmd if allow_catalog&&cmd.starts_with(b"SELECT ")=>{
                                     let value=std::str::from_utf8(&cmd[7..]).ok().filter(|s|!s.is_empty()&&s.len()<=3&&s.bytes().all(|b|b.is_ascii_digit())).and_then(|s|s.parse::<usize>().ok());
                                     if let Some(v)=value.filter(|v|*v<256){if catalog::SELECTED.compare_exchange(usize::MAX,v,Ordering::AcqRel,Ordering::Acquire).is_err(){break;}}else{break;}
+                                },
+                                cmd if allow_manage&&!host&&cmd.starts_with(b"PLAN ")=>{
+                                    if manage::submit(&cmd[5..]).is_err(){break;}
+                                },
+                                cmd if allow_manage&&host&&cmd.starts_with(b"APPROVE ")=>{
+                                    if manage::approve(&cmd[8..]).is_err(){break;}
                                 },
                                 _=>break,
                             }
