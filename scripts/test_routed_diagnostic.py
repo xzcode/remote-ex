@@ -2,6 +2,8 @@
 """Three processes: real loopback WSS rendezvous and two synthetic peers."""
 import os
 import json
+import hashlib
+import struct
 import secrets
 import socket
 import queue
@@ -36,6 +38,8 @@ def main():
     if exchange_sender not in (None,"host","controller"):raise RuntimeError("Invalid file sender role")
     pause_test="--file-pause" in sys.argv[3:]
     if pause_test and not exchange_sender:raise RuntimeError("Pause test needs file transfer")
+    resume_test="--file-resume" in sys.argv[3:]
+    if resume_test and not exchange_sender:raise RuntimeError("Resume test requires file mode")
     audio_test="--audio-test" in sys.argv[3:]
     if audio_test and exchange_sender:raise RuntimeError("Choose one test profile")
     peers=[]
@@ -93,6 +97,9 @@ def main():
                 with open(source,"wb") as stream:stream.write(payload)
                 for role,args in (("host",host_flags),("controller",controller_flags)):
                     args.extend(["--desktop-session","--exchange","file",exchange_sender,source if role==exchange_sender else target])
+            partial=os.path.join(directory,"resume.rexpart")
+            if resume_test:
+                (controller_flags if exchange_sender=="host" else host_flags).extend(["--resume-from",partial])
             host=start([peer_exe,"--host",url,pin,*host_flags])
             peers.append(host)
             hk=expect(host,"KEY ",deadline)
@@ -101,6 +108,12 @@ def main():
             peers.append(controller)
             ck=expect(controller,"KEY ",deadline)
             expect(controller,"ONLINE ",deadline)
+            if resume_test:
+                prefix=payload[:12345]
+                sender_key,receiver_key=(hk,ck) if exchange_sender=="host" else (ck,hk)
+                header={"scope":{"sender":list(bytes.fromhex(sender_key)),"receiver":list(bytes.fromhex(receiver_key))},"offer":{"kind":"file","name":"source.bin","size":len(payload),"sha256":list(hashlib.sha256(payload).digest())},"offset":len(prefix),"prefix_hash":list(hashlib.sha256(prefix).digest())}
+                encoded=json.dumps(header,separators=(",",":")).encode("utf-8")
+                with open(partial,"xb") as stream:stream.write(b"REXPART1"+struct.pack(">I",len(encoded))+encoded+prefix)
             if exchange_sender:
                 for role,pair,key in (("host",host,ck),("controller",controller,hk)):
                     consent="ALLOW SEND FILE" if role==exchange_sender else "ALLOW RECEIVE FILE"
@@ -111,6 +124,10 @@ def main():
             else:
                 approve(host,ck)
                 approve(controller,hk)
+            if resume_test:
+                for pair in (host,controller):
+                    marker=expect(pair,"TRANSFER_RESUME_OFFSET ",deadline)
+                    if marker.split()[0]!="12345":raise RuntimeError("Wrong resume offset")
             if pause_test:
                 pair=host if exchange_sender=="host" else controller
                 pair[0].stdin.write("PAUSE\n");pair[0].stdin.flush()
@@ -128,7 +145,7 @@ def main():
             if exchange_sender:
                 with open(target,"rb") as stream:
                     if stream.read()!=payload:raise RuntimeError("Transferred payload mismatch")
-                print("PASS: authenticated file exchange "+exchange_sender+"; bytes verified",flush=True)
+                print("PASS: authenticated file exchange "+exchange_sender+("; checkpoint prefix reused" if resume_test else "")+"; bytes verified",flush=True)
                 return
             print("PASS: "+("forced TURN relay; " if relay_only else "direct ICE; ")+"WSS device-ID routing, encrypted signed SDP, DTLS/SCTP, decoded video and inert input release",flush=True)
         finally:

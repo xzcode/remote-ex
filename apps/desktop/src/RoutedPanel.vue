@@ -3,7 +3,7 @@ import {computed,ref,watch,onMounted,onBeforeUnmount,nextTick} from "vue";
 import {invoke,isTauri} from "@tauri-apps/api/core";
 import type {TextKey} from "./i18n";
 type Stage="idle"|"starting"|"awaiting_approval"|"connecting"|"listening"|"connected"|"stopping"|"passed"|"failed"|"canceled";
-type Snapshot={stage:Stage;active:boolean;local_key:string|null;device_id:string|null;detail:string|null;profile:string;input_released:boolean;decoded_fps?:number|null;decoded_bps?:number|null;transfer_done?:number|null;transfer_total?:number|null;transfer_verified?:boolean;transfer_paused?:boolean;audio_volume?:number|null;network_bps?:number|null;rtt_ms?:number|null;loss_pct?:number|null;route_type?:string|null};
+type Snapshot={stage:Stage;active:boolean;local_key:string|null;device_id:string|null;detail:string|null;profile:string;input_released:boolean;decoded_fps?:number|null;decoded_bps?:number|null;transfer_done?:number|null;transfer_total?:number|null;transfer_verified?:boolean;transfer_paused?:boolean;checkpoint_saved?:number|null;resume_offset?:number|null;audio_volume?:number|null;network_bps?:number|null;rtt_ms?:number|null;loss_pct?:number|null;route_type?:string|null};
 type Device={device_id:string;public_key:string;label:string};
 type Display={id:number;name:string;width:number;height:number;primary:boolean};
 const props=defineProps<{t:(key:TextKey)=>string;slot:number}>();
@@ -11,6 +11,9 @@ const emit=defineEmits<{active:[value:boolean]}>();
 const native=isTauri(),role=ref<"host"|"controller">("controller"),mode=ref<"test"|"view"|"control"|"file"|"text"|"png"|"audio">("test");
 const sender=ref<"host"|"controller">("controller"),transferPath=ref(""),volume=ref(75);
 const extraDisplays=ref<number[]>([]);
+const resumeFrom=ref(""),checkpointPath=ref("");
+const fileReceiver=computed(()=>mode.value==="file"&&role.value!==sender.value);
+watch([mode,role,sender],()=>{resumeFrom.value="";checkpointPath.value="";});
 const isExchange=computed(()=>["file","text","png"].includes(mode.value));
 const isDisplay=computed(()=>mode.value==="view"||mode.value==="control");
 const url=ref(""),serverId=ref(""),ca=ref(""),relay=ref(false),persistent=ref(false);
@@ -56,6 +59,12 @@ async function chooseTransferFile(){
  try{const p=await invoke<string|null>("select_transfer_file",{receive:role.value!==sender.value});if(p)transferPath.value=p;}
  catch(e){error.value=String(e);}finally{busy.value=false;}
 }
+async function chooseCheckpoint(save:boolean){
+ if(!native||busy.value||snapshot.value.active||!fileReceiver.value)return;
+ busy.value=true;error.value="";
+ try{const p=await invoke<string|null>("select_transfer_file",{receive:save});if(p){if(save)checkpointPath.value=p;else resumeFrom.value=p;}}
+ catch(e){error.value=String(e);}finally{busy.value=false;}
+}
 async function loadDisplays(){
  if(busy.value||snapshot.value.active)return;busy.value=true;error.value="";
  try{displays.value=(await invoke<Display[]>("list_displays")).filter(d=>mode.value==="view"||d.primary);displayId.value=null;extraDisplays.value=[];if(!displays.value.length)error.value=props.t("noDisplays");}
@@ -80,7 +89,7 @@ async function makeInvitation(){
 function prepare(){
  approved.value=false;submitted.value=false;
  return command("routed_prepare",{role:role.value,mode:mode.value,url:url.value.trim(),serverId:serverId.value.trim(),
- displayId:role.value==="host"&&isDisplay.value?displayId.value:null,relayOnly:relay.value,persistent:persistent.value,storageConsent:persistent.value,caPath:ca.value.trim()||null,saveHistory:saveHistory.value,quality:quality.value,sender:isExchange.value?sender.value:null,transferPath:mode.value==="file"?transferPath.value.trim():null,volume:volume.value,extraDisplays:role.value==="host"&&mode.value==="view"?extraDisplays.value:[]});
+ displayId:role.value==="host"&&isDisplay.value?displayId.value:null,relayOnly:relay.value,persistent:persistent.value,storageConsent:persistent.value,caPath:ca.value.trim()||null,saveHistory:saveHistory.value,quality:quality.value,sender:isExchange.value?sender.value:null,transferPath:mode.value==="file"?transferPath.value.trim():null,volume:volume.value,extraDisplays:role.value==="host"&&mode.value==="view"?extraDisplays.value:[],resumeFrom:fileReceiver.value?resumeFrom.value.trim()||null:null,checkpointPath:fileReceiver.value?checkpointPath.value.trim()||null:null});
 }
 function confirm(){if(!canConfirm.value)return;submitted.value=true;return command("routed_confirm",{deviceId:peerId.value.trim(),peerKey:peerKey.value.trim(),approved:true});}
 onMounted(()=>{void poll();timer=window.setInterval(poll,400);});
@@ -103,6 +112,11 @@ onBeforeUnmount(()=>{disposed=true;if(timer!==undefined)window.clearInterval(tim
    <template v-if="mode==='view'&&displayId!==null"><label>{{ t("extraDisplays") }}</label><label v-for="d in displays.filter(x=>x.id!==displayId)" :key="d.id" class="check-label"><input type="checkbox" v-model="extraDisplays" :value="d.id" :disabled="busy||snapshot.active||(extraDisplays.length>=3&&!extraDisplays.includes(d.id))"/>{{ d.name }} · {{ d.width }} × {{ d.height }}</label><p class="muted">{{ t("extraDisplaysNotice") }}</p></template>
   </template>
   <template v-if="isExchange"><label>{{ t("exchangeSender") }}</label><select v-model="sender" :disabled="busy||snapshot.active"><option value="controller">{{ t("lanController") }}</option><option value="host">{{ t("lanHost") }}</option></select><template v-if="mode==='file'"><label>{{ t(role===sender?"exchangeSource":"exchangeDestination") }}</label><div class="actions"><input v-model="transferPath" maxlength="2048" :disabled="busy||snapshot.active"/><button :disabled="busy||snapshot.active||!native" @click="chooseTransferFile">{{ t("exchangeChooseFile") }}</button></div></template><p class="muted">{{ t("exchangeNotice") }}</p></template>
+  <template v-if="fileReceiver">
+    <label>{{ t("resumeExisting") }}</label><div class="actions"><input v-model="resumeFrom" maxlength="2048" :disabled="busy||snapshot.active"/><button :disabled="busy||snapshot.active||!native" @click="chooseCheckpoint(false)">{{ t("exchangeChooseFile") }}</button></div>
+    <label>{{ t("resumeSave") }}</label><div class="actions"><input v-model="checkpointPath" maxlength="2048" :disabled="busy||snapshot.active"/><button :disabled="busy||snapshot.active||!native" @click="chooseCheckpoint(true)">{{ t("exchangeChooseFile") }}</button></div>
+    <p class="muted">{{ t("resumeNotice") }}</p>
+  </template>
   <template v-if="mode==='audio'"><label>{{ t("audioVolume") }}: {{ volume }}%</label><input type="range" v-model.number="volume" min="0" max="100" :disabled="busy||(snapshot.active&&(role==='host'||snapshot.stage!=='connected'))" @change="snapshot.stage==='connected'&&role==='controller'&&command('routed_audio_volume',{volume})"/><p class="muted">{{ t("audioNotice") }}</p></template>
   <label>{{ t("qualityPreset") }}</label><select v-model="quality" :disabled="busy||snapshot.active"><option value="compat">540p · 10 fps</option><option value="low">480p · 15 fps</option><option value="balanced">720p · 30 fps</option><option value="high">1080p · 30 fps</option><option value="qhd">1440p · 30 fps</option><option value="uhd">2160p · 30 fps</option></select><p class="muted">{{ t("qualityNotice") }}</p>
   <label class="check-label"><input type="checkbox" v-model="relay" :disabled="busy||snapshot.active"/>{{ t("routedRelay") }}</label>
@@ -124,6 +138,8 @@ onBeforeUnmount(()=>{disposed=true;if(timer!==undefined)window.clearInterval(tim
  <div v-if="snapshot.stage==='connected'&&isDisplay" class="field"><label>{{ t("networkStats") }}</label><p class="muted">{{ t("networkBitrate") }}: {{ snapshot.network_bps==null?"—":(snapshot.network_bps/1000000).toFixed(2)+" Mb/s" }} · RTT: {{ snapshot.rtt_ms==null?"—":snapshot.rtt_ms+" ms" }} · {{ t("networkLoss") }}: {{ snapshot.loss_pct==null?"—":snapshot.loss_pct.toFixed(2)+"%" }} · {{ t("networkRoute") }}: {{ snapshot.route_type==="relay"?"TURN":snapshot.route_type==="direct"?"P2P":"—" }}</p></div>
  <p v-if="snapshot.decoded_fps!=null" class="muted">{{ t("decodedFps") }}: {{ snapshot.decoded_fps.toFixed(1) }} · {{ t("decodedThroughput") }}: {{ ((snapshot.decoded_bps??0)/1000000).toFixed(1) }} Mb/s</p>
  <div v-if="snapshot.transfer_total!=null" class="field"><label>{{ t("exchangeProgress") }}: {{ snapshot.transfer_done??0 }} / {{ snapshot.transfer_total }} B</label><progress :max="Math.max(1,snapshot.transfer_total)" :value="snapshot.transfer_done??0"/></div><div v-if="mode==='file'&&snapshot.stage==='connected'&&!snapshot.transfer_verified" class="actions"><span v-if="snapshot.transfer_paused" class="muted">{{ t("exchangePaused") }}</span><button v-if="role===sender" :disabled="busy" @click="command('routed_transfer_pause',{paused:!snapshot.transfer_paused})">{{ t(snapshot.transfer_paused?"exchangeResume":"exchangePause") }}</button></div><p v-if="snapshot.transfer_verified" class="muted">{{ t("exchangeVerified") }}</p>
+ <p v-if="snapshot.resume_offset!=null" class="muted">{{ t("resumeOffset") }}: {{ snapshot.resume_offset }} B</p>
+ <p v-if="snapshot.checkpoint_saved!=null" class="muted">{{ t("resumeSaved") }}: {{ snapshot.checkpoint_saved }} B</p>
  <p v-if="snapshot.input_released" class="muted">{{ t("controlReleased") }}</p>
  <p v-if="error||snapshot.detail" class="error" role="alert">{{ error||snapshot.detail }}</p>
  <p v-if="!native" class="muted">{{ t("browser") }}</p>

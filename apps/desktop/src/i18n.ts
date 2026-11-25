@@ -1,4 +1,5 @@
 export const en = {
+  resumeExisting:"Existing checkpoint (optional)",resumeSave:"Save checkpoint to a new file on interruption (optional)",resumeNotice:"Both endpoints must re-authorize the same verified identities and source. A checkpoint contains partial file data; keep it private. Choose an unused output path. Persistent identities are recommended.",resumeOffset:"Resumed from",resumeSaved:"Partial data saved to selected checkpoint",
   extraDisplays:"Additional approved displays (up to three)",extraDisplaysNotice:"Only these selected displays may be switched or combined in this view-only session. No other screen is shared.",multiDisplayConsent:"I explicitly allow this verified peer to view and switch among all selected displays, including a combined view. No system input is authorized.",
   deviceRefreshStatus:"Check online status (first 32 matches)",deviceUnknown:"Unknown",deviceBusy:"In session",
   sessionTab:"Session",multiSessionNotice:"Up to three independent controller sessions. Each slot can explicitly prepare its own stable device identity for enrollment. Host, audio and content exchange are exclusive.",networkStats:"Connection statistics",networkBitrate:"Reported bitrate estimate",networkLoss:"Packet loss",networkRoute:"Selected route",
@@ -69,6 +70,7 @@ export const en = {
 } as const;
 export type TextKey = keyof typeof en;
 export const zh: Record<TextKey, string> = {
+  resumeExisting:"已有断点文件（可选）",resumeSave:"中断时保存到新断点文件（可选）",resumeNotice:"双方须重新授权同一已核对身份及源文件。断点含部分文件内容，请妥善保管；输出路径必须未使用。建议使用持久设备身份。",resumeOffset:"已从断点继续",resumeSaved:"已将部分数据保存到选定断点文件",
   extraDisplays:"额外授权显示器（最多三块）",extraDisplaysNotice:"本次只读会话仅允许切换或拼接已选屏幕，不会共享其他显示器。",multiDisplayConsent:"我明确授权此已核对设备查看、切换和拼接所有选定显示器，不授权系统键鼠操作。",
   deviceRefreshStatus:"查询在线状态（前32条）",deviceUnknown:"未知",deviceBusy:"会话中",
   sessionTab:"会话",multiSessionNotice:"最多三个独立主控会话。各槽位可明确准备独立持久身份并预先登记。被控、音频及内容交换会话独占。",networkStats:"连接统计",networkBitrate:"统计码率估算",networkLoss:"丢包率",networkRoute:"选中线路",
