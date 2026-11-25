@@ -177,7 +177,7 @@ async fn finish(conn:&mut Connection,session:&str)->MediaResult<()>{
     }
 }
 
-async fn host(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey,relay_only:bool,profile:Profile,display:Option<u32>,extra_displays:Vec<u32>,quality:&str,exchange_path:Option<&std::path::Path>,volume:u8)->MediaResult<()>{
+async fn host(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey,relay_only:bool,profile:Profile,display:Option<u32>,extra_displays:Vec<u32>,quality:&str,exchange_path:Option<&std::path::Path>,volume:u8,resume:&exchange::ResumeOptions)->MediaResult<()>{
     let grant=profile.grant();
     let Server::Incoming{session,controller,controller_key,requested,controller_nonce}=recv(conn).await?
         else{return Err("Expected incoming device request".into());};
@@ -223,7 +223,8 @@ async fn host(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey,relay_o
     }
     if let Profile::Exchange(mode)=profile{
         wait_data(&peer,&channel,conn,READY).await?;channel.send(READY_ACK)?;
-        exchange::run(&peer,&channel,conn,&session,mode,true,exchange_path).await?;
+        let scope=if mode.sending(true){remote_ex_desktop_features::checkpoint::Scope{sender:id.public_key(),receiver:expected}}else{remote_ex_desktop_features::checkpoint::Scope{sender:expected,receiver:id.public_key()}};
+        exchange::run(&peer,&channel,conn,&session,mode,true,exchange_path,scope,resume).await?;
         channel.send(exchange::HOST_DONE)?;
         finish(conn,&session).await?;return out("PASS ROUTED HOST: transfer verified");
     }
@@ -268,7 +269,7 @@ async fn host(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey,relay_o
     finish(conn,&session).await?;
     out(&format!("PASS ROUTED HOST: sent_frames={frames}, input_released=true"))
 }
-async fn controller(mut owned:Connection,id:&DeviceIdentity,expected:PublicKey,relay_only:bool,profile:Profile,quality:&str,exchange_path:Option<&std::path::Path>,volume:u8)->MediaResult<()>{
+async fn controller(mut owned:Connection,id:&DeviceIdentity,expected:PublicKey,relay_only:bool,profile:Profile,quality:&str,exchange_path:Option<&std::path::Path>,volume:u8,resume:&exchange::ResumeOptions)->MediaResult<()>{
     let conn=&mut owned;
     let grant=profile.grant();
     let target=hex(&fingerprint(&expected));
@@ -317,7 +318,8 @@ async fn controller(mut owned:Connection,id:&DeviceIdentity,expected:PublicKey,r
     }
     if let Profile::Exchange(mode)=profile{
         channel.send(READY)?;wait_data(&peer,&channel,conn,READY_ACK).await?;
-        exchange::run(&peer,&channel,conn,&session,mode,false,exchange_path).await?;
+        let scope=if mode.sending(false){remote_ex_desktop_features::checkpoint::Scope{sender:id.public_key(),receiver:expected}}else{remote_ex_desktop_features::checkpoint::Scope{sender:expected,receiver:id.public_key()}};
+        exchange::run(&peer,&channel,conn,&session,mode,false,exchange_path,scope,resume).await?;
         wait_data(&peer,&channel,conn,exchange::HOST_DONE).await?;
         conn.send(Client::Close{session:session.clone()}).await?;finish(conn,&session).await?;
         return out("PASS ROUTED CONTROLLER: transfer verified");
@@ -383,7 +385,7 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
     let url=a.next().ok_or("Missing WSS URL")?;
     let pin=decode_hex::<32>(&a.next().ok_or("Missing server ID")?).map_err(error)?;
     let endpoint=Endpoint::secure(&url,pin)?;
-    let mut ca=None;let mut relay_only=false;let mut profile=Profile::Test;let mut display=None;let mut supervised=false;let mut persistent=false;let mut defer_test_registration=false;let mut quality="compat".to_owned();let mut exchange_path=None;let mut volume=75u8;let mut extra_displays=Vec::new();let mut identity_slot=None;
+    let mut ca=None;let mut relay_only=false;let mut profile=Profile::Test;let mut display=None;let mut supervised=false;let mut persistent=false;let mut defer_test_registration=false;let mut quality="compat".to_owned();let mut exchange_path=None;let mut volume=75u8;let mut extra_displays=Vec::new();let mut identity_slot=None;let mut resume=exchange::ResumeOptions::default();
     while let Some(arg)=a.next(){match arg.as_str(){
         "--ca" if ca.is_none()=>ca=Some(a.next().ok_or("Missing CA path")?),
         "--relay-only" if !relay_only=>relay_only=true,
@@ -403,6 +405,8 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
             profile=Profile::Exchange(mode);
             if mode.kind==remote_ex_desktop_features::exchange::Kind::File{exchange_path=Some(std::path::PathBuf::from(a.next().ok_or("Select explicit local file path")?));}
         },
+        "--resume-from" if resume.from.is_none()=>resume.from=Some(std::path::PathBuf::from(a.next().ok_or("Select existing local checkpoint")?)),
+        "--save-checkpoint" if resume.save_to.is_none()=>resume.save_to=Some(std::path::PathBuf::from(a.next().ok_or("Select unused local checkpoint path")?)),
         "--view" if native_allowed&&profile==Profile::Test=>{profile=Profile::View;if host{display=Some(a.next().ok_or("Select display ID")?.parse::<u32>().map_err(error)?);}},
         "--view-extra" if native_allowed&&host&&profile==Profile::View=>{
             let d=a.next().ok_or("Missing additional display ID")?.parse::<u32>().map_err(error)?;
@@ -417,6 +421,18 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
     if let Profile::Audio(test)=profile{
         if !test&&host&&!cfg!(target_os="windows"){return Err("System audio capture currently requires Windows WASAPI loopback; microphone fallback is disabled".into());}
         quality="compat".into();
+    }
+    if resume.from.is_some()||resume.save_to.is_some(){
+        if !matches!(profile,Profile::Exchange(mode) if mode.kind==remote_ex_desktop_features::exchange::Kind::File&&!mode.sending(host)){
+            return Err("Checkpoints are only allowed on the explicitly authorized file receiver".into());
+        }
+        let target=exchange_path.as_ref().ok_or("Choose new local destination")?;
+        for path in [&resume.from,&resume.save_to].into_iter().flatten(){
+            if !path.is_absolute()||path.file_name().is_none()||path==target{return Err("Choose a separate absolute checkpoint path".into());}
+        }
+        if resume.save_to.as_ref().is_some_and(|p|p.exists()||!p.parent().is_some_and(|d|d.is_dir()))||resume.from.as_ref().is_some_and(|p|!p.is_file())||resume.from.is_some()&&resume.from==resume.save_to{
+            return Err("Checkpoint input must exist; output must be a separate unused path".into());
+        }
     }
     if let Profile::Exchange(mode)=profile{
         if mode.kind!=remote_ex_desktop_features::exchange::Kind::File&&!cfg!(all(feature="native-control",any(target_os="windows",target_os="macos"))){return Err("Native clipboard unavailable".into());}
@@ -485,7 +501,7 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
         });
     }
     if host{
-        let result=self::host(&mut conn,&id,expected,relay_only,profile,display,extra_displays,&quality,exchange_path.as_deref(),volume).await;
+        let result=self::host(&mut conn,&id,expected,relay_only,profile,display,extra_displays,&quality,exchange_path.as_deref(),volume,&resume).await;
         let close=conn.close().await;result?;close
-    }else{controller(conn,&id,expected,relay_only,profile,&quality,exchange_path.as_deref(),volume).await}
+    }else{controller(conn,&id,expected,relay_only,profile,&quality,exchange_path.as_deref(),volume,&resume).await}
 }

@@ -1,13 +1,15 @@
 //! Separate explicit, one-way file/clipboard transfer session. No remote
 //! paths or arbitrary file management; receiver chooses the exact local target.
 use super::*;
-use remote_ex_desktop_features::exchange::{self,Kind,Offer,Receiver,CHUNK};
+use remote_ex_desktop_features::{checkpoint::{self,Scope},exchange::{self,Kind,Offer,Receiver,CHUNK}};
 use std::{fs::OpenOptions,io::{Cursor,Seek,SeekFrom},path::Path};
-const OFFER:u8=1;const ACCEPT:u8=2;const DATA:u8=3;const CREDIT:u8=4;const END:u8=5;const DONE:u8=6;const PAUSE:u8=7;const RESUME:u8=8;const WAIT:u8=9;
+const OFFER:u8=1;const ACCEPT:u8=2;const DATA:u8=3;const CREDIT:u8=4;const END:u8=5;const DONE:u8=6;const PAUSE:u8=7;const RESUME:u8=8;const WAIT:u8=9;const RESUME_ACCEPT:u8=10;
 pub(super) static PAUSED:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
 pub(super) const HOST_DONE:&[u8]=b"remote-ex-transfer/host-done/v1";
 const WINDOW:usize=16;
 const LIMIT:Duration=Duration::from_secs(75);
+#[derive(Default)]
+pub(super) struct ResumeOptions{pub from:Option<std::path::PathBuf>,pub save_to:Option<std::path::PathBuf>}
 #[derive(Clone,Copy,PartialEq,Eq)]
 pub(super) struct Mode{pub kind:Kind,host_sends:bool}
 impl Mode{
@@ -40,11 +42,21 @@ fn check_local_path(path:Option<&Path>)->MediaResult<&Path>{
     if !p.is_absolute()||p.file_name().is_none(){return Err("Choose an absolute local file path".into());}
     Ok(p)
 }
-async fn send_source<R:Read>(source:&mut R,offer:&Offer,peer:&Peer,channel:&ControlChannel,conn:&mut Connection,deadline:Instant)->MediaResult<()>{
+async fn send_source<R:Read+Seek>(source:&mut R,offer:&Offer,peer:&Peer,channel:&ControlChannel,conn:&mut Connection,deadline:Instant)->MediaResult<()>{
     let json=serde_json::to_vec(offer).map_err(error)?;
     channel.send(&packet(OFFER,&json))?;
-    if receive(peer,channel,conn,deadline).await?!=[ACCEPT]{return Err("Transfer declined".into());}
-    let mut sent=0u64;let mut next_report=Instant::now();
+    let response=receive(peer,channel,conn,deadline).await?;
+    let mut sent=0u64;
+    if response!=[ACCEPT]{
+        if offer.kind!=Kind::File||response.len()!=41||response[0]!=RESUME_ACCEPT{return Err("Transfer declined or invalid resume request".into());}
+        sent=u64::from_be_bytes(response[1..9].try_into().map_err(error)?);
+        if sent==0||sent>offer.size{return Err("Resume offset exceeds selected source".into());}
+        let mut prefix=vec![0;sent as usize];
+        source.read_exact(&mut prefix).map_err(|_|"Cannot verify selected source prefix")?;
+        if checkpoint::digest(&prefix).as_slice()!=&response[9..]{return Err("Receiver checkpoint differs from selected source".into());}
+        out(&format!("TRANSFER_RESUME_OFFSET {sent} {}",offer.size))?;
+    }
+    let mut next_report=Instant::now();
     let mut buffer=[0u8;CHUNK];
     while sent<offer.size{
         if offer.kind==Kind::File&&PAUSED.load(Ordering::Acquire){
@@ -78,9 +90,13 @@ async fn send_source<R:Read>(source:&mut R,offer:&Offer,peer:&Peer,channel:&Cont
     if receive(peer,channel,conn,deadline).await?!=[DONE]{return Err("Transfer completion not confirmed".into());}
     Ok(())
 }
-async fn receive_to<W:Write>(writer:W,offer:Offer,peer:&Peer,channel:&ControlChannel,conn:&mut Connection,deadline:Instant)->MediaResult<W>{
-    let size=offer.size;let file=offer.kind==Kind::File;let mut paused=false;let mut r=Receiver::new(writer,offer,true)?;
-    channel.send(&[ACCEPT])?;
+async fn receive_to<W:Write>(writer:W,offer:Offer,peer:&Peer,channel:&ControlChannel,conn:&mut Connection,deadline:Instant,prefix:&[u8])->MediaResult<W>{
+    let size=offer.size;let file=offer.kind==Kind::File;let mut paused=false;let mut r=Receiver::with_prefix(writer,offer,true,prefix)?;
+    if prefix.is_empty(){channel.send(&[ACCEPT])?;}else{
+        let mut response=packet(RESUME_ACCEPT,&r.offset().to_be_bytes());response.extend_from_slice(&checkpoint::digest(prefix));
+        channel.send(&response)?;
+        out(&format!("TRANSFER_RESUME_OFFSET {} {size}",r.offset()))?;
+    }
     let mut count=0usize;let mut next_report=Instant::now();
     loop{
         let bytes=receive(peer,channel,conn,deadline).await?;
@@ -139,7 +155,28 @@ fn clipboard_read(_:Kind)->MediaResult<Vec<u8>>{Err("Clipboard backend unavailab
 #[cfg(not(all(feature="native-control",any(target_os="windows",target_os="macos"))))]
 fn clipboard_write(_:Kind,_:Vec<u8>)->MediaResult<()>{Err("Clipboard backend unavailable".into())}
 
-pub(super) async fn run(peer:&Peer,channel:&ControlChannel,conn:&mut Connection,_session:&str,mode:Mode,host:bool,path:Option<&Path>)->MediaResult<()>{
+fn read_checkpoint(path:&Path,scope:Scope,offer:&Offer)->MediaResult<Vec<u8>>{
+    let meta=std::fs::symlink_metadata(path).map_err(|_|"Selected checkpoint unavailable")?;
+    if !meta.file_type().is_file()||meta.len()>exchange::MAX_FILE+4110{return Err("Invalid checkpoint file".into());}
+    let file=std::fs::File::open(path).map_err(|_|"Cannot open selected checkpoint")?;
+    if !file.metadata().map_err(error)?.is_file(){return Err("Checkpoint must be a regular file".into());}
+    checkpoint::load(file,scope,offer)
+}
+fn preserve_checkpoint(tmp:&mut tempfile::NamedTempFile,path:&Path,scope:Scope,offer:&Offer)->MediaResult<u64>{
+    let size=tmp.as_file().metadata().map_err(error)?.len();
+    if size==0{return Ok(0);}
+    if size>offer.size||size>exchange::MAX_FILE{return Err("Invalid checkpoint length".into());}
+    tmp.as_file_mut().seek(SeekFrom::Start(0)).map_err(error)?;
+    let mut prefix=vec![0;size as usize];
+    tmp.as_file_mut().read_exact(&mut prefix).map_err(error)?;
+    let parent=path.parent().ok_or("Missing checkpoint directory")?;
+    let mut saved=tempfile::NamedTempFile::new_in(parent).map_err(|_|"Cannot create checkpoint")?;
+    checkpoint::save(&mut saved,scope,offer,&prefix)?;
+    saved.as_file().sync_all().map_err(|_|"Cannot flush checkpoint")?;
+    saved.persist_noclobber(path).map_err(|_|"Checkpoint exists or cannot be saved without overwrite")?;
+    Ok(size)
+}
+pub(super) async fn run(peer:&Peer,channel:&ControlChannel,conn:&mut Connection,_session:&str,mode:Mode,host:bool,path:Option<&Path>,scope:Scope,resume:&ResumeOptions)->MediaResult<()>{
     if canceled(){return Err("Local grant revoked".into());}
     let deadline=Instant::now()+LIMIT;
     out("CONNECTED ROUTED EXCHANGE")?;
@@ -172,13 +209,24 @@ pub(super) async fn run(peer:&Peer,channel:&ControlChannel,conn:&mut Connection,
             let target=check_local_path(path)?;
             if target.exists(){return Err("Destination exists; overwrite refused".into());}
             let parent=target.parent().ok_or("Missing destination directory")?;
-            let tmp=tempfile::NamedTempFile::new_in(parent).map_err(|_|"Cannot create local temporary file")?;
-            let tmp=receive_to(tmp,offer,peer,channel,conn,deadline).await?;
+            let mut tmp=tempfile::NamedTempFile::new_in(parent).map_err(|_|"Cannot create local temporary file")?;
+            let prefix=match &resume.from{Some(path)=>read_checkpoint(path,scope,&offer)?,None=>Vec::new()};
+            let result=receive_to(tmp.as_file_mut(),offer.clone(),peer,channel,conn,deadline,&prefix).await.map(|_|());
+            if let Err(e)=result{
+                if let Some(path)=&resume.save_to{
+                    match preserve_checkpoint(&mut tmp,path,scope,&offer){
+                        Ok(size) if size>0=>out(&format!("CHECKPOINT_SAVED {size}"))?,
+                        Ok(_)=>{},
+                        Err(_)=>return Err("Transfer failed; requested checkpoint could not be saved".into()),
+                    }
+                }
+                return Err(e);
+            }
             if canceled(){return Err("Local grant revoked before saving".into());}
             tmp.as_file().sync_all().map_err(|_|"Cannot flush received file")?;
             tmp.persist_noclobber(target).map_err(|_|"Cannot save selected new file without overwriting")?;
         }else{
-            let content=receive_to(Vec::new(),offer,peer,channel,conn,deadline).await?;
+            let content=receive_to(Vec::new(),offer,peer,channel,conn,deadline,&[]).await?;
             if canceled(){return Err("Local grant revoked before clipboard write".into());}
             clipboard_write(mode.kind,content)?;
         }
