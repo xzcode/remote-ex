@@ -100,3 +100,53 @@ async fn enrollment_rejects_unlisted_identity_and_allows_explicitly_listed(){
     let conn=Connection::register(Endpoint::development(&url).unwrap(),&permitted).await.unwrap();
     conn.close().await.unwrap();task.abort();
 }
+
+#[tokio::test]
+async fn presence_reconnects_with_same_identity_after_transport_loss(){
+    use futures_util::{SinkExt,StreamExt};
+    use remote_ex_rendezvous_client::{online_with_retry,PresenceLifecycle};
+    use remote_ex_rendezvous::protocol::{ClientFrame,ServerFrame,VERSION};
+    use remote_ex_security::verify_registration;
+    use remote_ex_signaling::{decode_hex,hex};
+    use tokio_tungstenite::tungstenite::Message;
+    let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url=format!("ws://{}/v1/ws",listener.local_addr().unwrap());
+    let id=DeviceIdentity::generate();let expected=id.public_key();
+    let device_id=hex(&id.fingerprint());let expected_id=device_id.clone();
+    let fixture=tokio::spawn(async move{
+        for attempt in 1..=2u8{
+            let(stream,_)=listener.accept().await.unwrap();
+            let mut ws=tokio_tungstenite::accept_async(stream).await.unwrap();
+            let server=[7;32];let nonce=[attempt;32];
+            let challenge=ServerFrame{version:VERSION,message:Server::Challenge{server:hex(&server),nonce:hex(&nonce)}};
+            ws.send(Message::Text(serde_json::to_string(&challenge).unwrap().into())).await.unwrap();
+            let m=ws.next().await.unwrap().unwrap();
+            let c:ClientFrame=serde_json::from_str(m.to_text().unwrap()).unwrap();
+            let Client::Register{public_key,signature}=c.message else{panic!("register")};
+            let key=decode_hex::<32>(&public_key).unwrap();
+            assert_eq!(key,expected);assert!(verify_registration(&key,&server,&nonce,&decode_hex::<64>(&signature).unwrap()));
+            let registered=ServerFrame{version:VERSION,message:Server::Registered{device_id:expected_id.clone()}};
+            ws.send(Message::Text(serde_json::to_string(&registered).unwrap().into())).await.unwrap();
+            if attempt==1{
+                let m=ws.next().await.unwrap().unwrap();
+                let c:ClientFrame=serde_json::from_str(m.to_text().unwrap()).unwrap();
+                assert!(matches!(c.message,Client::Ping));
+                // Drop this transport without granting or resuming a session.
+                drop(ws);
+            }else{
+                let _=tokio::time::timeout(Duration::from_secs(5),ws.next()).await;
+            }
+        }
+    });
+    let(stop,rx)=tokio::sync::watch::channel(false);
+    let mut online=0;let mut retried=0;
+    tokio::time::timeout(Duration::from_secs(12),online_with_retry(Endpoint::development(&url).unwrap(),&id,rx,Duration::from_secs(10),true,|event|{
+        match event{
+            PresenceLifecycle::Online(actual)=>{assert_eq!(actual,device_id);online+=1;if online==2{let _=stop.send(true);}},
+            PresenceLifecycle::Reconnecting(n)=>{assert_eq!(n,1);retried+=1;},
+            _=>{},
+        }
+    })).await.unwrap().unwrap();
+    assert_eq!((online,retried),(2,1));
+    tokio::time::timeout(Duration::from_secs(6),fixture).await.unwrap().unwrap();
+}

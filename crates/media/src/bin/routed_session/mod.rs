@@ -342,7 +342,7 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
         "--ca" if ca.is_none()=>ca=Some(a.next().ok_or("Missing CA path")?),
         "--relay-only" if !relay_only=>relay_only=true,
         "--desktop-session" if !supervised=>supervised=true,
-        "--persistent" if !persistent&&native_allowed=>persistent=true,
+        "--persistent" if !persistent=>persistent=true,
         "--view" if native_allowed&&profile==Profile::Test=>{profile=Profile::View;if host{display=Some(a.next().ok_or("Select display ID")?.parse::<u32>().map_err(error)?);}},
         "--control" if native_allowed&&profile==Profile::Test=>{profile=Profile::Control;if host{display=Some(a.next().ok_or("Select display ID")?.parse::<u32>().map_err(error)?);}},
         _=>return Err("Unexpected argument".into()),

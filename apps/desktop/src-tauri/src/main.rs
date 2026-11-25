@@ -17,6 +17,7 @@ fn main() {
             capture::capture_preview,
             lan::lan_prepare,
             lan::routed_prepare,
+            lan::routed_confirm,
             lan::lan_status,
             lan::lan_confirm,
             lan::lan_disconnect,

@@ -1,4 +1,5 @@
 export const en = {
+  routedPeerId:"Remote device ID",
   routed:"Device ID connection",routedTitle:"Connect via signaling server",routedDescription:"Experimental authenticated connection. Verify both device keys, choose one-time permissions, and keep the host application visible. Real modes are limited to the primary display and 30 seconds.",
   routedCa:"Private CA certificate path (optional)",routedRelay:"Force TURN relay (no direct candidates)",routedPrepare:"Prepare connection",routedConnected:"Authenticated session connected",routedManual:"Enter verified key manually",
   routedVerify:"Use a previously verified device or independently compare the complete public key. The device ID is derived from that key. Approve the host first.",routedTestConsent:"I verified the device and allow synthetic video and simulated input only.",routedHostNotice:"Keep this window visible. Disconnect immediately revokes this one-time session.",
@@ -57,6 +58,7 @@ export const en = {
 } as const;
 export type TextKey = keyof typeof en;
 export const zh: Record<TextKey, string> = {
+  routedPeerId:"对方设备 ID",
   routed:"设备 ID 连接",routedTitle:"通过信令服务器连接",routedDescription:"实验版认证连接。核对双方设备公钥、选择本次授权，并保持被控端应用可见。真实模式暂限主屏及30秒。",
   routedCa:"私有 CA 证书本机路径（可选）",routedRelay:"强制 TURN 中继（不使用直连候选）",routedPrepare:"准备连接",routedConnected:"认证会话已建立",routedManual:"手动输入已核对的公钥",
   routedVerify:"请选择之前已核对的可信设备，或通过独立渠道比对完整公钥。设备 ID 由公钥计算。请先确认被控端。",routedTestConsent:"我已核对该设备，仅授权合成视频及模拟输入。",routedHostNotice:"请保持此窗口可见，点击断开即可撤销本次会话。",

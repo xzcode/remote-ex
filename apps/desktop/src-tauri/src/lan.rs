@@ -353,7 +353,7 @@ impl SessionManager {
     }
     fn prepare_routed(&self,role:&str,url:&str,server_id:&str,profile:Profile,display_id:Option<u32>,relay_only:bool,persistent:bool,storage_consent:bool,ca_path:Option<String>)->Result<Snapshot,String>{
         if !profile.routed()||url.len()>512{return Err("Invalid routed session configuration".into());}
-        if persistent&&(!storage_consent||profile==Profile::RoutedTest){return Err("Persistent routed identity requires explicit native storage consent".into());}
+        if persistent&&!storage_consent{return Err("Persistent routed identity requires explicit native storage consent".into());}
         let pin=remote_ex_signaling::decode_hex::<32>(server_id).map_err(|_|"Invalid expected server ID")?;
         let _=remote_ex_rendezvous_client::Endpoint::secure(url,pin)?;
         let host=match role{"host"=>true,"controller"=>false,_=>return Err("Unknown routed role".into())};
@@ -446,7 +446,18 @@ pub fn routed_prepare(window:WebviewWindow,manager:State<'_,SessionManager>,role
 }
 #[tauri::command]
 pub fn lan_confirm(window: WebviewWindow, manager: State<'_, SessionManager>, peer_key: String, approved: bool) -> Result<Snapshot, String> {
-    require_main(&window)?; manager.confirm(&peer_key, approved)
+    require_main(&window)?;
+    if manager.snapshot().profile.routed(){return Err("Use device-ID confirmation for a routed session".into());}
+    manager.confirm(&peer_key, approved)
+}
+#[tauri::command]
+pub fn routed_confirm(window:WebviewWindow,manager:State<'_,SessionManager>,device_id:String,peer_key:String,approved:bool)->Result<Snapshot,String>{
+    require_main(&window)?;
+    if !manager.snapshot().profile.routed(){return Err("No routed session to confirm".into());}
+    let key=remote_ex_signaling::decode_hex::<32>(peer_key.trim()).map_err(|_|"Invalid peer key")?;
+    let expected=remote_ex_signaling::hex(&remote_ex_security::fingerprint(&key));
+    if expected!=device_id.trim().to_ascii_lowercase(){return Err("Device ID does not match the verified public key".into());}
+    manager.confirm(&peer_key,approved)
 }
 #[tauri::command]
 pub fn lan_disconnect(window: WebviewWindow, manager: State<'_, SessionManager>) -> Result<Snapshot, String> {

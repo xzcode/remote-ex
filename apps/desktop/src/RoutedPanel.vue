@@ -10,7 +10,7 @@ const props=defineProps<{t:(key:TextKey)=>string}>();
 const emit=defineEmits<{active:[value:boolean]}>();
 const native=isTauri(),role=ref<"host"|"controller">("controller"),mode=ref<"test"|"view"|"control">("test");
 const url=ref(""),serverId=ref(""),ca=ref(""),relay=ref(false),persistent=ref(false);
-const displays=ref<Display[]>([]),displayId=ref<number|null>(null),trusted=ref<Device[]>([]),chosen=ref(""),peerKey=ref("");
+const displays=ref<Display[]>([]),displayId=ref<number|null>(null),trusted=ref<Device[]>([]),chosen=ref(""),peerId=ref(""),peerKey=ref("");
 const approved=ref(false),submitted=ref(false),busy=ref(false),error=ref("");
 const snapshot=ref<Snapshot>({stage:"idle",active:false,local_key:null,device_id:null,detail:null,profile:"routed_test",input_released:false});
 let timer:number|undefined,disposed=false,polling=false,revision=0;
@@ -18,11 +18,11 @@ const statuses:Record<Stage,TextKey>={idle:"lanIdle",starting:"lanStarting",awai
 const status=computed(()=>props.t(statuses[snapshot.value.stage]));
 const validHex=(s:string)=>/^[a-fA-F0-9]{64}$/.test(s.trim());
 const canPrepare=computed(()=>native&&!busy.value&&!snapshot.value.active&&url.value.trim().startsWith("wss://")&&validHex(serverId.value)&&(mode.value==="test"||role.value==="controller"||displayId.value!==null));
-const canConfirm=computed(()=>!busy.value&&snapshot.value.stage==="awaiting_approval"&&!!snapshot.value.device_id&&validHex(peerKey.value)&&approved.value&&!submitted.value&&peerKey.value.trim().toLowerCase()!==snapshot.value.local_key);
-watch([role,mode],()=>{displayId.value=null;displays.value=[];approved.value=false;if(mode.value==="test")persistent.value=false;});
-watch(serverId,()=>{trusted.value=[];chosen.value="";peerKey.value="";approved.value=false;});
-watch(chosen,id=>{if(id)peerKey.value=trusted.value.find(x=>x.device_id===id)?.public_key??"";approved.value=false;});
-watch(peerKey,()=>{approved.value=false;});
+const canConfirm=computed(()=>!busy.value&&snapshot.value.stage==="awaiting_approval"&&!!snapshot.value.device_id&&validHex(peerId.value)&&validHex(peerKey.value)&&approved.value&&!submitted.value&&peerKey.value.trim().toLowerCase()!==snapshot.value.local_key);
+watch([role,mode],()=>{displayId.value=null;displays.value=[];approved.value=false;});
+watch(serverId,()=>{trusted.value=[];chosen.value="";peerId.value="";peerKey.value="";approved.value=false;});
+watch(chosen,id=>{if(id){peerId.value=id;peerKey.value=trusted.value.find(x=>x.device_id===id)?.public_key??"";}approved.value=false;});
+watch([peerId,peerKey],()=>{approved.value=false;});
 watch(()=>snapshot.value.stage,s=>{if(s!=="awaiting_approval"){approved.value=false;submitted.value=false;}});
 watch(()=>busy.value||snapshot.value.active,v=>emit("active",v),{immediate:true});
 async function poll(){
@@ -50,7 +50,7 @@ function prepare(){
  return command("routed_prepare",{role:role.value,mode:mode.value,url:url.value.trim(),serverId:serverId.value.trim(),
  displayId:role.value==="host"&&mode.value!=="test"?displayId.value:null,relayOnly:relay.value,persistent:persistent.value,storageConsent:persistent.value,caPath:ca.value.trim()||null});
 }
-function confirm(){if(!canConfirm.value)return;submitted.value=true;return command("lan_confirm",{peerKey:peerKey.value.trim(),approved:true});}
+function confirm(){if(!canConfirm.value)return;submitted.value=true;return command("routed_confirm",{deviceId:peerId.value.trim(),peerKey:peerKey.value.trim(),approved:true});}
 onMounted(()=>{void poll();timer=window.setInterval(poll,400);});
 onBeforeUnmount(()=>{disposed=true;if(timer!==undefined)window.clearInterval(timer);if(native&&snapshot.value.active)void invoke("lan_disconnect").catch(()=>{});});
 </script>
@@ -69,12 +69,13 @@ onBeforeUnmount(()=>{disposed=true;if(timer!==undefined)window.clearInterval(tim
    <label>{{ t("display") }}</label><div class="actions"><select v-model="displayId" :disabled="busy||snapshot.active"><option :value="null" disabled>{{ t("select") }}</option><option v-for="d in displays" :key="d.id" :value="d.id">{{ d.name }} · {{ d.width }} × {{ d.height }}</option></select><button :disabled="busy||snapshot.active" @click="loadDisplays">{{ t("refresh") }}</button></div>
   </template>
   <label class="check-label"><input type="checkbox" v-model="relay" :disabled="busy||snapshot.active"/>{{ t("routedRelay") }}</label>
-  <label v-if="mode!=='test'" class="check-label"><input type="checkbox" v-model="persistent" :disabled="busy||snapshot.active"/>{{ t("presenceStorageConsent") }}</label>
+  <label class="check-label"><input type="checkbox" v-model="persistent" :disabled="busy||snapshot.active"/>{{ t("presenceStorageConsent") }}</label>
   <div class="actions"><button class="primary" :disabled="!canPrepare" @click="prepare">{{ t("routedPrepare") }}</button><button :disabled="busy||!snapshot.active||snapshot.stage==='stopping'" @click="command('lan_disconnect')">{{ t("lanDisconnect") }}</button></div>
  </div>
  <div v-if="snapshot.local_key" class="field"><label>{{ t("lanLocalKey") }}</label><input readonly :value="snapshot.local_key" class="key-input"/><label v-if="snapshot.device_id">{{ t("presenceDeviceId") }}</label><input v-if="snapshot.device_id" readonly :value="snapshot.device_id" class="key-input"/></div>
  <div v-if="snapshot.stage==='awaiting_approval'&&snapshot.device_id" class="field">
   <label>{{ t("trustTitle") }}</label><div class="actions"><select v-model="chosen" :disabled="busy||submitted"><option value="">{{ t("routedManual") }}</option><option v-for="d in trusted" :key="d.device_id" :value="d.device_id">{{ d.label }} · {{ d.device_id.slice(0,12) }}…</option></select><button :disabled="busy||submitted" @click="loadTrusted">{{ t("refresh") }}</button></div>
+  <label>{{ t("routedPeerId") }}</label><input v-model="peerId" maxlength="64" class="key-input" :disabled="busy||submitted||!!chosen"/>
   <label>{{ t("lanPeerKey") }}</label><input v-model="peerKey" maxlength="64" class="key-input" :disabled="busy||submitted||!!chosen"/>
   <p class="muted">{{ t("routedVerify") }}</p>
   <label class="check-label"><input type="checkbox" v-model="approved" :disabled="busy||submitted"/>{{ t(mode==="test"?"routedTestConsent":mode==="view"?(role==="host"?"viewHostConsent":"viewControllerConsent"):(role==="host"?"controlHostConsent":"controlControllerConsent")) }}</label>
