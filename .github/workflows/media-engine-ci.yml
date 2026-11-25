@@ -2,9 +2,9 @@ name: Native media engine
 on:
   push:
     branches: [master]
-    paths: ['crates/media/**', 'crates/signaling/**', 'crates/security/**', 'crates/core/**', 'crates/protocol/**', 'crates/input/**', 'scripts/test_lan_diagnostic.py', 'scripts/test_secure_view.py', 'scripts/test_secure_control.py', '.github/workflows/media-engine-ci.yml']
+    paths: ['crates/media/**', 'crates/signaling/**', 'crates/security/**', 'crates/core/**', 'crates/protocol/**', 'crates/input/**', 'crates/rendezvous-client/**', 'crates/rendezvous-protocol/**', 'servers/signaling/**', 'scripts/test_routed_diagnostic.py', 'scripts/test_lan_diagnostic.py', 'scripts/test_secure_view.py', 'scripts/test_secure_control.py', '.github/workflows/media-engine-ci.yml']
   pull_request:
-    paths: ['crates/media/**', 'crates/signaling/**', 'crates/security/**', 'crates/core/**', 'crates/protocol/**', 'crates/input/**', 'scripts/test_lan_diagnostic.py', 'scripts/test_secure_view.py', 'scripts/test_secure_control.py', '.github/workflows/media-engine-ci.yml']
+    paths: ['crates/media/**', 'crates/signaling/**', 'crates/security/**', 'crates/core/**', 'crates/protocol/**', 'crates/input/**', 'crates/rendezvous-client/**', 'crates/rendezvous-protocol/**', 'servers/signaling/**', 'scripts/test_routed_diagnostic.py', 'scripts/test_lan_diagnostic.py', 'scripts/test_secure_view.py', 'scripts/test_secure_control.py', '.github/workflows/media-engine-ci.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -39,3 +39,8 @@ jobs:
         run: |
           cargo build --manifest-path crates/media/Cargo.toml --bin lan_control
           timeout 90s python3 scripts/test_secure_control.py crates/media/target/debug/lan_control
+      - name: Three-process WSS rendezvous and authenticated media diagnostic
+        run: |
+          cargo build -p remote-ex-rendezvous
+          cargo build --manifest-path crates/media/Cargo.toml --bin routed_diagnostic
+          timeout 100s python3 scripts/test_routed_diagnostic.py target/debug/remote-ex-rendezvous crates/media/target/debug/routed_diagnostic

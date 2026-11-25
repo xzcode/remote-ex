@@ -33,5 +33,11 @@ remote-ex-input = { path = "../input" }
 
 ctrlc = "3.4"
 
+remote-ex-rendezvous-client = { path = "../rendezvous-client" }
+remote-ex-rendezvous-protocol = { path = "../rendezvous-protocol" }
+tokio = { version = "1", features = ["macros", "rt", "time"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-pemfile = "2"
+
 [target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
 minifb = { version = "=0.28.0", optional = true, default-features = false }
