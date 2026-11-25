@@ -10,7 +10,7 @@ publish = false
 [features]
 default = []
 local-screen = ["dep:xcap"]
-native-control = ["local-screen", "remote-ex-input/native", "remote-ex-security/native-vault", "dep:minifb", "dep:arboard", "dep:winit", "dep:softbuffer", "dep:font8x8"]
+native-control = ["local-screen", "remote-ex-input/native", "remote-ex-security/native-vault", "dep:minifb", "dep:arboard", "dep:winit", "dep:softbuffer", "dep:font8x8", "dep:windows-sys"]
 
 [dependencies]
 gstreamer = { version = "0.23", features = ["v1_20"] }
@@ -50,6 +50,9 @@ arboard = { version = "=3.6.1", optional = true }
 winit = { version = "=0.30.13", optional = true, default-features = false, features = ["rwh_06"] }
 softbuffer = { version = "=0.4.8", optional = true, default-features = false }
 font8x8 = { version = "0.3", optional = true }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.59", optional = true, features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_HiDpi", "Win32_UI_WindowsAndMessaging"] }
 
 [[bin]]
 name = "routed_control"

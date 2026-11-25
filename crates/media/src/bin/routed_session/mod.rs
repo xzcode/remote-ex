@@ -195,7 +195,7 @@ async fn finish(conn:&mut Connection,session:&str)->MediaResult<()>{
     }
 }
 
-async fn host(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey,relay_only:bool,profile:Profile,display:Option<u32>,extra_displays:Vec<u32>,quality:&str,exchange_path:Option<&std::path::Path>,volume:u8,resume:&exchange::ResumeOptions)->MediaResult<()>{
+async fn host(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey,relay_only:bool,profile:Profile,display:Option<u32>,extra_displays:Vec<u32>,quality:&str,exchange_path:Option<&std::path::Path>,volume:u8,resume:&exchange::ResumeOptions,secondary:bool)->MediaResult<()>{
     let grant=profile.grant();
     let Server::Incoming{session,controller,controller_key,requested,controller_nonce}=recv(conn).await?
         else{return Err("Expected incoming device request".into());};
@@ -261,9 +261,9 @@ async fn host(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey,relay_o
     }
     if !profile.synthetic(){
         #[cfg(all(feature="native-control",any(target_os="windows",target_os="macos")))]
-        {return native::host(&peer,&channel,conn,&mut cipher,&session,gate(&proof)?,profile,display.ok_or("Select a display")?,extra_displays).await;}
+        {return native::host(&peer,&channel,conn,&mut cipher,&session,gate(&proof)?,profile,display.ok_or("Select a display")?,extra_displays,secondary).await;}
         #[cfg(not(all(feature="native-control",any(target_os="windows",target_os="macos"))))]
-        {let _=(display,extra_displays);return Err("Native routed mode unavailable".into());}
+        {let _=(display,extra_displays,secondary);return Err("Native routed mode unavailable".into());}
     }
     let backend=Inert::default();let log=backend.events.clone();
     let mut dispatcher=Dispatcher::new(gate(&proof)?,backend,DisplayArea{x:0,y:0,width:config.width,height:config.height})?;
@@ -440,7 +440,7 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
     let url=a.next().ok_or("Missing WSS URL")?;
     let pin=decode_hex::<32>(&a.next().ok_or("Missing server ID")?).map_err(error)?;
     let endpoint=Endpoint::secure(&url,pin)?;
-    let mut ca=None;let mut relay_only=false;let mut profile=Profile::Test;let mut display=None;let mut supervised=false;let mut persistent=false;let mut defer_test_registration=false;let mut quality="compat".to_owned();let mut exchange_path=None;let mut volume=75u8;let mut extra_displays=Vec::new();let mut identity_slot=None;let mut resume=exchange::ResumeOptions::default();let mut shared_controller=false;
+    let mut ca=None;let mut relay_only=false;let mut profile=Profile::Test;let mut display=None;let mut supervised=false;let mut persistent=false;let mut defer_test_registration=false;let mut quality="compat".to_owned();let mut exchange_path=None;let mut volume=75u8;let mut extra_displays=Vec::new();let mut identity_slot=None;let mut resume=exchange::ResumeOptions::default();let mut shared_controller=false;let mut secondary=false;
     while let Some(arg)=a.next(){match arg.as_str(){
         "--ca" if ca.is_none()=>ca=Some(a.next().ok_or("Missing CA path")?),
         "--relay-only" if !relay_only=>relay_only=true,
@@ -449,6 +449,7 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
         "--defer-test-registration" if !native_allowed&&!defer_test_registration=>defer_test_registration=true,
         "--persistent" if !persistent=>persistent=true,
         "--shared-controller" if !shared_controller=>shared_controller=true,
+        "--secondary-control" if !secondary&&native_allowed&&host=>secondary=true,
         "--identity-slot" if identity_slot.is_none()=>{
             let n=a.next().ok_or("Missing identity slot")?.parse::<u8>().map_err(error)?;
             remote_ex_security::identity_store::credential_name(n)?;identity_slot=Some(n);
@@ -477,6 +478,7 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
         "--control" if native_allowed&&profile==Profile::Test=>{profile=Profile::Control;if host{display=Some(a.next().ok_or("Select display ID")?.parse::<u32>().map_err(error)?);}},
         _=>return Err("Unexpected argument".into()),
     }}
+    if secondary&&(!profile.native_control()||!cfg!(target_os="windows")){return Err("Experimental secondary control is Windows host-only".into());}
     if shared_controller&&(host||!(profile.synthetic()||profile.native_view()||profile.native_control())||persistent&&identity_slot.unwrap_or(0)!=0){return Err("Shared identity is only for outgoing view/control/test using slot one identity".into());}
     if identity_slot.is_some()&&!persistent{return Err("Identity slot requires explicit persistent storage opt-in".into());}
     if defer_test_registration&&(!supervised||persistent||profile!=Profile::Test){return Err("Test registration barrier requires synthetic temporary supervised mode".into());}
@@ -541,8 +543,9 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
     let expected=decode_hex::<32>(&input()?).map_err(error)?;
     if expected==[0;32]||expected==id.public_key(){return Err("Invalid peer key".into());}
     if let Profile::Exchange(mode)=profile{out(&format!("TRANSFER {} {:?}",if mode.sending(host){"SEND"}else{"RECEIVE"},mode.kind))?;}
-    out(&format!("CONSENT (type {}; one-shot)",profile.consent(host)))?;
-    if input()? !=profile.consent(host)||canceled(){return Err("Local consent denied".into());}
+    let consent=if secondary{if profile.av(){"ALLOW SELECTED WINDOWS DISPLAY AUDIO AND INPUT"}else{"ALLOW SELECTED WINDOWS DISPLAY AND INPUT"}}else{profile.consent(host)};
+    out(&format!("CONSENT (type {consent}; one-shot)"))?;
+    if input()? !=consent||canceled(){return Err("Local consent denied".into());}
     audio::VOLUME.store(volume,Ordering::Release);
     if supervised{
         let allow_pause=matches!(profile,Profile::Exchange(m) if m.kind==remote_ex_desktop_features::exchange::Kind::File&&m.sending(host));
@@ -582,7 +585,7 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
         });
     }
     if host{
-        let result=self::host(&mut conn,&id,expected,relay_only,profile,display,extra_displays,&quality,exchange_path.as_deref(),volume,&resume).await;
+        let result=self::host(&mut conn,&id,expected,relay_only,profile,display,extra_displays,&quality,exchange_path.as_deref(),volume,&resume,secondary).await;
         let close=conn.close().await;result?;close
     }else{controller(conn,&id,expected,relay_only,profile,&quality,exchange_path.as_deref(),volume,&resume).await}
 }

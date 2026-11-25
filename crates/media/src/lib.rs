@@ -192,7 +192,7 @@ impl Peer {
         };
         let audio_branch=match audio{
             Some(test)=>{
-                let sink=if test{"appsink name=decoded_audio sync=true max-buffers=8 drop=true async=false"}else{"autoaudiosink sync=true async=false"};
+                let sink=if test{"appsink name=decoded_audio sync=true max-buffers=8 drop=true async=false"}else{"autoaudiosink sync=true"};
                 format!("queue name=rx_audio max-size-buffers=12 max-size-bytes=0 max-size-time=0 ! rtpopusdepay ! opusdec ! audioconvert ! audioresample ! audio/x-raw,format=S16LE,rate=16000,channels=1,layout=interleaved ! valve name=audio_gate drop=true drop-mode=transform-to-gap ! volume name=audio_gain volume=0.0 ! {sink}")
             },
             None=>String::new(),

@@ -5,11 +5,19 @@ use remote_ex_input::native::NativeBackend;
 use std::sync::{Arc,atomic::AtomicUsize,mpsc::{sync_channel,TryRecvError,TrySendError}};
 use remote_ex_desktop_features::viewport::{self,Rect};
 use xcap::{Monitor,image::{DynamicImage,RgbaImage,Rgba,imageops::{self,FilterType}}};
+#[cfg(target_os="windows")] mod windows_display;
 
-fn monitor(display:u32,area:Option<DisplayArea>,input:bool)->MediaResult<(Monitor,DisplayArea)>{
+fn monitor(display:u32,area:Option<DisplayArea>,input:bool,secondary:bool)->MediaResult<(Monitor,DisplayArea)>{
+    #[cfg(target_os="windows")]
+    let _dpi=if secondary{Some(windows_display::DpiGuard::new()?)}else{None};
     let m=Monitor::all().map_err(error)?.into_iter().find(|m|m.id().ok()==Some(display)).ok_or("Authorized display disconnected")?;
-    if input&&!m.is_primary().map_err(error)?{return Err("Control requires the primary display".into());}
-    let current=DisplayArea{x:0,y:0,width:m.width().map_err(error)?,height:m.height().map_err(error)?}.validate()?;
+    let primary=m.is_primary().map_err(error)?;
+    if input&&!primary&&!secondary{return Err("Non-primary control requires explicit experimental approval".into());}
+    if secondary&&!cfg!(target_os="windows"){return Err("Secondary control currently requires Windows".into());}
+    let(x,y)=if secondary{(m.x().map_err(error)?,m.y().map_err(error)?)}else{(0,0)};
+    let current=DisplayArea{x,y,width:m.width().map_err(error)?,height:m.height().map_err(error)?}.validate()?;
+    #[cfg(target_os="windows")]
+    if secondary{windows_display::verify_area(current)?;}
     if area.is_some_and(|a|a!=current){return Err("Display geometry changed".into());}
     if u64::from(current.width)*u64::from(current.height)>32_000_000{return Err("Display exceeds capture limits".into());}
     Ok((m,current))
@@ -28,7 +36,7 @@ fn permissions(input:bool)->MediaResult<()>{
 struct Captured{layout:usize,pixels:Vec<u8>}
 struct Capture{rx:std::sync::mpsc::Receiver<MediaResult<Captured>>,stop:Arc<AtomicBool>,layout:Arc<AtomicUsize>,count:usize}
 impl Drop for Capture{fn drop(&mut self){self.stop.store(true,Ordering::Release);}}
-fn capture(displays:Vec<(u32,DisplayArea)>,input:bool,config:VideoConfig)->Capture{
+fn capture(displays:Vec<(u32,DisplayArea)>,input:bool,config:VideoConfig,secondary:bool)->Capture{
     let(tx,rx)=sync_channel(1);let stop=Arc::new(AtomicBool::new(false));let worker=stop.clone();
     let layout=Arc::new(AtomicUsize::new(0));let selected=layout.clone();let count=displays.len();
     std::thread::spawn(move||{
@@ -43,9 +51,9 @@ fn capture(displays:Vec<(u32,DisplayArea)>,input:bool,config:VideoConfig)->Captu
                 let mut canvas=RgbaImage::from_pixel(config.width,config.height,Rgba([0,0,0,255]));
                 for ((display,area),tile) in chosen.into_iter().zip(tiles){
                     if canceled()||worker.load(Ordering::Acquire){return Err("Capture canceled".into());}
-                    let(m,_)=monitor(display,Some(area),input)?;
+                    let(m,_)=monitor(display,Some(area),input,secondary)?;
                     let image=m.capture_image().map_err(error)?;
-                    if image.width()==0||image.height()==0||u64::from(image.width())*u64::from(image.height())>32_000_000
+                    if (secondary&&(image.width()!=area.width||image.height()!=area.height))||image.width()==0||image.height()==0||u64::from(image.width())*u64::from(image.height())>32_000_000
                         ||u64::from(image.width())*u64::from(area.height)!=u64::from(image.height())*u64::from(area.width){
                         return Err("Unsupported captured geometry".into());
                     }
@@ -148,16 +156,17 @@ async fn serve<B:Backend>(peer:&Peer,channel:&ControlChannel,conn:&mut Connectio
     out("PASS ROUTED HOST: native session ended, input released")
 }
 pub(super) async fn host(peer:&Peer,channel:&ControlChannel,conn:&mut Connection,cipher:&mut RouteCipher,
-    session:&str,gate:SessionGate,profile:Profile,display:u32,extra_displays:Vec<u32>)->MediaResult<()>{
+    session:&str,gate:SessionGate,profile:Profile,display:u32,extra_displays:Vec<u32>,secondary:bool)->MediaResult<()>{
     if canceled(){return Err("Authorization revoked".into());}
     let input=profile.native_control();
     permissions(input)?;
     let config=peer.config();
-    if input&&!extra_displays.is_empty(){return Err("Control is limited to the primary display".into());}
+    if input&&!extra_displays.is_empty(){return Err("Control is limited to one locally selected display".into());}
+    if secondary&&!input{return Err("Secondary control requires an explicit control profile".into());}
     let mut ids=vec![display];ids.extend(extra_displays);
     if ids.len()>4||ids.iter().enumerate().any(|(i,d)|ids[..i].contains(d)){return Err("Invalid approved display list".into());}
     let mut displays=Vec::new();
-    for d in ids{let(_,a)=monitor(d,None,input)?;displays.push((d,a));}
+    for d in ids{let(_,a)=monitor(d,None,input,secondary)?;displays.push((d,a));}
     let area=displays[0].1;
     let geometry=Geometry::from_area(area,config)?;
     cipher.send(conn,geometry.signal()).await?;
@@ -165,14 +174,20 @@ pub(super) async fn host(peer:&Peer,channel:&ControlChannel,conn:&mut Connection
     wait_data(peer,channel,conn,READY).await?;
     if canceled(){return Err("Authorization revoked".into());}
     if input{
+        #[cfg(target_os="windows")]
+        if secondary{
+            let backend=windows_display::ScopedBackend::new(display,area)?;
+            let d=Dispatcher::new(gate,backend,area)?;
+            return serve(peer,channel,conn,session,d,capture(displays,true,config,true),true,profile.av()).await;
+        }
         let backend=NativeBackend::new()?;
         if backend.primary_area()?!=area{return Err("Primary display DPI/geometry mismatch".into());}
         let d=Dispatcher::new(gate,backend,area)?;
-        serve(peer,channel,conn,session,d,capture(displays,true,config),true,profile.av()).await
+        serve(peer,channel,conn,session,d,capture(displays,true,config,false),true,profile.av()).await
     }else{
         // Never instantiate a native input backend in the view-only profile.
         let d=Dispatcher::new(gate,Inert::default(),area)?;
-        serve(peer,channel,conn,session,d,capture(displays,false,config),false,profile.av()).await
+        serve(peer,channel,conn,session,d,capture(displays,false,config,false),false,profile.av()).await
     }
 }
 pub(super) async fn controller(peer:&Peer,channel:&ControlChannel,mut conn:Connection,session:String,sid:[u8;16],geometry:Geometry,profile:Profile,screens:u8)->MediaResult<()>{
