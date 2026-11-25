@@ -137,6 +137,7 @@ fn host(mut wire: Wire, id: DeviceIdentity, expected: PublicKey) -> MediaResult<
     receive_ice(&mut wire, &peer, session)?;
     wait_ready(&peer, &channel)?;
     let mut gate = activate_gate(session, &proof)?;
+    out("CONNECTED")?;
 
     let deadline = Instant::now() + Duration::from_secs(10);
     let mut count = 0;
@@ -161,7 +162,7 @@ fn host(mut wire: Wire, id: DeviceIdentity, expected: PublicKey) -> MediaResult<
     if !releases.keys.is_empty() || !releases.buttons.is_empty() { return Err("Diagnostic release mismatch".into()); }
     out("PASS HOST: authenticated SDP transcript, reliable data channel, 3 simulated input messages")
 }
-fn controller(mut wire: Wire, id: DeviceIdentity, expected: PublicKey) -> MediaResult<()> {
+fn controller(mut wire: Wire, id: DeviceIdentity, expected: PublicKey, preview: bool) -> MediaResult<()> {
     let session = new_session_id();
     let p = PendingPairing::new(Role::Controller, session, &id, expected, GRANT).map_err(err)?;
     let nonce = p.nonce();
@@ -172,7 +173,7 @@ fn controller(mut wire: Wire, id: DeviceIdentity, expected: PublicKey) -> MediaR
     if host != expected || granted != GRANT { return Err("Unexpected host or grant".into()); }
     let p = p.approve_local(granted).map_err(err)?;
 
-    let mut peer = Peer::receiver(VideoConfig::default())?;
+    let mut peer = Peer::receiver_with_preview(VideoConfig::default(), preview)?;
     peer.start()?;
     let channel = peer.create_control_channel()?;
     let Message::Offer { sdp, .. } = recv(&mut wire, Some(session))? else { return Err("Expected offer".into()); };
@@ -193,15 +194,18 @@ fn controller(mut wire: Wire, id: DeviceIdentity, expected: PublicKey) -> MediaR
     let items = gather(&peer)?;
     send(&mut wire, Message::Candidates { session, items })?;
     wait_ready(&peer, &channel)?;
+    out("CONNECTED")?;
 
     use input_envelope::Event as InputEvent;
     channel.send(&encoded(session, 1, InputEvent::PointerMove(PointerMove { x: 100, y: 200 })))?;
     channel.send(&encoded(session, 2, InputEvent::Key(Key { usage: 4, down: true })))?;
     channel.send(&encoded(session, 3, InputEvent::ReleaseAll(ReleaseAll {})))?;
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let started = Instant::now();
+    let deadline = started + Duration::from_secs(8);
+    let min_preview = if preview { Duration::from_secs(5) } else { Duration::ZERO };
     let mut frames = 0;
     let mut ack = false;
-    while frames < 30 || !ack {
+    while frames < 30 || !ack || started.elapsed() < min_preview {
         if Instant::now() >= deadline { return Err(format!("Diagnostic timed out: frames={frames}, ack={ack}")); }
         if let Some(data) = channel.receive()? {
             if data != ACK || ack { return Err("Invalid diagnostic acknowledgement".into()); }
@@ -221,8 +225,13 @@ fn run() -> MediaResult<()> {
     let mut args = std::env::args().skip(1);
     let mode = args.next().ok_or("Usage: lan_diagnostic --listen|--connect IP:PORT")?;
     let address: SocketAddr = args.next().ok_or("Missing address")?.parse().map_err(err)?;
+    let preview = match args.next().as_deref() {
+        None => false,
+        Some("--preview") if mode == "--connect" => true,
+        _ => return Err("Usage: lan_diagnostic --listen|--connect IP:PORT [--preview on controller]".into()),
+    };
     if args.next().is_some() || !matches!(mode.as_str(), "--listen" | "--connect") {
-        return Err("Usage: lan_diagnostic --listen|--connect IP:PORT".into());
+        return Err("Usage: lan_diagnostic --listen|--connect IP:PORT [--preview on controller]".into());
     }
     let (id, expected) = local_identity()?;
     if mode == "--listen" {
@@ -231,7 +240,7 @@ fn run() -> MediaResult<()> {
         host(Wire::accept_listener(listener).map_err(err)?, id, expected)
     } else {
         let wire = Wire::connect(address).map_err(err)?;
-        controller(wire, id, expected)
+        controller(wire, id, expected, preview)
     }
 }
 fn main() {

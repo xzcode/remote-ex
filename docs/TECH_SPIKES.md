@@ -48,3 +48,9 @@ Rust 核心 CI 通过：[45564676252](https://github.com/xzcode/remote-ex/action
 - Core CI #45570749829 成功：新增信令序列化/边界/真实 loopback TCP framing 测试通过。
 - c21fda1：新增可靠 SCTP 数据通道和两独立进程诊断，运行 #45570886138 及 Core CI #45570886109 待最终结果；未宣称新集成通过。
 - GStreamer webrtc binding 启用 v1_22，以获得 send_data_full；实际依赖锁定、Windows/macOS 原生媒体包及 GPU 渲染仍待验证。
+
+## M1 第六批实际记录
+
+- Native media engine [#45570973647](https://github.com/xzcode/remote-ex/actions/runs/45570973647) 成功：两个独立进程的本地 TCP 信令、双方 SDP 签名、WebRTC 视频、可靠有序 SCTP 及固定测试输入回执；同进程两个回环仍通过。初次 #45570886138 被后续提交取消，由此 run 替代。不是两台真实机器的测试。
+- Core CI #45570973677 成功。新桌面监督器、UI 与 preview 状态增量代码仍待最新 CI；不把历史桌面编译结果当作本批成功。
+- macOS/Windows GStreamer 运行时打包、原生显示窗口、跨设备真实屏幕和系统输入仍待验证。

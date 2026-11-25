@@ -88,7 +88,7 @@ struct ChildGuard(Child);
 impl Drop for ChildGuard {
     fn drop(&mut self) {
         // A direct child only, never a system-wide process kill.
-        if matches!(self.0.try_wait(), Ok(None)) { let _ = self.0.kill(); }
+        if !matches!(self.0.try_wait(), Ok(Some(_))) { let _ = self.0.kill(); }
         let _ = self.0.wait();
     }
 }
@@ -138,9 +138,11 @@ fn handle_output(shared: &Mutex<Snapshot>, output: Output, pass: &mut bool, fail
                     *failure = Some("Unexpected diagnostic identity".into());
                 }
             } else if text.starts_with("LISTENING ") {
-                if locked(shared).stage == Stage::Connecting { stage(shared, Stage::Listening, None); }
+                let current = locked(shared).stage;
+                if current == Stage::Connecting { stage(shared, Stage::Listening, None); }
             } else if text == "CONNECTED" {
-                if matches!(locked(shared).stage, Stage::Connecting | Stage::Listening) {
+                let current = locked(shared).stage;
+                if matches!(current, Stage::Connecting | Stage::Listening) {
                     stage(shared, Stage::Connected, None);
                 }
             } else if text.starts_with("PASS HOST:") || text.starts_with("PASS CONTROLLER:") {

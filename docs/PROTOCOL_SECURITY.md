@@ -42,3 +42,7 @@ pairing.rs 增加单次 PendingPairing → ApprovedPairing → SignedPairing →
 ## M1 第五批 LAN 信令诊断
 
 crates/signaling 定义 4 字节 big-endian 长度、版本 1、256 KiB frame、64 KiB SDP、候选数量与长度限制、会话标识、严格类型、超时。请求/接受/offer/answer/proof/candidates/finished 顺序由诊断 owner 执行。显式 private/loopback 绑定不等于信任；未加密 TCP 不发送秘密或生产会话数据。实际媒体采用 WebRTC 自有 DTLS/SRTP/SCTP。先比较独立获知的完整设备公钥，再本地确认测试授权；使用双签名证明绑定双方身份、nonce、grant、SDP 原文。仅在该证明通过、两端 WebRTC 连接成功且可靠数据通道 open 后处理固定模拟输入。签名不替代真实 DTLS 身份绑定审计；此版本不允许远程系统输入、真实屏幕、剪贴板、文件或无人值守。未实现持久配对、撤销界面、加密生产信令或长期监听。CI 的父进程在 loopback 显式提供两个受控子进程的临时公钥和测试许可，不是生产自动批准逻辑。
+
+## M1 第六批桌面集成
+
+桌面会话入口仅限 main window、固定媒体子进程、单活动会话、显式具体本地地址和双方完整临时公钥核对、明确同意后发送固定两行本地批准；没有任意命令、任意 sidecar 路径或凭据/远程数据透传。原生监督器不依赖 UI 轮询来执行超时和退出清理，进程输出仅解析已知标记。桌面授权仅适用于合成诊断，不代表真实屏幕或系统输入授权。正式发布前仍需签名并校验媒体组件、保护进程 IPC、解决信令身份与实际 DTLS 绑定评审、持久信任、正式权限及撤销策略。禁止将诊断监听对公网暴露。

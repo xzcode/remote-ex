@@ -87,3 +87,7 @@ crates/signaling 是 portable workspace 成员，实现版本化、有界 JSON �
 GStreamer 原生模块增加协商型（negotiated）可靠有序 SCTP 数据通道；固定 channel id 0、输入 v1、单通道消息限长/有界队列。为使用 send_data_full 提升该媒体模块运行时最低版本至 GStreamer 1.22；原 VP8 loopback 继续验证。
 
 lan_diagnostic 两端各自生成临时密钥，双方在可信途径确认完整公钥并手动批准测试；显式监听/连接、一次性配对、原始 SDP 双签名、ICE 交换、DTLS/SCTP 连接。仅合成视频与固定测试输入序列，验证 SessionGate 的 action 和释放计划，不调用任何系统输入接口。控制端为生成 answer 必须预先应用 offer；此时不交换实际桌面和敏感数据。生产阶段须进一步完成安全评审、持久信任、身份与连接生命周期绑定、加密信令及真实同意流程。
+
+## ADR-010：桌面诊断会话进程隔离
+
+桌面采用固定名称、与自身可执行文件同目录的可信本地构建 lan_diagnostic（Windows .exe）作为诊断媒体子进程；不从 PATH 查找，不提供用户任意程序路径或 shell。Tauri main window 仅暴露 prepare/status/confirm/disconnect 四个受限命令，后端校验具体私网/loopback 地址、公钥长度、显式确认、单活动会话。子进程输出解析固定里程碑，输出/命令有界；监督线程负责180秒截止、取消、退出和 kill/wait，主窗口关闭/应用退出清理。此设计隔离媒体原生依赖，但不是已签名或打包的 sidecar；缺失文件会明确提示。UI 支持双端公钥核对、本地授权、真实连接状态、主动断开、成功/失败与可选合成视频原生窗口，连接进行中禁止切换导航。正式版本需要经过签名的媒体组件打包、进程 IPC 审查、持久密钥、加密信令及真实权限集成。
