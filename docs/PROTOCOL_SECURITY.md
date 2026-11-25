@@ -70,3 +70,10 @@ UI 区分加密真实共享、加密合成测试和历史明文合成诊断；�
 ## M2.3 路由诊断增量
 
 每次 outgoing 本地 fresh nonce 在 request 之前生成，服务器 session ID 只能一次性绑定，不可覆盖 nonce 或刷新有效期。双方预先独立核对完整设备公钥；服务器路由及 grant 不构成真实授权。WSS 服务端测试使用临时本机证书，真实客户端保留证书链/hostname/server ID 校验。两端签名绑定角色、会话、key、双方 nonce、grant、原始 SDP；验证后交换有界 ICE batch，检查实际 WebRTC 视频与 SCTP DTLS certificate，再直接交换 readiness。固定 synthetic 画面与 inert input，未接入 OS 捕获/输入。现阶段 WSS 保护客户端与服务端链路，但服务端可读取 SDP/ICE，不宣称信令对服务器端到端保密；恶意服务器仍可拒绝/干扰协商。后续需要端到端加密协商与明确安全评审。CLI 不可切换真实模式，桌面 presence 仍拒绝所有请求；服务端仍 loopback-only。
+
+## M2 整合安全边界
+
+- WSS server certificate/hostname + configured deployment ID, device challenge registration, optional explicit operator allowlist; do not expose plaintext prototype. Public bind explicit TLS-only with enrolled device IDs. Server grant alone is routing permission.
+- Noise NN ephemeral channel is not authenticated on its own. Sign both peer roles and context + handshake hash with pinned Ed25519 keys and verify peer signature BEFORE SDP/ICE/geometry. No plaintext fallback, no key trust from server. Signed profile/relay choice prevent test→real or view→control substitution. Actual DTLS fingerprint and session transcript verified independently.
+- TURN credential issuance once/participant only after approved secure route with both authentication records, TTL180s; shared secret server-only; coturn receives short-lived credentials and must enforce quotas and network egress/peer restrictions. Existing allocations may survive auth expiry. No public anonymous relay. No logging credential content. Signaling server still sees routing metadata.
+- Real routed native view/control separate from diagnostic executable, explicit local scope and specific peer pin, normal permissions, 30 seconds, primary display. Stop/heartbeat/stall/transport close triggers release; supervisor EOF cancels and waits for marker. Hard kill/OS errors remain unconfirmed risk. No real automatic reconnect or unattended operation. Native profile and physical cross-network tests required before operational use.

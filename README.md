@@ -2,7 +2,7 @@
 
 跨平台、可私有化部署的远程桌面工具。Remote EX 自主研发客户端、服务端和业务协议，使用成熟底层库，不基于 RustDesk 等完整产品进行 fork。
 
-**当前状态：M1 Windows x64 与 macOS ARM64 开发包已生成（#45577251479，ed2aca9，外部 GStreamer runtime）；真实设备验收仍待。M2.1/2 本地信令、WSS 注册与 Windows/macOS 桌面 CI 通过；M2.3 已编写经设备 ID 路由的 WSS + 签名 SDP + WebRTC 合成视频/模拟输入集成，待运行验证。无公网远程桌面或正式发行包。**
+**当前状态：M1 Windows x64 / macOS ARM64 开发包已生成（ed2aca9，外部 GStreamer runtime），物理设备验收待完成。M2.1–M2.5 本轮已编写功能候选：设备 ID/可信设备、WSS/端到端协商、原生只读/控制入口、STUN/TURN、显式 TLS 准入部署及重新上线。基础核心测试已通过，最新媒体/桌面/开发包及实际跨网验收未完成；尚无正式 Release。**
 
 ## 目标
 
@@ -35,6 +35,9 @@
 - [M1/M2 第十二批交接](docs/M2_RENDEZVOUS_HANDOFF.md)
 - [M2 第十三批交接](docs/M2_PRESENCE_HANDOFF.md)
 - [M2 第十四批交接](docs/M2_ROUTED_MEDIA_HANDOFF.md)
+- [M2 功能整合交接](docs/M2_FULL_HANDOFF.md)
+- [M2 跨网络验收](docs/M2_NETWORK_ACCEPTANCE.md)
+- [自建部署候选](deploy/README.md)
 - [M2.1 信令服务](servers/signaling/README.md)
 - [物理设备验收清单](docs/M1_DEVICE_ACCEPTANCE.md)
 - [开发测试包说明](docs/DEV_BUILD.md)

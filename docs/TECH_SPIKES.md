@@ -91,3 +91,9 @@ Rust 核心 CI 通过：[45564676252](https://github.com/xzcode/remote-ex/action
 - #45578147789 Windows/macOS 桌面 CI 全部通过（M2.2 设备注册界面及后端）；#45578147785 WSS/身份/心跳核心通过。#45577182682 旧包的 macOS rpath 加载已修复，但两端仍因未含 accepted socket blocking 修复而失败。
 - #45577251479 Windows x64 job 成功：SDK、desktop 与 native-control Release、TCP/Noise、原生输入单元及三种合成控制撤销测试、产物上传均通过。artifact 15005652383（Remote-EX-dev-Windows-X64，ed2aca9，4,413,956 bytes，有效至2026-12-09）。macOS 同 run 编译和链接检查通过，最终测试记录时执行中。真实设备未验收。
 - #45579568307 Core CI 通过（OutgoingPairing 与 IceBatch 路由）；#45579568305 Native input checks 通过。10ef04e 新三进程 WSS 媒体集成 #45579708756 待验证，不能称为已运行通过。
+
+## 第十五批实际记录
+
+- #45579865842 M2.3 原集成编译失败：误包含旧 LAN 完整函数造成重复定义；cd89d7b 删除重复内容。
+- #45582617384 Core CI、#45582774961 Core CI、#45582929676 Core CI、#45583254122 Core CI、#45583610910 Core CI、#45583806655 Core CI 已成功，覆盖分批新增的 route binding/opaque relay、ICE 参数与 coturn HMAC、设备准入、协议等核心。仅核心结果，不能证明真实 TURN 运行或新 GUI。
+- 97d3a71 新 native-control/routed UI 开发包 #45583806921 已开始；c485e24 新最终核心 #45584030066、媒体 #45584030116（WSS 三进程直连及 coturn 强制中继）、桌面 #45584030101 记录时未结束。此前多轮媒体与桌面 runs 被新提交取消，不等于测试通过或失败。真实跨网络/OS input/physical display 未运行。
