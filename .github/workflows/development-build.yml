@@ -1,0 +1,90 @@
+name: Desktop development builds
+on:
+  workflow_dispatch:
+  push:
+    branches: [master]
+    paths:
+      - '.github/workflows/development-build.yml'
+      - 'scripts/ci/install-gstreamer.*'
+permissions:
+  contents: read
+concurrency:
+  group: development-build-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  GST_VERSION: '1.26.11'
+jobs:
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install official GStreamer SDK (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/ci/install-gstreamer.ps1
+      - name: Install official GStreamer SDK (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: bash scripts/ci/install-gstreamer.sh
+      - name: Check GStreamer SDK
+        shell: bash
+        run: |
+          pkg-config --modversion gstreamer-1.0 gstreamer-webrtc-1.0 gstreamer-app-1.0
+          gst-inspect-1.0 webrtcbin
+          gst-inspect-1.0 vp8enc
+      - name: Build desktop
+        working-directory: apps/desktop
+        shell: bash
+        run: |
+          npm install --no-audit --no-fund
+          npm run tauri build -- --no-bundle
+      - name: Build native capture and control programs
+        shell: bash
+        run: |
+          cargo build --release --manifest-path crates/media/Cargo.toml --features native-control --bins
+      - name: Check native input
+        shell: bash
+        run: cargo test -p remote-ex-input --features native
+      - name: Secure control test without OS input
+        shell: bash
+        run: |
+          suffix=""
+          if [ "$RUNNER_OS" = "Windows" ]; then suffix=".exe"; fi
+          python3 scripts/test_secure_control.py "crates/media/target/release/lan_control${suffix}"
+      - name: Collect Windows development package
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force stage, artifacts | Out-Null
+          Copy-Item apps/desktop/src-tauri/target/release/remote-ex-desktop.exe stage/
+          foreach ($name in @('lan_view','lan_diagnostic','lan_control')) {
+            Copy-Item "crates/media/target/release/$name.exe" stage/
+          }
+          Copy-Item docs/DEV_BUILD.md stage/README.md
+          Compress-Archive -Path stage/* -DestinationPath artifacts/Remote-EX-dev-Windows-x64.zip -Force
+      - name: Collect macOS development package
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          mkdir -p stage artifacts
+          cp apps/desktop/src-tauri/target/release/remote-ex-desktop stage/
+          for name in lan_view lan_diagnostic lan_control; do cp "crates/media/target/release/$name" stage/; done
+          cp docs/DEV_BUILD.md stage/README.md
+          for name in remote-ex-desktop lan_view lan_diagnostic lan_control; do
+            codesign --force --sign - "stage/$name"
+          done
+          tar -czf "artifacts/Remote-EX-dev-macOS-$(uname -m).tar.gz" -C stage .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Remote-EX-dev-${{ runner.os }}-${{ runner.arch }}
+          path: artifacts/*
+          if-no-files-found: error
+          retention-days: 14

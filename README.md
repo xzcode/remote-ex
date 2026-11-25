@@ -2,7 +2,7 @@
 
 跨平台、可私有化部署的远程桌面工具。Remote EX 自主研发客户端、服务端和业务协议，使用成熟底层库，不基于 RustDesk 等完整产品进行 fork。
 
-**当前状态：M0 技术验证待完成；Windows/macOS 桌面、双进程合成媒体与输入测试、Noise 加密只读会话及实际 DTLS 证书验证通过；真实屏幕共享 UI 和原生输入适配已编写，新增 CI 与实机验证待完成。尚无实际系统远程控制或发行包。**
+**当前状态：M0 技术验证待完成；Windows/macOS 桌面、双进程合成媒体与输入测试、Noise 加密只读会话及实际 DTLS 证书验证通过；真实屏幕共享 UI 和原生输入适配已编写，新增 CI 与实机验证待完成。已编写可选原生远程控制原型及开发测试包构建流程；新增 CI 与物理设备验证待完成，尚无正式发行包。**
 
 ## 目标
 
@@ -29,6 +29,8 @@
 - [M1 第六批交接](docs/M1_DESKTOP_LAN_HANDOFF.md)
 - [M1 第七批交接](docs/M1_SECURE_VIEW_HANDOFF.md)
 - [M1 第八批交接](docs/M1_VIEW_INPUT_HANDOFF.md)
+- [M1 第九批交接](docs/M1_CONTROL_HANDOFF.md)
+- [开发测试包说明](docs/DEV_BUILD.md)
 - [输入适配说明](crates/input/README.md)
 - [LAN 信令诊断](crates/signaling/README.md)
 - [原生媒体模块说明](crates/media/README.md)

@@ -101,3 +101,9 @@ lan_diagnostic 两端各自生成临时密钥，双方在可信途径确认完�
 桌面新增 screen / secure_test / diagnostic 三个固定 profile，绑定各自媒体可执行文件名、参数、公钥长度及明确的授权语句。真实 host 必须选择显示器 ID；预先核对 128 hex 完整公钥 bundle，保留本机 UI 中可见状态及断开入口，仍限 30 秒、VIEW-only。lan_view --desktop-session 使用专用监督管道，批准后父进程持续持有 stdin；EOF/额外字节即退出只读子进程。正常命令行真实模式仍要求交互终端。可信组件开发期手工安装，未完成生产签名或校验；真实模式不通过旧明文诊断链路。
 
 crates/input 加入 portable workspace；Dispatcher 串行校验 SessionGate、消息顺序、授权区域、指针状态和速率，跟踪真实尝试的按下键及按钮，失败/关闭时尽力释放；释放失败需报告和重试，不承诺 kill/崩溃时能自动释放。原生候选为 Enigo 0.6.1（Windows/macOS 可选 native feature），仅普通桌面、主显示器和常用物理 HID 键。独立编译与 inert fake backend 测试，未接网络输入/OS 操作命令。后续正式输入 owner 必须完成完整 DTLS/SCTP 绑定、单独本机输入授权、控制端事件采集、屏幕坐标/黑边/DPI 对齐、撤销及正常释放，不能复用只读授权。
+
+## ADR-013：原生控制原型及开发构建
+
+新增 lan_control 独立 profile，VIEW|INPUT 双方授权，Noise 信令、签名 SDP、真实视频与 SCTP 证书检查、可信 Ready；默认 --test 仅合成画面与 inert backend，真实 --control 必须在可见交互终端启动。Windows/macOS native-control feature：XCap 主屏、Enigo 普通权限输入、minifb 固定 native 窗口、等比 geometry、焦点及黑边判断、物理键映射。输入 dispatch 与资源释放同进程；不使用强制杀进程作为正常控制断开。30秒限制，心跳2秒、Ctrl-C、Escape、窗口关闭、传输失败结束。控制端关闭前 ReleaseAll，停止消息后被控端 Dispatcher::close，再发送释放回执。异常硬退出、阻塞原生采集、OS release 失败需要后续改进。只读 GUI 保持独立；真实控制仍未接到桌面会话管理。
+
+新增 Windows/macOS development-build workflow，官方 GStreamer 1.26.11 SDK + SHA256，构建 desktop 和媒体程序的同目录测试包；macOS ad-hoc 签名，Windows 无签名，GStreamer runtime 用户单独从官方安装。CI artifacts 并非正式 release。运行时打包/插件许可、稳定签名和安装器仍需完成。

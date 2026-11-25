@@ -67,3 +67,9 @@ Rust 核心 CI 通过：[45564676252](https://github.com/xzcode/remote-ex/action
 - #45571374218 Desktop checks Windows/macOS 完整通过（第六批桌面监督器）。
 - 9d5ca6f：新增 desktop-session 与只读 UI；Core CI #45572297985 通过，媒体 #45572298025 与桌面 #45572297978 记录时未结束。真实 screen feature、OS permission 和原生 GUI 待实机。
 - 4ec3de4：新增 input portable dispatcher 与可选 Enigo Windows/macOS native adapter；Core CI #45572463188 及 Native input checks #45572463267 待结果，测试不注入系统事件。Enigo 上游 https://docs.rs/enigo/0.6.1/enigo/；依赖及许可证仍待审查。
+
+## M1 第九批实际记录
+
+- #45572463267 Windows/macOS 原生输入适配编译与 inert 测试全部通过，#45572297978 桌面增量 CI 与 #45572298025 媒体集成 CI 成功（上一轮）。
+- #45574557958 Core CI 成功（本轮控制几何协议与原有单测）；Native media engine #45574557992 仍需核对新 encrypted control/inert integration 的结果。
+- 开发构建使用官方 GStreamer 1.26.11 SDK，Windows MSVC x64 MSI、macOS universal PKG。CI 校验官方 SHA256 文件并构建 native-control；尚未证实跨平台 native-control 整体编译或包生成。不得将 inert 测试当作 OS input/真实桌面验收。
