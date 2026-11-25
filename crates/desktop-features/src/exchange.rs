@@ -8,13 +8,13 @@ pub const MAX_TEXT:u64=64*1024;
 pub const CHUNK:usize=768;
 #[derive(Debug,Clone,Copy,Serialize,Deserialize,PartialEq,Eq)]
 #[serde(rename_all="snake_case")]
-pub enum Kind{File,Text,Png}
+pub enum Kind{File,Text,Png,Directory}
 #[derive(Debug,Clone,Serialize,Deserialize,PartialEq,Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Offer{pub kind:Kind,pub name:String,pub size:u64,pub sha256:[u8;32]}
 impl Offer{
     pub fn validate(&self)->Result<(),String>{
-        let cap=match self.kind{Kind::File=>MAX_FILE,Kind::Text=>MAX_TEXT,Kind::Png=>4*1024*1024};
+        let cap=match self.kind{Kind::File|Kind::Directory=>MAX_FILE,Kind::Text=>MAX_TEXT,Kind::Png=>4*1024*1024};
         if self.size>cap||self.name.is_empty()||self.name.len()>200||self.name=="."||self.name==".."||self.name.chars().any(|c|c.is_control()||matches!(c,'/'|'\\'|':'|'\0'|'*'|'?'|'<'|'>'|'|'|'"'))||self.name.ends_with(['.',' ']){return Err("Invalid transfer offer".into());}
         Ok(())
     }
@@ -42,7 +42,7 @@ impl<W:Write> Receiver<W>{
     }
 }
 pub fn describe(mut source:impl Read,kind:Kind,name:String)->Result<Offer,String>{
-    let max=match kind{Kind::File=>MAX_FILE,Kind::Text=>MAX_TEXT,Kind::Png=>4*1024*1024};
+    let max=match kind{Kind::File|Kind::Directory=>MAX_FILE,Kind::Text=>MAX_TEXT,Kind::Png=>4*1024*1024};
     let mut total=0u64;let mut hash=Sha256::new();let mut buf=[0u8;8192];
     loop{let n=source.read(&mut buf).map_err(|_|"Local read failed")?;if n==0{break;}total+=n as u64;if total>max{return Err("Transfer too large".into());}hash.update(&buf[..n]);}
     let offer=Offer{kind,name,size:total,sha256:hash.finalize().into()};offer.validate()?;Ok(offer)
