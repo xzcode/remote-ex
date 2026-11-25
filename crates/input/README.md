@@ -1,0 +1,9 @@
+# Native input adapter (M1 development)
+
+Portable Dispatcher serializes protobuf input through an already-verified and locally authorized SessionGate. It maps normalized coordinates to a selected OS-coordinate rectangle, requires a positioned pointer inside that rectangle for clicks/scroll, limits input rate, retains actual pressed keys/buttons, and releases them on rejection, close or partial backend failure. Ordinary Drop performs best-effort cleanup; it cannot guarantee cleanup on abrupt process termination or OS failure. An eventual production session owner must keep input dispatch and release in the same process, revoke before teardown, and report failed cleanup.
+
+Optional native feature uses Enigo 0.6.1 for Windows/macOS physical keys, mouse movement/buttons and scroll. Primary display only; common physical HID key subset, unmapped keys rejected. OS permissions apply; no privileged window bypass. Multi-display, layout/IME, Retina/DPI, key-repeat and secure desktop behavior need platform work. This crate is not wired to the current view-only CLI, diagnostic network process, or Tauri IPC. It does not provide unattended or remote system input.
+
+`cargo test -p remote-ex-input` uses an inert fake backend and never injects OS events. On Windows/macOS, `cargo test -p remote-ex-input --features native` additionally compiles the native adapter and checks key mappings, without injecting input. Actual end-to-end authorized system control and the controller's input event capture remain to be implemented and verified.
+
+Protocol convention: normalized coordinates map to the chosen display, not letterbox pixels; controller must reject clicks in letterbox areas. Buttons 1 left, 2 middle, 3 right, 4 back, 5 forward. Scroll units 120 per notch, positive right/down. See https://docs.rs/enigo/0.6.1/enigo/ for native input library APIs. Dependency/license audit remains pending.
