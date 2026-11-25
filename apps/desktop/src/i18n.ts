@@ -1,4 +1,6 @@
 export const en = {
+  deviceSearch:"Search trusted devices",deviceAllGroups:"All groups",deviceFavorites:"Favorites",deviceGroup:"Group",deviceNote:"Note",deviceSaveMetadata:"Save details",deviceHistory:"Connection history",deviceClearHistory:"Confirm clearing this server's local history",deviceSaveHistory:"Save local connection history (optional)",
+  invitationCode:"Connection invitation (5 minutes)",invitationCreate:"Generate invitation",invitationImport:"Read invitation",invitationNotice:"Invitations are connection hints only. Independently verify the device key and explicitly approve each session.",
   routedPeerId:"Remote device ID",
   routed:"Device ID connection",routedTitle:"Connect via signaling server",routedDescription:"Experimental authenticated connection. Verify both device keys, choose one-time permissions, and keep the host application visible. Real modes are limited to the primary display and 30 seconds.",
   routedCa:"Private CA certificate path (optional)",routedRelay:"Force TURN relay (no direct candidates)",routedPrepare:"Prepare connection",routedConnected:"Authenticated session connected",routedManual:"Enter verified key manually",
@@ -58,6 +60,8 @@ export const en = {
 } as const;
 export type TextKey = keyof typeof en;
 export const zh: Record<TextKey, string> = {
+  deviceSearch:"搜索可信设备",deviceAllGroups:"全部分组",deviceFavorites:"收藏",deviceGroup:"分组",deviceNote:"备注",deviceSaveMetadata:"保存资料",deviceHistory:"连接历史",deviceClearHistory:"确认清除该服务器的本地连接历史",deviceSaveHistory:"保存本地连接历史（可选）",
+  invitationCode:"连接邀请码（5分钟）",invitationCreate:"生成邀请码",invitationImport:"读取邀请码",invitationNotice:"邀请码只用于填写连接资料，仍须独立核对设备公钥并明确授权本次连接。",
   routedPeerId:"对方设备 ID",
   routed:"设备 ID 连接",routedTitle:"通过信令服务器连接",routedDescription:"实验版认证连接。核对双方设备公钥、选择本次授权，并保持被控端应用可见。真实模式暂限主屏及30秒。",
   routedCa:"私有 CA 证书本机路径（可选）",routedRelay:"强制 TURN 中继（不使用直连候选）",routedPrepare:"准备连接",routedConnected:"认证会话已建立",routedManual:"手动输入已核对的公钥",

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import {computed,ref,watch,onMounted,onBeforeUnmount} from "vue";
+import {computed,ref,watch,onMounted,onBeforeUnmount,nextTick} from "vue";
 import {invoke,isTauri} from "@tauri-apps/api/core";
 import type {TextKey} from "./i18n";
 type Stage="idle"|"starting"|"awaiting_approval"|"connecting"|"listening"|"connected"|"stopping"|"passed"|"failed"|"canceled";
@@ -12,6 +12,8 @@ const native=isTauri(),role=ref<"host"|"controller">("controller"),mode=ref<"tes
 const url=ref(""),serverId=ref(""),ca=ref(""),relay=ref(false),persistent=ref(false);
 const displays=ref<Display[]>([]),displayId=ref<number|null>(null),trusted=ref<Device[]>([]),chosen=ref(""),peerId=ref(""),peerKey=ref("");
 const approved=ref(false),submitted=ref(false),busy=ref(false),error=ref("");
+const saveHistory=ref(false),invitation=ref("");
+type Invitation={url:string;server_id:string;device_id:string;public_key:string;mode:"test"|"view"|"control";expires_at:number};
 const snapshot=ref<Snapshot>({stage:"idle",active:false,local_key:null,device_id:null,detail:null,profile:"routed_test",input_released:false});
 let timer:number|undefined,disposed=false,polling=false,revision=0;
 const statuses:Record<Stage,TextKey>={idle:"lanIdle",starting:"lanStarting",awaiting_approval:"lanAwaiting",connecting:"lanConnecting",listening:"lanListening",connected:"routedConnected",stopping:"controlStopping",passed:"controlEnded",failed:"lanFailed",canceled:"lanCanceled"};
@@ -45,10 +47,21 @@ async function loadTrusted(){
  try{trusted.value=await invoke<Device[]>("trusted_list",{serverId:serverId.value.trim()});}
  catch(e){error.value=String(e);}finally{busy.value=false;}
 }
+async function readInvitation(){
+ if(busy.value||snapshot.value.active)return;busy.value=true;error.value="";
+ try{const i=await invoke<Invitation>("invitation_parse",{code:invitation.value.trim()});role.value="controller";url.value=i.url;serverId.value=i.server_id;mode.value=i.mode;ca.value="";approved.value=false;
+ // Apply target after reactive server/role watchers clear the old pin.
+ await nextTick();peerId.value=i.device_id;peerKey.value=i.public_key;approved.value=false;
+ }catch(e){error.value=String(e);}finally{busy.value=false;}
+}
+async function makeInvitation(){
+ if(!snapshot.value.local_key||!snapshot.value.device_id||busy.value)return;busy.value=true;error.value="";
+ try{invitation.value=await invoke<string>("invitation_create",{url:url.value.trim(),serverId:serverId.value.trim(),publicKey:snapshot.value.local_key,mode:mode.value});}catch(e){error.value=String(e);}finally{busy.value=false;}
+}
 function prepare(){
  approved.value=false;submitted.value=false;
  return command("routed_prepare",{role:role.value,mode:mode.value,url:url.value.trim(),serverId:serverId.value.trim(),
- displayId:role.value==="host"&&mode.value!=="test"?displayId.value:null,relayOnly:relay.value,persistent:persistent.value,storageConsent:persistent.value,caPath:ca.value.trim()||null});
+ displayId:role.value==="host"&&mode.value!=="test"?displayId.value:null,relayOnly:relay.value,persistent:persistent.value,storageConsent:persistent.value,caPath:ca.value.trim()||null,saveHistory:saveHistory.value});
 }
 function confirm(){if(!canConfirm.value)return;submitted.value=true;return command("routed_confirm",{deviceId:peerId.value.trim(),peerKey:peerKey.value.trim(),approved:true});}
 onMounted(()=>{void poll();timer=window.setInterval(poll,400);});
@@ -59,6 +72,7 @@ onBeforeUnmount(()=>{disposed=true;if(timer!==undefined)window.clearInterval(tim
  <header class="preview-head"><h2>{{ t("routedTitle") }}</h2><span class="status" role="status">{{ status }}</span></header>
  <p>{{ t("routedDescription") }}</p>
  <div v-if="snapshot.active&&mode!=='test'" class="view-notice">{{ t(role==="host"?"routedHostNotice":"controlControllerNotice") }}</div>
+ <div class="field"><label>{{ t("invitationCode") }}</label><textarea v-model="invitation" maxlength="2048" :readonly="snapshot.active" rows="2"/><div class="actions"><button :disabled="busy||snapshot.active||!invitation.trim()" @click="readInvitation">{{ t("invitationImport") }}</button><button :disabled="busy||role!=='host'||!snapshot.device_id" @click="makeInvitation">{{ t("invitationCreate") }}</button></div><p class="muted">{{ t("invitationNotice") }}</p></div>
  <div class="field">
   <label>{{ t("presenceUrl") }}</label><input v-model="url" placeholder="wss://…/v1/ws" maxlength="512" :disabled="busy||snapshot.active"/>
   <label>{{ t("presenceServerId") }}</label><input v-model="serverId" maxlength="64" class="key-input" :disabled="busy||snapshot.active"/>
@@ -70,6 +84,7 @@ onBeforeUnmount(()=>{disposed=true;if(timer!==undefined)window.clearInterval(tim
   </template>
   <label class="check-label"><input type="checkbox" v-model="relay" :disabled="busy||snapshot.active"/>{{ t("routedRelay") }}</label>
   <label class="check-label"><input type="checkbox" v-model="persistent" :disabled="busy||snapshot.active"/>{{ t("presenceStorageConsent") }}</label>
+  <label class="check-label"><input type="checkbox" v-model="saveHistory" :disabled="busy||snapshot.active"/>{{ t("deviceSaveHistory") }}</label>
   <div class="actions"><button class="primary" :disabled="!canPrepare" @click="prepare">{{ t("routedPrepare") }}</button><button :disabled="busy||!snapshot.active||snapshot.stage==='stopping'" @click="command('lan_disconnect')">{{ t("lanDisconnect") }}</button></div>
  </div>
  <div v-if="snapshot.local_key" class="field"><label>{{ t("lanLocalKey") }}</label><input readonly :value="snapshot.local_key" class="key-input"/><label v-if="snapshot.device_id">{{ t("presenceDeviceId") }}</label><input v-if="snapshot.device_id" readonly :value="snapshot.device_id" class="key-input"/></div>
