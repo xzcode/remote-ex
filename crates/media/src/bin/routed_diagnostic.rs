@@ -6,9 +6,9 @@ use remote_ex_core::{Permissions, SessionGate};
 use remote_ex_input::{Backend, Dispatcher, DisplayArea, InputResult};
 use remote_ex_media::{ControlChannel, Description, DescriptionKind, Event, IceCandidate, MediaResult, Peer, Source, VideoConfig};
 use remote_ex_protocol::{InputEnvelope, Key, PointerMove, VERSION, input_envelope::Event as InputEvent};
-use remote_ex_rendezvous_client::{Connection, Endpoint};
+use remote_ex_rendezvous_client::{Connection, Endpoint, secure_route::RouteCipher};
 use remote_ex_rendezvous_protocol::{Client, Server, Signal, IceItem};
-use remote_ex_security::{DeviceIdentity, PublicKey, Role, VerifiedSession, fingerprint, pairing::{OutgoingPairing, PendingPairing}, session::{VIEW, INPUT}};
+use remote_ex_security::{DeviceIdentity, PublicKey, Role, VerifiedSession, fingerprint, pairing::{OutgoingPairing, PendingPairing}, session::{VIEW, INPUT}, route_binding::RouteBinding};
 use remote_ex_signaling::{decode_hex, hex};
 use std::{io::{self, Read, Write}, time::{Duration, Instant}};
 const CONFIG: VideoConfig = VideoConfig{width:640,height:360,fps:10,bitrate:1_000_000};
@@ -59,16 +59,7 @@ impl Backend for Inert{
 async fn recv(conn:&mut Connection)->MediaResult<Server>{
     conn.receive(Duration::from_secs(20)).await
 }
-async fn send_signal(conn:&mut Connection,session:&str,payload:Signal)->MediaResult<()>{
-    conn.send(Client::Signal{session:session.to_owned(),payload}).await
-}
-async fn signal(conn:&mut Connection,session:&str)->MediaResult<Signal>{
-    match recv(conn).await?{
-        Server::Signal{session:id,payload} if id==session=>Ok(payload),
-        _=>Err("Unexpected routed signal or session closed".into()),
-    }
-}
-async fn ice(peer:&Peer,conn:&mut Connection,session:&str)->MediaResult<()>{
+async fn ice(peer:&Peer,conn:&mut Connection,cipher:&mut RouteCipher)->MediaResult<()>{
     let deadline=Instant::now()+Duration::from_secs(8);
     let mut items=Vec::new();
     loop{
@@ -91,8 +82,8 @@ async fn ice(peer:&Peer,conn:&mut Connection,session:&str)->MediaResult<()>{
         if Instant::now()>=deadline{return Err("ICE gathering timeout".into());}
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
-    send_signal(conn,session,Signal::IceBatch{items}).await?;
-    let Signal::IceBatch{items}=signal(conn,session).await? else{return Err("Expected ICE batch".into());};
+    cipher.send(conn,Signal::IceBatch{items}).await?;
+    let Signal::IceBatch{items}=cipher.receive(conn).await? else{return Err("Expected ICE batch".into());};
     for item in items{peer.add_ice(&IceCandidate{mline:item.mline,candidate:item.candidate})?;}
     Ok(())
 }
@@ -144,25 +135,28 @@ async fn host(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey)->Media
     let sid=decode_hex::<16>(&session).map_err(error)?;
     let nonce=decode_hex::<32>(&controller_nonce).map_err(error)?;
     let pending=PendingPairing::new(Role::Host,sid,id,expected,GRANT).map_err(error)?;
-    let host_nonce=hex(&pending.nonce());
+    let hn=pending.nonce();
+    let host_nonce=hex(&hn);
     let approved=pending.approve_local(GRANT).map_err(error)?;
     conn.send(Client::Decision{session:session.clone(),grant:Some(GRANT),host_nonce:Some(host_nonce)}).await?;
+    let binding=RouteBinding{session:sid,controller:expected,host:id.public_key(),controller_nonce:nonce,host_nonce:hn,requested:GRANT,granted:GRANT};
+    let mut cipher=RouteCipher::establish(conn,&binding,id,Role::Host).await?;
 
     let mut peer=Peer::sender(CONFIG,Source::NativeRgba)?;
     peer.start()?;peer.push_rgba(frame(0))?;
     let channel=peer.create_control_channel()?;
     let offer=offer(&peer)?;
     peer.set_description(true,&offer)?;
-    send_signal(conn,&session,Signal::Offer{sdp:offer.sdp.clone()}).await?;
-    let Signal::Answer{sdp}=signal(conn,&session).await? else{return Err("Expected answer".into());};
+    cipher.send(conn,Signal::Offer{sdp:offer.sdp.clone()}).await?;
+    let Signal::Answer{sdp}=cipher.receive(conn).await? else{return Err("Expected answer".into());};
     if !valid_sdp(&sdp){return Err("Unexpected answer profile".into());}
     let answer=Description{kind:DescriptionKind::Answer,sdp};
     let signed=approved.sign(id,nonce,offer.sdp.as_bytes(),answer.sdp.as_bytes()).map_err(error)?;
-    send_signal(conn,&session,Signal::Proof{signature:hex(&signed.signature())}).await?;
-    let Signal::Proof{signature}=signal(conn,&session).await? else{return Err("Expected peer proof".into());};
+    cipher.send(conn,Signal::Proof{signature:hex(&signed.signature())}).await?;
+    let Signal::Proof{signature}=cipher.receive(conn).await? else{return Err("Expected peer proof".into());};
     let proof=signed.finish(&decode_hex::<64>(&signature).map_err(error)?,offer.sdp.as_bytes(),answer.sdp.as_bytes()).map_err(error)?;
     peer.set_description(false,&answer)?;
-    ice(&peer,conn,&session).await?;
+    ice(&peer,conn,&mut cipher).await?;
     ready(&peer,&channel,&answer.sdp,true)?;
     let backend=Inert::default();let log=backend.events.clone();
     let mut dispatcher=Dispatcher::new(gate(&proof)?,backend,DisplayArea{x:0,y:0,width:CONFIG.width,height:CONFIG.height})?;
@@ -202,7 +196,8 @@ async fn host(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey)->Media
 async fn controller(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey)->MediaResult<()>{
     let target=hex(&fingerprint(&expected));
     let request=OutgoingPairing::new(id,expected,GRANT).map_err(error)?;
-    conn.send(Client::Request{target:target.clone(),requested:GRANT,controller_nonce:hex(&request.nonce())}).await?;
+    let cn=request.nonce();
+    conn.send(Client::Request{target:target.clone(),requested:GRANT,controller_nonce:hex(&cn)}).await?;
     let Server::Requested{session,target:returned}=recv(conn).await? else{return Err("Device request failed".into());};
     if returned!=target{return Err("Server substituted target ID".into());}
     let sid=decode_hex::<16>(&session).map_err(error)?;
@@ -213,9 +208,11 @@ async fn controller(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey)-
         return Err("Mismatched host key or grant".into());
     }
     let approved=pending.approve_local(granted).map_err(error)?;
+    let binding=RouteBinding{session:sid,controller:id.public_key(),host:expected,controller_nonce:cn,host_nonce:decode_hex::<32>(&nonce).map_err(error)?,requested:GRANT,granted};
+    let mut cipher=RouteCipher::establish(conn,&binding,id,Role::Controller).await?;
     let mut peer=Peer::receiver(CONFIG)?;peer.start()?;
     let channel=peer.create_control_channel()?;
-    let Signal::Offer{sdp}=signal(conn,&session).await? else{return Err("Expected offer".into());};
+    let Signal::Offer{sdp}=cipher.receive(conn).await? else{return Err("Expected offer".into());};
     if !valid_sdp(&sdp){return Err("Unexpected offer profile".into());}
     let offer=Description{kind:DescriptionKind::Offer,sdp};
     // Needed to create the answer; only synthetic video and no privileged
@@ -223,13 +220,13 @@ async fn controller(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey)-
     peer.set_description(false,&offer)?;
     let answer=peer.create_description(DescriptionKind::Answer)?;
     peer.set_description(true,&answer)?;
-    send_signal(conn,&session,Signal::Answer{sdp:answer.sdp.clone()}).await?;
+    cipher.send(conn,Signal::Answer{sdp:answer.sdp.clone()}).await?;
     let signed=approved.sign(id,decode_hex::<32>(&nonce).map_err(error)?,offer.sdp.as_bytes(),answer.sdp.as_bytes()).map_err(error)?;
-    let Signal::Proof{signature}=signal(conn,&session).await? else{return Err("Expected host proof".into());};
+    let Signal::Proof{signature}=cipher.receive(conn).await? else{return Err("Expected host proof".into());};
     let local=signed.signature();
     let _proof=signed.finish(&decode_hex::<64>(&signature).map_err(error)?,offer.sdp.as_bytes(),answer.sdp.as_bytes()).map_err(error)?;
-    send_signal(conn,&session,Signal::Proof{signature:hex(&local)}).await?;
-    ice(&peer,conn,&session).await?;
+    cipher.send(conn,Signal::Proof{signature:hex(&local)}).await?;
+    ice(&peer,conn,&mut cipher).await?;
     ready(&peer,&channel,&offer.sdp,false)?;
     channel.send(READY)?;
     wait_data(&peer,&channel,conn,READY_ACK).await?;
