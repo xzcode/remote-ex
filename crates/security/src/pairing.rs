@@ -29,6 +29,33 @@ fn valid_permissions(flags: u8) -> bool {
     flags & VIEW != 0 && flags & !(VIEW | INPUT) == 0
 }
 
+/// Outbound requests require a fresh challenge before the rendezvous server
+/// assigns its routing ID. Only this locally generated nonce and pinned peer
+/// can be bound to the returned session ID, exactly once.
+pub struct OutgoingPairing {
+    local_key: PublicKey,
+    peer_key: PublicKey,
+    nonce: [u8;32],
+    requested: u8,
+    created: Instant,
+}
+impl OutgoingPairing {
+    pub fn new(identity: &DeviceIdentity, independently_verified_peer: PublicKey, requested: u8) -> Result<Self, PairingError> {
+        let local_key = identity.public_key();
+        if independently_verified_peer == [0;32] || independently_verified_peer == local_key || !valid_permissions(requested) {
+            return Err(PairingError::InvalidRequest);
+        }
+        Ok(Self { local_key, peer_key: independently_verified_peer, nonce: fresh_nonce(), requested, created: Instant::now() })
+    }
+    pub fn nonce(&self) -> [u8;32] { self.nonce }
+    pub fn bind_session(self, session_id: [u8;16]) -> Result<PendingPairing, PairingError> {
+        if session_id == [0;16] { return Err(PairingError::InvalidRequest); }
+        if self.created.elapsed() >= MAX_AGE { return Err(PairingError::Expired); }
+        Ok(PendingPairing { role: Role::Controller, session_id, local_key: self.local_key, peer_key: self.peer_key,
+            local_nonce: self.nonce, requested: self.requested, created: self.created })
+    }
+}
+
 /// Pending state is deliberately not Clone; signing consumes this instance.
 pub struct PendingPairing {
     role: Role,
@@ -149,6 +176,19 @@ mod tests {
         assert_ne!(retry.nonce(), cn);
         let retry = retry.approve_local(VIEW).unwrap().sign(&controller, hn, OFFER, ANSWER).unwrap();
         assert!(retry.finish(&hs, OFFER, ANSWER).is_err());
+    }
+    #[test]
+    fn routed_request_keeps_local_nonce_and_original_deadline() {
+        let a = DeviceIdentity::generate();
+        let b = DeviceIdentity::generate();
+        let request = OutgoingPairing::new(&a,b.public_key(),VIEW).unwrap();
+        let nonce = request.nonce();
+        let pending = request.bind_session(new_session_id()).unwrap();
+        assert_eq!(pending.nonce(),nonce);
+        let mut request = OutgoingPairing::new(&a,b.public_key(),VIEW).unwrap();
+        request.created = Instant::now() - MAX_AGE;
+        assert!(matches!(request.bind_session(new_session_id()),Err(PairingError::Expired)));
+        assert!(OutgoingPairing::new(&a,b.public_key(),VIEW).unwrap().bind_session([0;16]).is_err());
     }
     #[test]
     fn escalation_and_expiration_are_rejected() {

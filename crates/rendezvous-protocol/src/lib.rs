@@ -34,7 +34,13 @@ pub enum Signal {
     Answer { sdp: String },
     Proof { signature: String },
     Ice { mline: u32, candidate: String },
+    IceBatch { items: Vec<IceItem> },
 }
+
+/// Bounded non-trickle candidate exchange after both session proofs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct IceItem { pub mline: u32, pub candidate: String }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
@@ -82,6 +88,11 @@ impl Signal {
             Self::Proof { signature } if decode_hex::<64>(signature).is_ok() => Ok(()),
             Self::Ice { mline, candidate } if *mline <= 1 && candidate.len() <= MAX_ICE
                 && !candidate.contains(['\r','\n','\0']) => Ok(()),
+            Self::IceBatch { items } if !items.is_empty() && items.len() <= 128
+                && items.iter().map(|i| i.candidate.len()).sum::<usize>() <= 16 * 1024
+                && items.iter().any(|i| !i.candidate.is_empty())
+                && items.iter().all(|i| i.mline <= 1 && i.candidate.len() <= MAX_ICE
+                    && !i.candidate.contains(['\r','\n','\0'])) => Ok(()),
             _ => Err("invalid signal"),
         }
     }

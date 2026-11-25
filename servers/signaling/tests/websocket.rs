@@ -87,6 +87,13 @@ async fn approved_routing_is_ordered_and_session_scoped() {
     assert!(matches!(receive(&mut b).await,Server::Signal{payload:Signal::Proof{..},..}));
     send(&mut a,ice).await;
     assert!(matches!(receive(&mut b).await,Server::Signal{payload:Signal::Ice{..},..}));
+    let batch=Client::Signal{session:session.clone(),payload:Signal::IceBatch{items:vec![
+        remote_ex_rendezvous::protocol::IceItem{mline:0,candidate:"candidate:fixture".into()}
+    ]}};
+    send(&mut b,batch.clone()).await;
+    assert!(matches!(receive(&mut a).await,Server::Signal{payload:Signal::IceBatch{..},..}));
+    send(&mut b,batch).await;
+    assert!(matches!(receive(&mut b).await,Server::Error{..}));
     send(&mut b,Client::Close{session}).await;
     assert!(matches!(receive(&mut a).await,Server::Closed{..}));
     assert!(matches!(receive(&mut b).await,Server::Closed{..}));

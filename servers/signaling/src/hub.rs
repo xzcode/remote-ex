@@ -156,6 +156,11 @@ impl Hub {
             Signal::Ice { .. } if s.proofs.iter().all(|v| *v) && s.ice_count[role] < MAX_ICE_PER_PEER => {
                 s.ice_count[role] += 1; true
             }
+            Signal::IceBatch { items } if s.proofs.iter().all(|v| *v)
+                && s.ice_count[role] == 0 && items.len() <= usize::from(MAX_ICE_PER_PEER) => {
+                // Exactly one non-trickle batch; no additional candidates.
+                s.ice_count[role] = MAX_ICE_PER_PEER; true
+            }
             _ => false,
         };
         if !valid { return Some(error("invalid_signal_order")); }
