@@ -1,6 +1,6 @@
 //! Bounded directory bundle. Local source tree and new destination directory
 //! must be explicitly selected. No remote browsing, arbitrary commands,
-//! symlinks, special files, path traversal, overwrite or executable extraction.
+//! symlinks, special files, path traversal, overwrite or automatic execution.
 use crate::exchange::MAX_FILE;
 use serde::{Deserialize,Serialize};
 use std::{collections::BTreeSet,fs::{self,File,OpenOptions},io::{Read,Write},path::{Path,PathBuf}};

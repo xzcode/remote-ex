@@ -46,6 +46,7 @@ pub struct Snapshot {
     transfer_verified: bool,
     transfer_paused: bool,
     checkpoint_saved: Option<u64>,
+    directory_entries: Option<u32>,
     resume_offset: Option<u64>,
     audio_volume: Option<u8>,
     network_bps: Option<u64>,
@@ -55,7 +56,7 @@ pub struct Snapshot {
 }
 impl Default for Snapshot {
     fn default() -> Self {
-        Self { stage: Stage::Idle, active: false, local_key: None, detail: None, profile: Profile::Diagnostic, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, transfer_paused:false, checkpoint_saved:None, resume_offset:None, audio_volume:None, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None }
+        Self { stage: Stage::Idle, active: false, local_key: None, detail: None, profile: Profile::Diagnostic, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, transfer_paused:false, checkpoint_saved:None, directory_entries:None, resume_offset:None, audio_volume:None, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None }
     }
 }
 
@@ -72,7 +73,7 @@ fn stage(shared: &Mutex<Snapshot>, next: Stage, detail: Option<String>) {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
-enum Profile { Diagnostic, SecureTest, Screen, Control, RoutedTest, RoutedView, RoutedControl, RoutedFileHost, RoutedFileController, RoutedTextHost, RoutedTextController, RoutedPngHost, RoutedPngController, RoutedAudio }
+enum Profile { Diagnostic, SecureTest, Screen, Control, RoutedTest, RoutedView, RoutedControl, RoutedFileHost, RoutedFileController, RoutedTextHost, RoutedTextController, RoutedPngHost, RoutedPngController, RoutedAudio, RoutedDirectoryHost, RoutedDirectoryController }
 impl Profile {
     fn parse(value: &str) -> Result<Self, String> {
         match value {
@@ -84,7 +85,7 @@ impl Profile {
         }
     }
     fn routed(self)->bool{matches!(self,Self::RoutedTest|Self::RoutedView|Self::RoutedControl)||self.exchange().is_some()||self==Self::RoutedAudio}
-    fn exchange(self)->Option<(&'static str,bool)>{match self{Self::RoutedFileHost=>Some(("file",true)),Self::RoutedFileController=>Some(("file",false)),Self::RoutedTextHost=>Some(("text",true)),Self::RoutedTextController=>Some(("text",false)),Self::RoutedPngHost=>Some(("png",true)),Self::RoutedPngController=>Some(("png",false)),_=>None}}
+    fn exchange(self)->Option<(&'static str,bool)>{match self{Self::RoutedFileHost=>Some(("file",true)),Self::RoutedFileController=>Some(("file",false)),Self::RoutedTextHost=>Some(("text",true)),Self::RoutedTextController=>Some(("text",false)),Self::RoutedPngHost=>Some(("png",true)),Self::RoutedPngController=>Some(("png",false)),Self::RoutedDirectoryHost=>Some(("directory",true)),Self::RoutedDirectoryController=>Some(("directory",false)),_=>None}}
     fn graceful(self)->bool{self.requires_release()||self.exchange().is_some()||self==Self::RoutedAudio}
     fn requires_release(self)->bool{matches!(self,Self::Control|Self::RoutedControl|Self::RoutedView)}
     fn key_len(self) -> usize { if self == Self::Diagnostic || self.routed() { 64 } else { 128 } }
@@ -105,6 +106,7 @@ impl Profile {
             Self::RoutedTextHost|Self::RoutedTextController=>if self.exchange().unwrap().1==host{"ALLOW SEND CLIPBOARD TEXT"}else{"ALLOW RECEIVE CLIPBOARD TEXT"},
             Self::RoutedPngHost|Self::RoutedPngController=>if self.exchange().unwrap().1==host{"ALLOW SEND CLIPBOARD IMAGE"}else{"ALLOW RECEIVE CLIPBOARD IMAGE"},
             Self::RoutedAudio=>if host{"ALLOW SEND SYSTEM AUDIO"}else{"ALLOW PLAY SYSTEM AUDIO"},
+            Self::RoutedDirectoryHost|Self::RoutedDirectoryController=>if self.exchange().unwrap().1==host{"ALLOW SEND DIRECTORY"}else{"ALLOW RECEIVE DIRECTORY"},
         }
     }
 }
@@ -240,6 +242,10 @@ fn handle_output(shared: &Mutex<Snapshot>, output: Output, pass: &mut bool, fail
                 }
             } else if let Some(v)=text.strip_prefix("AUDIO_VOLUME "){
                 let mut snap=locked(shared);if snap.profile==Profile::RoutedAudio{snap.audio_volume=v.parse::<u8>().ok().filter(|v|*v<=100);}
+            } else if let Some(n)=text.strip_prefix("DIRECTORY_CONTENT "){
+                let mut snap=locked(shared);if snap.profile.exchange().is_some_and(|(k,_)|k=="directory"){
+                    snap.directory_entries=n.split_ascii_whitespace().next().and_then(|v|v.parse::<u32>().ok()).filter(|v|*v<=256);
+                }
             } else if let Some(n)=text.strip_prefix("CHECKPOINT_SAVED "){
                 let mut s=locked(shared);if s.profile.exchange().is_some_and(|(k,_)|k=="file"){s.checkpoint_saved=n.parse::<u64>().ok().filter(|v|*v>0&&*v<=64*1024*1024);}
             } else if let Some(n)=text.strip_prefix("TRANSFER_RESUME_OFFSET "){
@@ -411,7 +417,7 @@ impl SessionManager {
                 command.arg("--desktop-session");
             }
             p if p.routed()=>return Err("Use the routed connection entry point".into()),
-            Profile::RoutedTest|Profile::RoutedView|Profile::RoutedControl|Profile::RoutedFileHost|Profile::RoutedFileController|Profile::RoutedTextHost|Profile::RoutedTextController|Profile::RoutedPngHost|Profile::RoutedPngController|Profile::RoutedAudio=>return Err("Use the routed connection entry point".into()),
+            Profile::RoutedTest|Profile::RoutedView|Profile::RoutedControl|Profile::RoutedFileHost|Profile::RoutedFileController|Profile::RoutedTextHost|Profile::RoutedTextController|Profile::RoutedPngHost|Profile::RoutedPngController|Profile::RoutedAudio|Profile::RoutedDirectoryHost|Profile::RoutedDirectoryController=>return Err("Use the routed connection entry point".into()),
             Profile::Screen => {
                 if host {
                     let display = display_id.ok_or("Choose the specific display to share")?;
@@ -451,12 +457,13 @@ impl SessionManager {
             p if p.exchange().is_some()=>{
                 let(kind,host_sends)=p.exchange().unwrap();
                 command.arg("--exchange").arg(kind).arg(if host_sends{"host"}else{"controller"});
-                if kind=="file"{
-                    let path=PathBuf::from(transfer_path.ok_or("Choose local file path")?);
+                if matches!(kind,"file"|"directory"){
+                    let path=PathBuf::from(transfer_path.ok_or("Choose local source or destination path")?);
                     if !path.is_absolute()||path.file_name().is_none(){return Err("Choose an absolute local file path".into());}
                     if host_sends==host{
                         let meta=std::fs::symlink_metadata(&path).map_err(|_|"Source file unavailable")?;
-                        if !meta.file_type().is_file()||meta.len()>64*1024*1024{return Err("Select a regular file up to 64 MiB".into());}
+                        if kind=="file"&&(!meta.file_type().is_file()||meta.len()>64*1024*1024){return Err("Select a regular file up to 64 MiB".into());}
+                        if kind=="directory"&&!meta.file_type().is_dir(){return Err("Select an ordinary directory".into());}
                     }else if path.exists()||!path.parent().is_some_and(|p|p.is_dir()){return Err("Choose an unused destination in an existing local directory".into());}
                     command.arg(&path);
                     if let Some(from)=&resume_from{
@@ -495,7 +502,7 @@ impl SessionManager {
         }
         let child = command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped())
             .spawn().map_err(|e| format!("Cannot start native media diagnostic: {e}"))?;
-        *locked(&self.shared) = Snapshot { stage: Stage::Starting, active: true, local_key: None, detail: None, profile, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, transfer_paused:false, checkpoint_saved:None, resume_offset:None, audio_volume:None, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None };
+        *locked(&self.shared) = Snapshot { stage: Stage::Starting, active: true, local_key: None, detail: None, profile, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, transfer_paused:false, checkpoint_saved:None, directory_entries:None, resume_offset:None, audio_volume:None, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None };
         let (tx, rx) = mpsc::sync_channel(4);
         let shared = self.shared.clone();
         let stop = Arc::new(AtomicBool::new(false));
@@ -627,16 +634,16 @@ pub fn routed_audio_volume(window:WebviewWindow,managers:State<'_,RoutedManagers
     let worker=locked(&manager.worker);worker.as_ref().ok_or("No active audio process")?.tx.try_send(WorkerCommand::Volume(volume)).map_err(|_|"Audio control unavailable".to_owned())?;Ok(snap)
 }
 #[tauri::command]
-pub async fn select_transfer_file(window:WebviewWindow,receive:bool)->Result<Option<String>,String>{
+pub async fn select_transfer_file(window:WebviewWindow,receive:bool,directory:Option<bool>)->Result<Option<String>,String>{
     require_main(&window)?;
     #[cfg(any(target_os="windows",target_os="macos"))]
     {
         let dialog=rfd::AsyncFileDialog::new();
-        let file=if receive{dialog.save_file().await}else{dialog.pick_file().await};
+        let file=if directory.unwrap_or(false){dialog.pick_folder().await}else if receive{dialog.save_file().await}else{dialog.pick_file().await};
         file.map(|f|f.path().to_str().map(str::to_owned).ok_or("Unsupported local path".to_owned())).transpose()
     }
     #[cfg(not(any(target_os="windows",target_os="macos")))]
-    {let _=receive;Err("Native file selection unavailable".into())}
+    {let _=(receive,directory);Err("Native file selection unavailable".into())}
 }
 #[tauri::command]
 pub fn routed_prepare(window:WebviewWindow,manager:State<'_,SessionManager>,managers:State<'_,RoutedManagers>,slot:Option<u8>,role:String,url:String,server_id:String,mode:String,display_id:Option<u32>,relay_only:bool,persistent:bool,storage_consent:bool,ca_path:Option<String>,save_history:Option<bool>,quality:Option<String>,sender:Option<String>,transfer_path:Option<String>,volume:Option<u8>,extra_displays:Option<Vec<u32>>,resume_from:Option<String>,checkpoint_path:Option<String>)->Result<Snapshot,String>{
@@ -646,6 +653,7 @@ pub fn routed_prepare(window:WebviewWindow,manager:State<'_,SessionManager>,mana
         ("file",Some("host"))=>Profile::RoutedFileHost,("file",Some("controller"))=>Profile::RoutedFileController,
         ("text",Some("host"))=>Profile::RoutedTextHost,("text",Some("controller"))=>Profile::RoutedTextController,
         ("png",Some("host"))=>Profile::RoutedPngHost,("png",Some("controller"))=>Profile::RoutedPngController,
+        ("directory",Some("host"))=>Profile::RoutedDirectoryHost,("directory",Some("controller"))=>Profile::RoutedDirectoryController,
         _=>return Err("Invalid routed mode or direction".into()),
     };
     let history=if save_history.unwrap_or(false){Some(crate::trust::database_path(&window)?)}else{None};
@@ -703,7 +711,7 @@ mod tests {
     fn control_requires_distinct_consent_and_release_marker() {
         assert_eq!(Profile::Control.consent(true), "ALLOW SCREEN AND INPUT");
         assert_eq!(Profile::Control.consent(false), "ALLOW REMOTE INPUT");
-        let shared = Mutex::new(Snapshot { stage: Stage::Connected, active: true, local_key: None, detail: None, profile: Profile::Control, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, transfer_paused:false, checkpoint_saved:None, resume_offset:None, audio_volume:None, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None });
+        let shared = Mutex::new(Snapshot { stage: Stage::Connected, active: true, local_key: None, detail: None, profile: Profile::Control, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, transfer_paused:false, checkpoint_saved:None, directory_entries:None, resume_offset:None, audio_volume:None, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None });
         let (mut pass, mut failure) = (false, None);
         stage(&shared, Stage::Stopping, None);
         assert!(locked(&shared).active);
@@ -713,7 +721,7 @@ mod tests {
     }
     #[test]
     fn status_requires_valid_local_key_and_terminal_state() {
-        let shared = Mutex::new(Snapshot { stage: Stage::Starting, active: true, local_key: None, detail: None, profile: Profile::Diagnostic, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, transfer_paused:false, checkpoint_saved:None, resume_offset:None, audio_volume:None, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None });
+        let shared = Mutex::new(Snapshot { stage: Stage::Starting, active: true, local_key: None, detail: None, profile: Profile::Diagnostic, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, transfer_paused:false, checkpoint_saved:None, directory_entries:None, resume_offset:None, audio_volume:None, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None });
         let (mut pass, mut fail) = (false, None);
         handle_output(&shared, Output::Stdout(format!("KEY {}", "ab".repeat(32))), &mut pass, &mut fail);
         assert_eq!(locked(&shared).stage, Stage::AwaitingApproval);

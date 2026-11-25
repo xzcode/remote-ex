@@ -14,13 +14,14 @@ pub(super) struct ResumeOptions{pub from:Option<std::path::PathBuf>,pub save_to:
 pub(super) struct Mode{pub kind:Kind,host_sends:bool}
 impl Mode{
     pub fn parse(kind:&str,sender:&str)->MediaResult<Self>{
-        let kind=match kind{"file"=>Kind::File,"text"=>Kind::Text,"png"=>Kind::Png,_=>return Err("Invalid transfer kind".into())};
+        let kind=match kind{"file"=>Kind::File,"text"=>Kind::Text,"png"=>Kind::Png,"directory"=>Kind::Directory,_=>return Err("Invalid transfer kind".into())};
         let host_sends=match sender{"host"=>true,"controller"=>false,_=>return Err("Invalid sender role".into())};
         Ok(Self{kind,host_sends})
     }
     pub fn sending(self,host:bool)->bool{host==self.host_sends}
-    pub fn code(self)->u8{3+2*match self.kind{Kind::File=>0,Kind::Text=>1,Kind::Png=>2}+u8::from(self.host_sends)}
+    pub fn code(self)->u8{if self.kind==Kind::Directory{11+u8::from(self.host_sends)}else{3+2*match self.kind{Kind::File=>0,Kind::Text=>1,Kind::Png=>2,Kind::Directory=>unreachable!()}+u8::from(self.host_sends)}}
     pub fn consent(self,host:bool)->&'static str{match(self.kind,self.sending(host)){
+        (Kind::Directory,true)=>"ALLOW SEND DIRECTORY",(Kind::Directory,false)=>"ALLOW RECEIVE DIRECTORY",
         (Kind::File,true)=>"ALLOW SEND FILE",(Kind::File,false)=>"ALLOW RECEIVE FILE",
         (Kind::Text,true)=>"ALLOW SEND CLIPBOARD TEXT",(Kind::Text,false)=>"ALLOW RECEIVE CLIPBOARD TEXT",
         (Kind::Png,true)=>"ALLOW SEND CLIPBOARD IMAGE",(Kind::Png,false)=>"ALLOW RECEIVE CLIPBOARD IMAGE",
@@ -131,7 +132,7 @@ fn clipboard_read(kind:Kind)->MediaResult<Vec<u8>>{
             DynamicImage::ImageRgba8(raw).write_to(&mut png,ImageFormat::Png).map_err(|_|"Cannot encode clipboard image")?;
             Ok(png.into_inner())
         },
-        Kind::File=>Err("File is not clipboard content".into()),
+        Kind::File|Kind::Directory=>Err("File is not clipboard content".into()),
     }
 }
 #[cfg(all(feature="native-control",any(target_os="windows",target_os="macos")))]
@@ -147,7 +148,7 @@ fn clipboard_write(kind:Kind,data:Vec<u8>)->MediaResult<()>{
             let(width,height)=image.dimensions();
             c.set_image(arboard::ImageData{width:width as usize,height:height as usize,bytes:std::borrow::Cow::Owned(image.into_raw())}).map_err(|_|"Cannot write clipboard image".into())
         },
-        Kind::File=>Err("File is not clipboard content".into()),
+        Kind::File|Kind::Directory=>Err("File is not clipboard content".into()),
     }
 }
 #[cfg(not(all(feature="native-control",any(target_os="windows",target_os="macos"))))]
@@ -181,7 +182,15 @@ pub(super) async fn run(peer:&Peer,channel:&ControlChannel,conn:&mut Connection,
     let deadline=Instant::now()+LIMIT;
     out("CONNECTED ROUTED EXCHANGE")?;
     if mode.sending(host){
-        if mode.kind==Kind::File{
+        if mode.kind==Kind::Directory{
+            let path=check_local_path(path)?;
+            let data=remote_ex_desktop_features::directory::pack(path)?;
+            let (entries,size)=remote_ex_desktop_features::directory::inspect(&data)?;
+            out(&format!("DIRECTORY_CONTENT {entries} {size}"))?;
+            if canceled(){return Err("Local directory grant revoked".into());}
+            let offer=exchange::describe(data.as_slice(),Kind::Directory,"directory.rexdir".into())?;
+            send_source(&mut Cursor::new(data),&offer,peer,channel,conn,deadline).await?;
+        }else if mode.kind==Kind::File{
             let path=check_local_path(path)?;
             let metadata=std::fs::symlink_metadata(path).map_err(|_|"Selected source unavailable")?;
             if !metadata.file_type().is_file()||metadata.len()>exchange::MAX_FILE{return Err("Select a regular file up to 64 MiB".into());}
@@ -205,7 +214,14 @@ pub(super) async fn run(peer:&Peer,channel:&ControlChannel,conn:&mut Connection,
         // Recipient has already selected an exact destination and explicitly
         // approved this peer, content kind and direction. Never use offer.name
         // for filesystem paths. Never overwrite an existing file.
-        if mode.kind==Kind::File{
+        if mode.kind==Kind::Directory{
+            let target=check_local_path(path)?;
+            if target.exists(){return Err("Destination directory exists; overwrite refused".into());}
+            let content=receive_to(Vec::new(),offer,peer,channel,conn,deadline,&[]).await?;
+            let (entries,size)=remote_ex_desktop_features::directory::inspect(&content)?;
+            remote_ex_desktop_features::directory::unpack(&content,target,true,canceled)?;
+            out(&format!("DIRECTORY_CONTENT {entries} {size}"))?;
+        }else if mode.kind==Kind::File{
             let target=check_local_path(path)?;
             if target.exists(){return Err("Destination exists; overwrite refused".into());}
             let parent=target.parent().ok_or("Missing destination directory")?;

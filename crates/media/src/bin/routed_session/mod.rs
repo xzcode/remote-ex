@@ -403,7 +403,7 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
         "--exchange" if profile==Profile::Test=>{
             let mode=exchange::Mode::parse(&a.next().ok_or("Missing exchange kind")?,&a.next().ok_or("Missing sender role")?)?;
             profile=Profile::Exchange(mode);
-            if mode.kind==remote_ex_desktop_features::exchange::Kind::File{exchange_path=Some(std::path::PathBuf::from(a.next().ok_or("Select explicit local file path")?));}
+            if matches!(mode.kind,remote_ex_desktop_features::exchange::Kind::File|remote_ex_desktop_features::exchange::Kind::Directory){exchange_path=Some(std::path::PathBuf::from(a.next().ok_or("Select explicit local file path")?));}
         },
         "--resume-from" if resume.from.is_none()=>resume.from=Some(std::path::PathBuf::from(a.next().ok_or("Select existing local checkpoint")?)),
         "--save-checkpoint" if resume.save_to.is_none()=>resume.save_to=Some(std::path::PathBuf::from(a.next().ok_or("Select unused local checkpoint path")?)),
@@ -435,8 +435,8 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
         }
     }
     if let Profile::Exchange(mode)=profile{
-        if mode.kind!=remote_ex_desktop_features::exchange::Kind::File&&!cfg!(all(feature="native-control",any(target_os="windows",target_os="macos"))){return Err("Native clipboard unavailable".into());}
-        if !native_allowed&&mode.kind!=remote_ex_desktop_features::exchange::Kind::File{return Err("Diagnostic cannot access clipboard".into());}
+        if !matches!(mode.kind,remote_ex_desktop_features::exchange::Kind::File|remote_ex_desktop_features::exchange::Kind::Directory)&&!cfg!(all(feature="native-control",any(target_os="windows",target_os="macos"))){return Err("Native clipboard unavailable".into());}
+        if !native_allowed&&!matches!(mode.kind,remote_ex_desktop_features::exchange::Kind::File|remote_ex_desktop_features::exchange::Kind::Directory){return Err("Diagnostic cannot access clipboard".into());}
         quality="compat".into();
     }
     if matches!(profile,Profile::View|Profile::Control)&&!cfg!(all(feature="native-control",any(target_os="windows",target_os="macos"))){return Err("Native mode not compiled for this platform".into());}

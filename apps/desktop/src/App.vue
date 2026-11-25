@@ -124,7 +124,7 @@ const pages: { key: Page; symbol: string }[] = [
         <template v-else-if="active === 'routed'">
           <div class="actions session-tabs"><button v-for="n in 3" :key="n" :class="{primary:currentSlot===n-1}" @click="currentSlot=n-1">{{ t("sessionTab") }} {{ n }}<span v-if="slotActive[n-1]"> ●</span></button></div>
           <p class="muted">{{ t("multiSessionNotice") }}</p>
-          <RoutedPanel v-for="n in 3" v-show="currentSlot===n-1" :key="n" :slot="n-1" :t="t" @active="slotActive[n-1]=$event" />
+          <RoutedPanel v-for="n in 3" v-show="currentSlot===n-1" :key="n"  :slot="n-1" :visible="currentSlot===n-1" :t="t" @active="slotActive[n-1]=$event" />
         </template>
         <template v-else-if="active === 'server'">
           <PresencePanel :t="t" @active="presenceActive = $event" />
