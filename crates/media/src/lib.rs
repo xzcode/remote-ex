@@ -95,6 +95,9 @@ pub struct Peer {
     overflow: Arc<AtomicBool>,
     running: bool,
     data_enabled: bool,
+    audio_enabled:bool,
+    audio_input:Option<app::AppSrc>,
+    audio_output:Option<app::AppSink>,
 }
 
 fn queue_event(sender: &SyncSender<Event>, overflow: &AtomicBool, event: Event) {
@@ -116,6 +119,10 @@ impl Peer {
     /// Builds a one-way native sender. Callers may supply native tightly packed
     /// RGBA frames; do not push screenshots through the ordinary UI IPC.
     pub fn sender(config: VideoConfig, source: Source) -> MediaResult<Self> {
+        Self::sender_profile(config,source,false)
+    }
+    pub fn sender_av(config:VideoConfig,source:Source)->MediaResult<Self>{Self::sender_profile(config,source,true)}
+    fn sender_profile(config:VideoConfig,source:Source,audio:bool)->MediaResult<Self>{
         gst::init().map_err(|e| e.to_string())?;
         let config = config.validate()?;
         let source_text = match source {
@@ -123,6 +130,9 @@ impl Peer {
             Source::NativeRgba => "appsrc name=raw is-live=true do-timestamp=true format=time block=false max-buffers=2 max-bytes=0 max-time=0 leaky-type=downstream",
         };
         let caps_format = if source == Source::NativeRgba { "RGBA" } else { "I420" };
+        let audio_branch=if audio{
+            "appsrc name=audio_raw is-live=true do-timestamp=true format=time block=false max-buffers=4 max-bytes=0 max-time=0 leaky-type=downstream ! audio/x-raw,format=S16LE,rate=16000,channels=1,layout=interleaved ! queue max-size-buffers=4 max-size-bytes=0 max-size-time=0 leaky=downstream ! audioconvert ! audioresample ! opusenc bitrate=32000 ! rtpopuspay pt=111 ! application/x-rtp,media=audio,encoding-name=OPUS,clock-rate=48000,payload=111 ! rtc."
+        }else{""};
         let pipeline = make_pipeline(&format!(
             "webrtcbin name=rtc bundle-policy=max-bundle latency=100 \
              {source_text} ! video/x-raw,format={caps_format},width={w},height={h},framerate={fps}/1 \
@@ -130,7 +140,7 @@ impl Peer {
              ! videoconvert ! video/x-raw,format=I420 \
              ! vp8enc name=encoder deadline=1 cpu-used=8 target-bitrate={bitrate} keyframe-max-dist={fps} \
              ! rtpvp8pay pt=96 picture-id-mode=15-bit \
-             ! application/x-rtp,media=video,encoding-name=VP8,clock-rate=90000,payload=96 ! rtc.",
+             ! application/x-rtp,media=video,encoding-name=VP8,clock-rate=90000,payload=96 ! rtc. {audio_branch}",
             w=config.width, h=config.height, fps=config.fps, bitrate=config.bitrate,
         ))?;
         let input = if source == Source::NativeRgba {
@@ -145,7 +155,13 @@ impl Peer {
             raw.set_caps(Some(&caps));
             Some(raw)
         } else { None };
-        Self::new(pipeline, input, None, config)
+        let mut peer=Self::new(pipeline,input,None,config)?;
+        if audio{
+            let src=named(&peer.pipeline,"audio_raw")?.downcast::<app::AppSrc>().map_err(|_|"Invalid audio appsrc")?;
+            src.set_caps(Some(&gst::Caps::builder("audio/x-raw").field("format","S16LE").field("rate",16000i32).field("channels",1i32).field("layout","interleaved").build()));
+            peer.audio_input=Some(src);peer.audio_enabled=true;
+        }
+        Ok(peer)
     }
 
     /// Receives VP8 RTP over WebRTC. Decoded frames remain in native GstSample
@@ -157,32 +173,62 @@ impl Peer {
     /// Optional native GStreamer video window; never uses Webview IPC.
     /// The local caller must explicitly request the preview.
     pub fn receiver_with_preview(config: VideoConfig, preview: bool) -> MediaResult<Self> {
+        Self::receiver_profile(config,preview,None)
+    }
+    /// With an independently authorized Opus audio track. test=true uses an
+    /// inert appsink; the native audio sink starts muted behind a closed valve.
+    pub fn receiver_av(config:VideoConfig,test:bool)->MediaResult<Self>{
+        Self::receiver_profile(config,false,Some(test))
+    }
+    fn receiver_profile(config:VideoConfig,preview:bool,audio:Option<bool>)->MediaResult<Self>{
         gst::init().map_err(|e| e.to_string())?;
         let config = config.validate()?;
         let output_branch = if preview {
             "tee name=frames frames. ! queue max-size-buffers=2 max-size-bytes=0 max-size-time=0 leaky=downstream ! appsink name=decoded sync=false max-buffers=2 drop=true frames. ! queue max-size-buffers=2 max-size-bytes=0 max-size-time=0 leaky=downstream ! videoconvert ! autovideosink sync=false"
-        } else {
+        } else if audio.is_some(){
+            "appsink name=decoded sync=true max-buffers=2 drop=true"
+        }else{
             "appsink name=decoded sync=false max-buffers=2 drop=true"
+        };
+        let audio_branch=match audio{
+            Some(test)=>{
+                let sink=if test{"appsink name=decoded_audio sync=true max-buffers=8 drop=true async=false"}else{"autoaudiosink sync=true async=false"};
+                format!("queue name=rx_audio max-size-buffers=12 max-size-bytes=0 max-size-time=0 ! rtpopusdepay ! opusdec ! audioconvert ! audioresample ! audio/x-raw,format=S16LE,rate=16000,channels=1,layout=interleaved ! valve name=audio_gate drop=true drop-mode=transform-to-gap ! volume name=audio_gain volume=0.0 ! {sink}")
+            },
+            None=>String::new(),
         };
         let pipeline = make_pipeline(&format!(
             "webrtcbin name=rtc bundle-policy=max-bundle latency=100 \
              queue name=rx max-size-buffers=12 max-size-bytes=0 max-size-time=0 \
              ! rtpvp8depay ! vp8dec ! videoconvert ! videoscale \
              ! video/x-raw,format=RGBA,width={w},height={h} \
-             ! {output_branch}",
+             ! {output_branch} {audio_branch}",
             w=config.width, h=config.height
         ))?;
         let out = named(&pipeline, "decoded")?.downcast::<app::AppSink>()
             .map_err(|_| "Invalid appsink")?;
         let mut peer = Self::new(pipeline, None, Some(out), config)?;
         let sink = named(&peer.pipeline, "rx")?.static_pad("sink").ok_or("Missing RTP sink")?;
+        let audio_sink=if audio.is_some(){Some(named(&peer.pipeline,"rx_audio")?.static_pad("sink").ok_or("Missing audio RTP sink")?)}else{None};
         let failure = peer.overflow.clone();
         peer.webrtc.connect_pad_added(move |_, pad| {
-            if pad.direction() != gst::PadDirection::Src { return; }
-            if sink.is_linked() || pad.link(&sink).is_err() {
-                failure.store(true, Ordering::Release);
+            if pad.direction()!=gst::PadDirection::Src{return;}
+            let destination=if audio_sink.is_some(){
+                // The SDP profile requires video index 0 and audio index 1.
+                // Check the actual transceiver index, not arrival order.
+                let transceiver=pad.property::<Option<rtc::WebRTCRTPTransceiver>>("transceiver");
+                match transceiver.map(|t|t.property::<u32>("mlineindex")){
+                    Some(0)=>Some(&sink),Some(1)=>audio_sink.as_ref(),_=>None,
+                }
+            }else{Some(&sink)};
+            if destination.is_none_or(|s|s.is_linked()||pad.link(s).is_err()){
+                failure.store(true,Ordering::Release);
             }
         });
+        if let Some(test)=audio{
+            peer.audio_enabled=true;
+            if test{peer.audio_output=Some(named(&peer.pipeline,"decoded_audio")?.downcast::<app::AppSink>().map_err(|_|"Invalid audio appsink")?);}
+        }
         // Keep the explicit receive branch alive before the first pad is added.
         peer.running = false;
         Ok(peer)
@@ -220,7 +266,7 @@ impl Peer {
                 None
             });
         }
-        Ok(Self { pipeline, webrtc, input, output, config, events: rx, overflow, running: false, data_enabled: false })
+        Ok(Self { pipeline, webrtc, input, output, config, events: rx, overflow, running: false, data_enabled: false, audio_enabled:false,audio_input:None,audio_output:None })
     }
 
     /// Configure operator-provided ICE servers before starting negotiation.
@@ -348,7 +394,7 @@ impl Peer {
 
     pub fn add_ice(&self, ice: &IceCandidate) -> MediaResult<()> {
         if !self.running { return Err("Peer is not running".into()); }
-        validate_ice(ice, if self.data_enabled { 1 } else { 0 })?;
+        validate_ice(ice,u32::from(self.data_enabled)+u32::from(self.audio_enabled))?;
         self.webrtc.emit_by_name::<()>("add-ice-candidate", &[&ice.mline, &ice.candidate]);
         Ok(())
     }
@@ -379,9 +425,11 @@ impl Peer {
         if self.connection_state() != rtc::WebRTCPeerConnectionState::Connected {
             return Err("WebRTC is not connected".into());
         }
+        // Check actual DTLS on both RTP transceivers for the A/V profile.
+        for index in 0..=i32::from(self.audio_enabled){
         let transceiver = self.webrtc.emit_by_name::<Option<rtc::WebRTCRTPTransceiver>>(
-            "get-transceiver", &[&0i32]
-        ).ok_or("Missing video transceiver")?;
+            "get-transceiver", &[&index]
+        ).ok_or("Missing authorized RTP transceiver")?;
         let transport = if sending {
             let sender = transceiver.property::<Option<rtc::WebRTCRTPSender>>("sender").ok_or("Missing video sender")?;
             sender.property::<Option<rtc::WebRTCDTLSTransport>>("transport")
@@ -394,6 +442,7 @@ impl Peer {
         }
         let certificate = transport.property::<Option<String>>("remote-certificate").ok_or("Missing peer DTLS certificate")?;
         certificate::verify(remote_sdp, &certificate)?;
+        }
         // If a negotiated control channel exists, verify its actual transport
         // too, rather than assuming it shares the video BUNDLE transport.
         if self.data_enabled {
@@ -408,6 +457,34 @@ impl Peer {
         Ok(())
     }
 
+    pub fn push_pcm(&self,pcm:Vec<u8>)->MediaResult<()>{
+        if !self.running||pcm.len()!=640{return Err("Invalid PCM frame".into());}
+        let src=self.audio_input.as_ref().ok_or("No authorized audio source")?;
+        let mut buffer=gst::Buffer::from_mut_slice(pcm);
+        buffer.get_mut().ok_or("Cannot set audio duration")?.set_duration(gst::ClockTime::from_mseconds(20));
+        src.push_buffer(buffer).map_err(|e|e.to_string())?;Ok(())
+    }
+    /// Caller must first authenticate actual audio/video/data DTLS and obtain
+    /// the explicit A/V readiness grant. No audio is played before this call.
+    pub fn authorize_audio_playback(&self,volume:u8)->MediaResult<()>{
+        if !self.audio_enabled||self.audio_input.is_some()||volume>100{return Err("No audio receiver or invalid volume".into());}
+        self.set_audio_volume(volume)?;
+        named(&self.pipeline,"audio_gate")?.set_property("drop",false);Ok(())
+    }
+    pub fn set_audio_volume(&self,volume:u8)->MediaResult<()>{
+        if volume>100{return Err("Invalid audio volume".into());}
+        named(&self.pipeline,"audio_gain")?.set_property("volume",f64::from(volume)/100.0);Ok(())
+    }
+    pub fn mute_audio(&self){
+        if self.audio_enabled&&self.audio_input.is_none(){
+            if let Ok(gate)=named(&self.pipeline,"audio_gate"){gate.set_property("drop",true);}
+            let _=self.set_audio_volume(0);
+        }
+    }
+    pub fn pull_audio(&self)->MediaResult<Option<gst::Sample>>{
+        self.check_health()?;
+        Ok(self.audio_output.as_ref().ok_or("No inert audio sink")?.try_pull_sample(gst::ClockTime::ZERO))
+    }
     pub fn ice_complete(&self) -> bool {
         self.webrtc.property::<rtc::WebRTCICEGatheringState>("ice-gathering-state")
             == rtc::WebRTCICEGatheringState::Complete

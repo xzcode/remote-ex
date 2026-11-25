@@ -22,7 +22,7 @@ impl RouteBinding {
             ||self.controller==self.host||self.controller_nonce==[0;32]||self.host_nonce==[0;32]
             ||self.controller_nonce==self.host_nonce||self.requested&VIEW==0||self.granted&VIEW==0
             ||self.requested&!(VIEW|INPUT)!=0||self.granted&!self.requested!=0
-            ||!matches!(self.profile,0..=15)||((self.profile==1||self.profile>=3)&&self.granted!=VIEW)||(self.profile==2&&self.granted!=(VIEW|INPUT)){
+            ||!matches!(self.profile,0..=18)||((self.profile==1||(3..=15).contains(&self.profile)||self.profile==17)&&self.granted!=VIEW)||(matches!(self.profile,2|16|18)&&self.granted!=(VIEW|INPUT)){
             return Err(ProofError::InvalidTranscript);
         }
         let mut b=b"Remote EX/routed-noise/v1\0".to_vec();

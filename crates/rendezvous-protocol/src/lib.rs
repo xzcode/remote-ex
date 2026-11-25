@@ -104,12 +104,12 @@ impl Signal {
             Self::Offer { sdp } | Self::Answer { sdp }
                 if !sdp.is_empty() && sdp.len() <= MAX_SDP && !sdp.contains('\0') => Ok(()),
             Self::Proof { signature } if decode_hex::<64>(signature).is_ok() => Ok(()),
-            Self::Ice { mline, candidate } if *mline <= 1 && candidate.len() <= MAX_ICE
+            Self::Ice { mline, candidate } if *mline <= 2 && candidate.len() <= MAX_ICE
                 && !candidate.contains(['\r','\n','\0']) => Ok(()),
             Self::IceBatch { items } if !items.is_empty() && items.len() <= 128
                 && items.iter().map(|i| i.candidate.len()).sum::<usize>() <= 16 * 1024
                 && items.iter().any(|i| !i.candidate.is_empty())
-                && items.iter().all(|i| i.mline <= 1 && i.candidate.len() <= MAX_ICE
+                && items.iter().all(|i| i.mline <= 2 && i.candidate.len() <= MAX_ICE
                     && !i.candidate.contains(['\r','\n','\0'])) => Ok(()),
             Self::Geometry{x,y,width,height} if *width>=2&&*height>=2
                 &&x.checked_add(*width).is_some_and(|n|n<=3840)&&y.checked_add(*height).is_some_and(|n|n<=2160)=>Ok(()),
