@@ -22,10 +22,10 @@ const MAX_LINE: u64 = 4096;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
-enum Stage { Idle, Starting, AwaitingApproval, Connecting, Listening, Connected, Passed, Failed, Canceled }
+enum Stage { Idle, Starting, AwaitingApproval, Connecting, Listening, Connected, Stopping, Passed, Failed, Canceled }
 impl Stage {
     fn active(self) -> bool {
-        matches!(self, Self::Starting | Self::AwaitingApproval | Self::Connecting | Self::Listening | Self::Connected)
+        matches!(self, Self::Starting | Self::AwaitingApproval | Self::Connecting | Self::Listening | Self::Connected | Self::Stopping)
     }
 }
 
@@ -36,10 +36,11 @@ pub struct Snapshot {
     local_key: Option<String>,
     detail: Option<String>,
     profile: Profile,
+    input_released: bool,
 }
 impl Default for Snapshot {
     fn default() -> Self {
-        Self { stage: Stage::Idle, active: false, local_key: None, detail: None, profile: Profile::Diagnostic }
+        Self { stage: Stage::Idle, active: false, local_key: None, detail: None, profile: Profile::Diagnostic, input_released: false }
     }
 }
 
@@ -56,13 +57,14 @@ fn stage(shared: &Mutex<Snapshot>, next: Stage, detail: Option<String>) {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
-enum Profile { Diagnostic, SecureTest, Screen }
+enum Profile { Diagnostic, SecureTest, Screen, Control }
 impl Profile {
     fn parse(value: &str) -> Result<Self, String> {
         match value {
             "diagnostic" => Ok(Self::Diagnostic),
             "secure_test" => Ok(Self::SecureTest),
             "screen" => Ok(Self::Screen),
+            "control" => Ok(Self::Control),
             _ => Err("Unknown session profile".into()),
         }
     }
@@ -73,6 +75,8 @@ impl Profile {
             Self::SecureTest => "ALLOW TEST VIEW",
             Self::Screen if host => "SHARE SCREEN",
             Self::Screen => "ALLOW SCREEN VIEW",
+            Self::Control if host => "ALLOW SCREEN AND INPUT",
+            Self::Control => "ALLOW REMOTE INPUT",
         }
     }
 }
@@ -95,9 +99,13 @@ fn local_endpoint(value: &str) -> Result<SocketAddr, String> {
 fn sidecar_path(profile: Profile) -> Result<PathBuf, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let parent = exe.parent().ok_or("Cannot find application directory")?;
-    let name = match (profile == Profile::Diagnostic, cfg!(windows)) {
-        (true, true) => "lan_diagnostic.exe", (true, false) => "lan_diagnostic",
-        (false, true) => "lan_view.exe", (false, false) => "lan_view",
+    let name = match (profile, cfg!(windows)) {
+        (Profile::Diagnostic, true) => "lan_diagnostic.exe",
+        (Profile::Diagnostic, false) => "lan_diagnostic",
+        (Profile::Control, true) => "lan_control.exe",
+        (Profile::Control, false) => "lan_control",
+        (_, true) => "lan_view.exe",
+        (_, false) => "lan_view",
     };
     let path = parent.join(name);
     // Deliberately no PATH lookup, user-selected binary or shell.
@@ -107,9 +115,9 @@ fn sidecar_path(profile: Profile) -> Result<PathBuf, String> {
     Ok(path)
 }
 
-enum WorkerCommand { Approve(String), Stop }
+enum WorkerCommand { Approve(String) }
 enum Output { Stdout(String), Stderr(String), Invalid }
-struct Worker { tx: SyncSender<WorkerCommand>, join: JoinHandle<()> }
+struct Worker { tx: SyncSender<WorkerCommand>, stop: Arc<AtomicBool>, join: JoinHandle<()> }
 struct ChildGuard(Child);
 impl Drop for ChildGuard {
     fn drop(&mut self) {
@@ -167,13 +175,17 @@ fn handle_output(shared: &Mutex<Snapshot>, output: Output, pass: &mut bool, fail
                 let current = locked(shared).stage;
                 if current == Stage::Connecting { stage(shared, Stage::Listening, None); }
             } else if matches!(text.as_str(), "CONNECTED" | "CONNECTED TEST VIEW")
-                || text.starts_with("CONNECTED SCREEN VIEW") {
+                || text.starts_with("CONNECTED SCREEN VIEW") || text.starts_with("CONNECTED CONTROL") {
                 let current = locked(shared).stage;
                 if matches!(current, Stage::Connecting | Stage::Listening) {
                     stage(shared, Stage::Connected, None);
                 }
+            } else if text == "INPUT_RELEASED" {
+                let mut snapshot = locked(shared);
+                if snapshot.profile == Profile::Control { snapshot.input_released = true; }
             } else if text.starts_with("PASS HOST:") || text.starts_with("PASS CONTROLLER:")
-                || text.starts_with("PASS HOST VIEW:") || text.starts_with("PASS CONTROLLER VIEW:") {
+                || text.starts_with("PASS HOST VIEW:") || text.starts_with("PASS CONTROLLER VIEW:")
+                || text.starts_with("PASS HOST CONTROL:") || text.starts_with("PASS CONTROLLER CONTROL:") {
                 *pass = true;
             }
         }
@@ -181,7 +193,7 @@ fn handle_output(shared: &Mutex<Snapshot>, output: Output, pass: &mut bool, fail
 }
 fn supervise(
     mut child: ChildGuard, commands: Receiver<WorkerCommand>, shared: Arc<Mutex<Snapshot>>,
-    profile: Profile, host: bool,
+    profile: Profile, host: bool, stop: Arc<AtomicBool>,
 ) {
     let (tx, output) = mpsc::sync_channel(64);
     let overflow = Arc::new(AtomicBool::new(false));
@@ -198,39 +210,49 @@ fn supervise(
     let started = Instant::now();
     let mut pass = false;
     let mut failure = None;
+    let mut stopping: Option<Instant> = None;
+    let mut stop_error: Option<String> = None;
     loop {
         for message in output.try_iter().take(64) {
             handle_output(&shared, message, &mut pass, &mut failure);
         }
-        if overflow.load(Ordering::Acquire) || failure.is_some() {
-            stage(&shared, Stage::Failed, failure.take().or_else(|| Some("Diagnostic output limit exceeded".into())));
-            return;
-        }
-        if started.elapsed() >= SESSION_LIMIT {
-            stage(&shared, Stage::Failed, Some("Diagnostic session expired".into()));
-            return;
-        }
-        match commands.try_recv() {
-            Ok(WorkerCommand::Stop) | Err(TryRecvError::Disconnected) => {
-                stage(&shared, Stage::Canceled, None);
+        let reason = if overflow.load(Ordering::Acquire) { Some("Media process output limit exceeded".into()) }
+            else if started.elapsed() >= SESSION_LIMIT { Some("Session expired".into()) }
+            else { failure.clone() };
+        if stopping.is_none() && (stop.load(Ordering::Acquire) || reason.is_some()) {
+            if profile != Profile::Control {
+                stage(&shared, if reason.is_some() { Stage::Failed } else { Stage::Canceled }, reason);
                 return;
             }
+            stop_error = reason;
+            // Closing the retained consent pipe revokes the local input grant.
+            // Keep polling for the child's explicit cleanup marker and exit.
+            stdin.take();
+            stopping = Some(Instant::now());
+            stage(&shared, Stage::Stopping, None);
+        }
+        if stopping.is_some_and(|since| since.elapsed() >= Duration::from_secs(8)) {
+            stage(&shared, Stage::Failed, Some("Control process did not stop in time; forced termination. Input release is not confirmed.".into()));
+            return;
+        }
+        if stopping.is_none() { match commands.try_recv() {
+            Err(TryRecvError::Disconnected) => { stop.store(true, Ordering::Release); continue; }
             Ok(WorkerCommand::Approve(peer)) => {
                 let snapshot = locked(&shared).clone();
                 if approved || snapshot.stage != Stage::AwaitingApproval || !key_valid(&peer, profile)
                     || snapshot.local_key.as_deref() == Some(peer.as_str())
                 {
-                    stage(&shared, Stage::Failed, Some("Invalid local approval state".into()));
-                    return;
+                    failure = Some("Invalid local approval state".into());
+                    continue;
                 }
                 let Some(pipe) = stdin.as_mut() else {
-                    stage(&shared, Stage::Failed, Some("Missing approval channel".into())); return;
+                    failure = Some("Missing approval channel".into()); continue;
                 };
                 // Only fixed-size validated public key and a fixed consent line.
                 // No arbitrary text, path, password or command is forwarded.
                 if writeln!(pipe, "{peer}\n{}", profile.consent(host)).and_then(|_| pipe.flush()).is_err() {
-                    stage(&shared, Stage::Failed, Some("Could not deliver local approval".into()));
-                    return;
+                    failure = Some("Could not deliver local approval".into());
+                    continue;
                 }
                 approved = true;
                 // Secure view child monitors the pipe for parent loss. Keep
@@ -239,7 +261,7 @@ fn supervise(
                 stage(&shared, Stage::Connecting, None);
             }
             Err(TryRecvError::Empty) => {}
-        }
+        }}
         match child.0.try_wait() {
             Ok(Some(status)) => {
                 // The child is reaped. Drain its final bounded stdout/stderr.
@@ -251,15 +273,28 @@ fn supervise(
                         Err(mpsc::RecvTimeoutError::Timeout) => {}
                     }
                 }
-                if status.success() && pass && failure.is_none() && !overflow.load(Ordering::Acquire) {
+                let released = locked(&shared).input_released;
+                let unconfirmed = profile == Profile::Control && approved && !released;
+                if unconfirmed {
+                    let reason = failure.or(stop_error).unwrap_or_else(|| "Control session ended".into());
+                    stage(&shared, Stage::Failed, Some(format!("{reason}; input release not confirmed.")));
+                } else if stopping.is_some() {
+                    stage(&shared, if stop_error.is_some() { Stage::Failed } else { Stage::Canceled }, stop_error);
+                } else if status.success() && pass && failure.is_none() && !overflow.load(Ordering::Acquire) {
                     stage(&shared, Stage::Passed, None);
                 } else {
-                    stage(&shared, Stage::Failed, failure.or_else(|| Some("Native diagnostic exited unsuccessfully".into())));
+                    stage(&shared, Stage::Failed, failure.or_else(|| Some("Native session exited unsuccessfully".into())));
                 }
                 return;
             }
             Ok(None) => {}
-            Err(e) => { stage(&shared, Stage::Failed, Some(e.to_string())); return; }
+            Err(e) => {
+                let reason = if profile == Profile::Control {
+                    format!("Process status unavailable: {e}; input release not confirmed.")
+                } else { e.to_string() };
+                stage(&shared, Stage::Failed, Some(reason));
+                return;
+            }
         }
         thread::sleep(Duration::from_millis(40));
     }
@@ -288,6 +323,11 @@ impl SessionManager {
                 if preview && !host { command.arg("--preview"); }
             }
             Profile::SecureTest => { command.arg("--test").arg("--desktop-session"); }
+            Profile::Control => {
+                command.arg("--control");
+                if host { command.arg(display_id.ok_or("Choose the primary display to control")?.to_string()); }
+                command.arg("--desktop-session");
+            }
             Profile::Screen => {
                 if host {
                     let display = display_id.ok_or("Choose the specific display to share")?;
@@ -303,11 +343,13 @@ impl SessionManager {
         }
         let child = command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped())
             .spawn().map_err(|e| format!("Cannot start native media diagnostic: {e}"))?;
-        *locked(&self.shared) = Snapshot { stage: Stage::Starting, active: true, local_key: None, detail: None, profile };
+        *locked(&self.shared) = Snapshot { stage: Stage::Starting, active: true, local_key: None, detail: None, profile, input_released: false };
         let (tx, rx) = mpsc::sync_channel(4);
         let shared = self.shared.clone();
-        let join = thread::spawn(move || supervise(ChildGuard(child), rx, shared, profile, host));
-        *worker = Some(Worker { tx, join });
+        let stop = Arc::new(AtomicBool::new(false));
+        let worker_stop = stop.clone();
+        let join = thread::spawn(move || supervise(ChildGuard(child), rx, shared, profile, host, worker_stop));
+        *worker = Some(Worker { tx, stop, join });
         Ok(self.snapshot())
     }
     fn confirm(&self, peer_key: &str, approved: bool) -> Result<Snapshot, String> {
@@ -322,11 +364,15 @@ impl SessionManager {
         w.tx.try_send(WorkerCommand::Approve(peer)).map_err(|_| "Diagnostic approval channel unavailable".to_string())?;
         Ok(snapshot)
     }
+    pub fn request_stop(&self) {
+        if let Some(w) = locked(&self.worker).as_ref() {
+            w.stop.store(true, Ordering::Release);
+        }
+    }
     pub fn shutdown(&self) {
         let mut worker = locked(&self.worker);
         if let Some(w) = worker.take() {
-            let _ = w.tx.try_send(WorkerCommand::Stop);
-            // Dropping sender also terminates the worker if its queue was full.
+            w.stop.store(true, Ordering::Release);
             drop(w.tx);
             let _ = w.join.join();
         }
@@ -352,7 +398,7 @@ pub fn lan_confirm(window: WebviewWindow, manager: State<'_, SessionManager>, pe
 }
 #[tauri::command]
 pub fn lan_disconnect(window: WebviewWindow, manager: State<'_, SessionManager>) -> Result<Snapshot, String> {
-    require_main(&window)?; manager.shutdown(); Ok(manager.snapshot())
+    require_main(&window)?; manager.request_stop(); Ok(manager.snapshot())
 }
 
 #[cfg(test)]
@@ -374,8 +420,20 @@ mod tests {
         assert!(!key_valid(&("ab".repeat(32) + &"00".repeat(32)), Profile::Screen));
     }
     #[test]
+    fn control_requires_distinct_consent_and_release_marker() {
+        assert_eq!(Profile::Control.consent(true), "ALLOW SCREEN AND INPUT");
+        assert_eq!(Profile::Control.consent(false), "ALLOW REMOTE INPUT");
+        let shared = Mutex::new(Snapshot { stage: Stage::Connected, active: true, local_key: None, detail: None, profile: Profile::Control, input_released: false });
+        let (mut pass, mut failure) = (false, None);
+        stage(&shared, Stage::Stopping, None);
+        assert!(locked(&shared).active);
+        handle_output(&shared, Output::Stdout("INPUT_RELEASED".into()), &mut pass, &mut failure);
+        assert!(locked(&shared).input_released);
+        assert!(!pass);
+    }
+    #[test]
     fn status_requires_valid_local_key_and_terminal_state() {
-        let shared = Mutex::new(Snapshot { stage: Stage::Starting, active: true, local_key: None, detail: None, profile: Profile::Diagnostic });
+        let shared = Mutex::new(Snapshot { stage: Stage::Starting, active: true, local_key: None, detail: None, profile: Profile::Diagnostic, input_released: false });
         let (mut pass, mut fail) = (false, None);
         handle_output(&shared, Output::Stdout(format!("KEY {}", "ab".repeat(32))), &mut pass, &mut fail);
         assert_eq!(locked(&shared).stage, Stage::AwaitingApproval);
