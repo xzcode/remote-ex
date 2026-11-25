@@ -2,9 +2,9 @@ name: Native media engine
 on:
   push:
     branches: [master]
-    paths: ['crates/media/**', 'crates/signaling/**', 'crates/security/**', 'crates/core/**', 'crates/protocol/**', 'scripts/test_lan_diagnostic.py', '.github/workflows/media-engine-ci.yml']
+    paths: ['crates/media/**', 'crates/signaling/**', 'crates/security/**', 'crates/core/**', 'crates/protocol/**', 'scripts/test_lan_diagnostic.py', 'scripts/test_secure_view.py', '.github/workflows/media-engine-ci.yml']
   pull_request:
-    paths: ['crates/media/**', 'crates/signaling/**', 'crates/security/**', 'crates/core/**', 'crates/protocol/**', 'scripts/test_lan_diagnostic.py', '.github/workflows/media-engine-ci.yml']
+    paths: ['crates/media/**', 'crates/signaling/**', 'crates/security/**', 'crates/core/**', 'crates/protocol/**', 'scripts/test_lan_diagnostic.py', 'scripts/test_secure_view.py', '.github/workflows/media-engine-ci.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -31,3 +31,7 @@ jobs:
         run: |
           cargo build --manifest-path crates/media/Cargo.toml --bin lan_diagnostic
           timeout 80s python3 scripts/test_lan_diagnostic.py crates/media/target/debug/lan_diagnostic
+      - name: Encrypted view-only test with actual DTLS certificate verification
+        run: |
+          cargo build --manifest-path crates/media/Cargo.toml --bin lan_view
+          timeout 90s python3 scripts/test_secure_view.py crates/media/target/debug/lan_view

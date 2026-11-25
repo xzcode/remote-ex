@@ -41,3 +41,14 @@ For manual testing on two owned machines on a trusted private LAN, use the host'
 The input data channel is reliable ordered SCTP with a fixed negotiated ID, bounded binary payload and queue. See upstream https://gstreamer.freedesktop.org/documentation/webrtc/ and https://gstreamer.freedesktop.org/documentation/webrtclib/gstwebrtc-datachannel.html. Actual LAN and platform testing still required.
 
 Controller-only optional `--preview` opens the native GStreamer synthetic video window for about five seconds after connection (subject to errors). The CLI emits CONNECTED only after signed SDP verification and the WebRTC peer/channel are ready. The desktop supervisor consumes these fixed milestones, not arbitrary commands. Native window rendering is not verified by headless CI.
+
+## Encrypted view-only LAN prototype (M1)
+
+Separate `lan_view` executable uses Noise KK encrypted signaling (independently pinned ephemeral X25519 keys), existing Ed25519 session signatures, exact signed SDP, and a SHA-256 comparison against the certificate exposed by the actual video DTLS transport. Both sides exchange encrypted readiness before the host sends any real desktop pixels. No data channel, OS input, clipboard, files, or unattended mode. The old unencrypted lan_diagnostic remains synthetic-only.
+
+Test using two processes on loopback:
+```sh
+cargo build --manifest-path crates/media/Cargo.toml --bin lan_view
+python3 scripts/test_secure_view.py crates/media/target/debug/lan_view
+```
+On two owned, authorized desktop machines with GStreamer and platform capture prerequisites, build with `--features local-screen`. The host runs `lan_view --listen PRIVATE_IP:PORT --screen DISPLAY_ID`; the controller runs `lan_view --connect PRIVATE_IP:PORT --view`. The host explicitly chooses a display ID from local diagnostics. Both exchange and independently verify the whole 128-character public key bundle and type the exact consent phrase displayed in each visible interactive terminal. Approve the host first. The host may only share the selected display for up to 30 seconds, requires ordinary OS screen-recording permission, and stops when the heartbeat, media connection, or deadline fails. Ctrl-C or closing the terminal stops the process. The controller uses a native video window. Screen pixels never traverse Tauri IPC. Diagnostic mode cannot be upgraded to screen mode over the wire. This is a limited development prototype, not signed or installed, not an unattended service, and not ready for Internet deployment. XCap repeated capture at up to 10 fps with letterboxing is a temporary baseline, not a high-performance production capture engine. Real display capture and native video rendering require separate physical-device validation; the test profile never captures a screen.

@@ -37,6 +37,7 @@ pub enum Message {
     Answer { session: [u8; 16], sdp: String },
     Proof { session: [u8; 16], signature: String },
     Candidates { session: [u8; 16], items: Vec<Candidate> },
+    ViewProfile { session: [u8; 16], synthetic: bool },
     Ready { session: [u8; 16] },
     Heartbeat { session: [u8; 16], sequence: u32 },
     Finished { session: [u8; 16] },
@@ -56,7 +57,7 @@ impl Message {
             Self::Request { session, .. } | Self::Accept { session, .. }
             | Self::Offer { session, .. } | Self::Answer { session, .. }
             | Self::Proof { session, .. } | Self::Candidates { session, .. }
-            | Self::Ready { session } | Self::Heartbeat { session, .. }
+            | Self::ViewProfile { session, .. } | Self::Ready { session } | Self::Heartbeat { session, .. }
             | Self::Finished { session } => *session,
         }
     }
