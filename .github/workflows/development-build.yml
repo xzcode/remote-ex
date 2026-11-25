@@ -7,11 +7,12 @@ on:
       - '.github/workflows/development-build.yml'
       - 'scripts/ci/install-gstreamer.*'
       - 'docs/DEV_BUILD.md'
+      - 'scripts/ci/macos-development-info.plist'
 permissions:
   contents: read
 concurrency:
   group: development-build-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 env:
   GST_VERSION: '1.26.11'
 jobs:
@@ -51,6 +52,18 @@ jobs:
         shell: bash
         run: |
           cargo build --release --manifest-path crates/media/Cargo.toml --features native-control --bins
+      - name: Verify macOS media runtime linkage
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          root=/Library/Frameworks/GStreamer.framework/Versions/1.0/lib
+          test -e "$root/libgstapp-1.0.0.dylib"
+          for name in lan_view lan_diagnostic lan_control; do
+            bin="crates/media/target/release/$name"
+            otool -L "$bin"
+            otool -l "$bin" | grep -F "path $root "
+            codesign --force --sign - "$bin"
+          done
       - name: Check native input
         shell: bash
         run: cargo test -p remote-ex-input --features native
@@ -70,18 +83,25 @@ jobs:
             Copy-Item "crates/media/target/release/$name.exe" stage/
           }
           Copy-Item docs/DEV_BUILD.md stage/README.md
+          @("commit=$env:GITHUB_SHA", "runtime=$env:GST_VERSION", "architecture=$env:RUNNER_ARCH") | Set-Content stage/BUILD_INFO.txt
           Compress-Archive -Path stage/* -DestinationPath artifacts/Remote-EX-dev-Windows-x64.zip -Force
       - name: Collect macOS development package
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          mkdir -p stage artifacts
-          cp apps/desktop/src-tauri/target/release/remote-ex-desktop stage/
-          for name in lan_view lan_diagnostic lan_control; do cp "crates/media/target/release/$name" stage/; done
-          cp docs/DEV_BUILD.md stage/README.md
-          for name in remote-ex-desktop lan_view lan_diagnostic lan_control; do
-            codesign --force --sign - "stage/$name"
+          app="stage/Remote EX.app"
+          mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" artifacts
+          cp scripts/ci/macos-development-info.plist "$app/Contents/Info.plist"
+          plutil -lint "$app/Contents/Info.plist"
+          cp apps/desktop/src-tauri/target/release/remote-ex-desktop "$app/Contents/MacOS/"
+          for name in lan_view lan_diagnostic lan_control; do
+            cp "crates/media/target/release/$name" "$app/Contents/MacOS/"
+            codesign --force --sign - "$app/Contents/MacOS/$name"
           done
+          codesign --force --sign - "$app"
+          codesign --verify --deep --strict "$app"
+          cp docs/DEV_BUILD.md stage/README.md
+          printf 'commit=%s\nruntime=%s\narchitecture=%s\n' "$GITHUB_SHA" "$GST_VERSION" "$RUNNER_ARCH" > stage/BUILD_INFO.txt
           tar -czf "artifacts/Remote-EX-dev-macOS-$(uname -m).tar.gz" -C stage .
       - uses: actions/upload-artifact@v4
         with:
