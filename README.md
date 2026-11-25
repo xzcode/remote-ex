@@ -2,7 +2,7 @@
 
 跨平台、可私有化部署的远程桌面工具。Remote EX 自主研发客户端、服务端和业务协议，使用成熟底层库，不基于 RustDesk 等完整产品进行 fork。
 
-**当前状态：M1 Windows x64 开发包已生成（#45577251479，ed2aca9，外部 GStreamer runtime），macOS 开发包运行测试待完成；真实设备验收仍待。M2.1/2 本地信令、WSS 注册与 Windows/macOS 桌面 CI 通过；M2.3 已编写经设备 ID 路由的 WSS + 签名 SDP + WebRTC 合成视频/模拟输入集成，待运行验证。无公网远程桌面或正式发行包。**
+**当前状态：M1 Windows x64 与 macOS ARM64 开发包已生成（#45577251479，ed2aca9，外部 GStreamer runtime）；真实设备验收仍待。M2.1/2 本地信令、WSS 注册与 Windows/macOS 桌面 CI 通过；M2.3 已编写经设备 ID 路由的 WSS + 签名 SDP + WebRTC 合成视频/模拟输入集成，待运行验证。无公网远程桌面或正式发行包。**
 
 ## 目标
 
@@ -51,3 +51,7 @@ Rust + Tauri 2 + Vue 3/TypeScript；WebRTC/ICE/STUN/TURN；Rust/Axum 信令服�
 
 仅用于有权限管理的设备。默认不开放无人值守、不绕过系统授权、不隐藏连接状态，不允许未授权键鼠、文件或剪贴板访问。生产凭据不得进入仓库。
 
+
+## M1 开发包（临时 Actions artifacts）
+
+[Windows x64](https://github.com/xzcode/remote-ex/actions/runs/45577251479/artifacts/15005652383) · [macOS ARM64](https://github.com/xzcode/remote-ex/actions/runs/45577251479/artifacts/15004599699) · [构建与使用说明](docs/DEV_BUILD.md)。两平台完整 CI 通过，源提交 ed2aca9，不含 M2；须登录 GitHub 下载，2026-12-09 到期。需要官方 GStreamer 1.26.11 runtime。Windows unsigned，macOS ad-hoc signed，非正式 Release；真实设备验收未完成。

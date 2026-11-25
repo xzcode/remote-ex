@@ -18,3 +18,7 @@
 2. M2.3 生产候选：端到端协商保护、持久可信设备记录与密钥变更、明确当前连接请求授权；在新的路由 owner 内完成真正 GUI/媒体生命周期，不能把 synthetic 诊断授权升级成真实远控。先实现完整合成回环，再处理真实媒体/输入。
 3. M2.4 可配置 STUN/TURN、短时授权凭据及受控中继，完成真实 ICE 配置与跨网络验证；服务端目前 IPv4 loopback-only。
 4. M1 物理设备验收仍待执行；需要授权 Windows/macOS 真实桌面，继续保留主屏、30秒和私网限制。没有正式 Release 或公网服务。
+
+## 构建结果补记
+
+#45577251479 已确认两个平台 job 全部成功，macOS ARM64 [artifact 15004599699](https://github.com/xzcode/remote-ex/actions/runs/45577251479/artifacts/15004599699)，4,563,606 bytes，标准 .app / ad-hoc 签名，运行合成控制测试成功；与 Windows 同属 ed2aca9 M1 基线，外部 GStreamer runtime，未验证物理设备或正式发行。#45579708473 core CI 成功；因本批 README 更新触发了最新媒体 CI #45579865842，检查该 run 的三进程 WSS 结果。
