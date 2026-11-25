@@ -11,9 +11,9 @@ use remote_ex_rendezvous_protocol::{Client, Server, Signal, IceItem};
 use remote_ex_security::{DeviceIdentity, PublicKey, Role, VerifiedSession, fingerprint, pairing::{OutgoingPairing, PendingPairing}, session::{VIEW, INPUT}, route_binding::RouteBinding};
 use remote_ex_signaling::{decode_hex, hex};
 use std::{io::{self, Read, Write, IsTerminal},sync::atomic::{AtomicBool,Ordering}, time::{Duration, Instant}};
-#[cfg(all(feature="native-control",any(target_os="windows",target_os="macos")))]
+#[cfg(any(all(feature="native-control",any(target_os="windows",target_os="macos")),all(feature="native-x11-view",target_os="linux")))]
 mod viewer;
-#[cfg(all(feature="native-control",any(target_os="windows",target_os="macos")))]
+#[cfg(any(all(feature="native-control",any(target_os="windows",target_os="macos")),all(feature="native-x11-view",target_os="linux")))]
 mod native;
 mod exchange;
 mod audio;
@@ -193,9 +193,11 @@ async fn wait_data(peer:&Peer,channel:&ControlChannel,conn:&mut Connection,expec
 }
 async fn finish(conn:&mut Connection,session:&str)->MediaResult<()>{conn.finish_route(session).await}
 
-async fn host(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey,relay_only:bool,profile:Profile,display:Option<u32>,extra_displays:Vec<u32>,quality:&str,exchange_path:Option<&std::path::Path>,volume:u8,resume:&exchange::ResumeOptions,secondary:bool)->MediaResult<()>{
+async fn host(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey,relay_only:bool,profile:Profile,display:Option<u32>,extra_displays:Vec<u32>,quality:&str,exchange_path:Option<&std::path::Path>,volume:u8,resume:&exchange::ResumeOptions,secondary:bool,armed:bool)->MediaResult<()>{
     let grant=profile.grant();
-    let Server::Incoming{session,controller,controller_key,requested,controller_nonce}=recv(conn).await?
+    let event=if armed{out("LISTENING ARMED 300")?;conn.wait_armed_incoming(Duration::from_secs(300),canceled).await?}else{recv(conn).await?};
+    if canceled(){return Err("Local consent revoked".into());}
+    let Server::Incoming{session,controller,controller_key,requested,controller_nonce}=event
         else{return Err("Expected incoming device request".into());};
     if controller!=hex(&fingerprint(&expected)) || decode_hex::<32>(&controller_key).map_err(error)?!=expected || requested!=grant{
         conn.send(Client::Decision{session,grant:None,host_nonce:None}).await?;
@@ -265,9 +267,9 @@ async fn host(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey,relay_o
         finish(conn,&session).await?;return out("PASS ROUTED HOST: transfer verified");
     }
     if !profile.synthetic(){
-        #[cfg(all(feature="native-control",any(target_os="windows",target_os="macos")))]
+        #[cfg(any(all(feature="native-control",any(target_os="windows",target_os="macos")),all(feature="native-x11-view",target_os="linux")))]
         {return native::host(&peer,&channel,conn,&mut cipher,&session,gate(&proof)?,profile,display.ok_or("Select a display")?,extra_displays,secondary).await;}
-        #[cfg(not(all(feature="native-control",any(target_os="windows",target_os="macos"))))]
+        #[cfg(not(any(all(feature="native-control",any(target_os="windows",target_os="macos")),all(feature="native-x11-view",target_os="linux"))))]
         {let _=(display,extra_displays,secondary);return Err("Native routed mode unavailable".into());}
     }
     let backend=Inert::default();let log=backend.events.clone();
@@ -393,7 +395,7 @@ async fn controller(mut owned:Connection,id:&DeviceIdentity,expected:PublicKey,r
         return out("PASS ROUTED CONTROLLER: transfer verified");
     }
     if !profile.synthetic(){
-        #[cfg(all(feature="native-control",any(target_os="windows",target_os="macos")))]
+        #[cfg(any(all(feature="native-control",any(target_os="windows",target_os="macos")),all(feature="native-x11-view",target_os="linux")))]
         {
             let Signal::Geometry{x,y,width,height}=cipher.receive(conn).await? else{return Err("Missing authorized display geometry".into());};
             let geometry=Geometry{x,y,width,height};
@@ -406,7 +408,7 @@ async fn controller(mut owned:Connection,id:&DeviceIdentity,expected:PublicKey,r
             if profile.av(){peer.authorize_audio_playback(volume)?;}
             return native::controller(&peer,&channel,owned,session,sid,geometry,profile,screens).await;
         }
-        #[cfg(not(all(feature="native-control",any(target_os="windows",target_os="macos"))))]
+        #[cfg(not(any(all(feature="native-control",any(target_os="windows",target_os="macos")),all(feature="native-x11-view",target_os="linux"))))]
         {return Err("Native routed mode unavailable".into());}
     }
     channel.send(READY)?;
@@ -458,7 +460,7 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
     let url=a.next().ok_or("Missing WSS URL")?;
     let pin=decode_hex::<32>(&a.next().ok_or("Missing server ID")?).map_err(error)?;
     let endpoint=Endpoint::secure(&url,pin)?;
-    let mut ca=None;let mut relay_only=false;let mut profile=Profile::Test;let mut display=None;let mut supervised=false;let mut persistent=false;let mut defer_test_registration=false;let mut quality="compat".to_owned();let mut exchange_path=None;let mut volume=75u8;let mut extra_displays=Vec::new();let mut identity_slot=None;let mut resume=exchange::ResumeOptions::default();let mut shared_controller=false;let mut secondary=false;let mut extended=false;
+    let mut ca=None;let mut relay_only=false;let mut profile=Profile::Test;let mut display=None;let mut supervised=false;let mut persistent=false;let mut defer_test_registration=false;let mut quality="compat".to_owned();let mut exchange_path=None;let mut volume=75u8;let mut extra_displays=Vec::new();let mut identity_slot=None;let mut resume=exchange::ResumeOptions::default();let mut shared_controller=false;let mut secondary=false;let mut extended=false;let mut armed=false;let mut armed_test=false;
     while let Some(arg)=a.next(){match arg.as_str(){
         "--ca" if ca.is_none()=>ca=Some(a.next().ok_or("Missing CA path")?),
         "--relay-only" if !relay_only=>relay_only=true,
@@ -469,6 +471,8 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
         "--shared-controller" if !shared_controller=>shared_controller=true,
         "--secondary-control" if !secondary&&native_allowed&&host=>secondary=true,
         "--extended" if !extended&&native_allowed=>extended=true,
+        "--armed-host" if !armed&&native_allowed&&host=>armed=true,
+        "--armed-test" if !armed_test&&!native_allowed&&host=>armed_test=true,
         "--extended-test" if !native_allowed&&profile==Profile::Test=>profile=Profile::ExtendedTest,
         "--identity-slot" if identity_slot.is_none()=>{
             let n=a.next().ok_or("Missing identity slot")?.parse::<u8>().map_err(error)?;
@@ -504,6 +508,10 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
         profile=match profile{Profile::View=>Profile::ExtendedView,Profile::Control=>Profile::ExtendedControl,Profile::AvView=>Profile::ExtendedAvView,Profile::AvControl=>Profile::ExtendedAvControl,_=>return Err("Extended sessions require a native view/control profile".into())};
         if !supervised{return Err("Extended sessions require visible desktop supervision".into());}
     }
+    if armed&&(!supervised||!persistent||!host||!(profile.native_view()||profile.native_control())||profile.av()){return Err("Arming requires persistent identity, explicit visible supervision and a screen-only view/control profile".into());}
+    if armed_test&&(!supervised||persistent||profile!=Profile::Test){return Err("Armed test requires temporary supervised synthetic host".into());}
+    if cfg!(target_os="linux")&&native_allowed&&(!profile.native_view()||profile.av()||persistent||armed||secondary){return Err("Linux X11 candidate supports only temporary, supervised view-only sessions".into());}
+    if cfg!(target_os="linux")&&native_allowed{remote_ex_desktop_features::platform::require_linux_x11()?;if !supervised{return Err("Linux X11 view requires explicit desktop supervision".into());}}
     if profile==Profile::ExtendedTest&&!supervised{return Err("Extended test requires supervised synthetic mode".into());}
     if secondary&&(!profile.native_control()||!cfg!(any(target_os="windows",target_os="macos"))){return Err("Experimental secondary control requires Windows or macOS host control".into());}
     if shared_controller&&(host||!(profile.synthetic()||profile.native_view()||profile.native_control())||persistent&&identity_slot.unwrap_or(0)!=0){return Err("Shared identity is only for outgoing view/control/test using slot one identity".into());}
@@ -539,7 +547,7 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
         if !native_allowed&&!matches!(mode.kind,remote_ex_desktop_features::exchange::Kind::File|remote_ex_desktop_features::exchange::Kind::Directory){return Err("Diagnostic cannot access clipboard".into());}
         quality="compat".into();
     }
-    if (profile.native_view()||profile.native_control())&&!cfg!(all(feature="native-control",any(target_os="windows",target_os="macos"))){return Err("Native mode not compiled for this platform".into());}
+    if (profile.native_view()||profile.native_control())&&!cfg!(any(all(feature="native-control",any(target_os="windows",target_os="macos")),all(feature="native-x11-view",target_os="linux"))){return Err("Native mode not compiled for this platform".into());}
     if supervised&&(io::stdin().is_terminal()||io::stdout().is_terminal()){return Err("Desktop mode requires supervisor pipes".into());}
     if !profile.synthetic()&&!supervised&&(!io::stdin().is_terminal()||!io::stdout().is_terminal()){return Err("Visible local consent required".into());}
     ctrlc::set_handler(||CANCEL.store(true,Ordering::Release)).map_err(error)?;
@@ -572,6 +580,7 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
     if let Profile::Exchange(mode)=profile{out(&format!("TRANSFER {} {:?}",if mode.sending(host){"SEND"}else{"RECEIVE"},mode.kind))?;}
     let consent=if secondary{if profile.av(){"ALLOW SELECTED DISPLAY AUDIO AND INPUT"}else{"ALLOW SELECTED DISPLAY AND INPUT"}}else{profile.consent(host)};
     let consent=if extended{format!("{consent} FOR UP TO 300 SECONDS")}else{consent.to_owned()};
+    let consent=if armed||armed_test{format!("{consent} ARMED FOR UP TO 300 SECONDS")}else{consent};
     out(&format!("CONSENT (type {consent}; one-shot)"))?;
     if input()? !=consent||canceled(){return Err("Local consent denied".into());}
     audio::VOLUME.store(volume,Ordering::Release);
@@ -624,7 +633,7 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
         });
     }
     if host{
-        let result=self::host(&mut conn,&id,expected,relay_only,profile,display,extra_displays,&quality,exchange_path.as_deref(),volume,&resume,secondary).await;
+        let result=self::host(&mut conn,&id,expected,relay_only,profile,display,extra_displays,&quality,exchange_path.as_deref(),volume,&resume,secondary,armed||armed_test).await;
         let close=conn.close().await;result?;close
     }else{controller(conn,&id,expected,relay_only,profile,&quality,exchange_path.as_deref(),volume,&resume).await}
 }

@@ -76,6 +76,8 @@ pub struct Display {
 }
 
 fn require_capture_permission() -> Result<(), String> {
+    #[cfg(target_os="linux")]
+    remote_ex_desktop_features::platform::require_linux_x11()?;
     if permission() == Permission::Required {
         return Err("Screen recording permission is required. Use the operating system settings.".into());
     }

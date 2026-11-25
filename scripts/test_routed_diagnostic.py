@@ -52,6 +52,11 @@ def main():
     clipboard_test="--clipboard-sync-test" in sys.argv[3:]
     if clipboard_test and exchange_sender:raise RuntimeError("Choose one test profile")
     extended_test="--extended-test" in sys.argv[3:]
+    armed_test="--armed-test" in sys.argv[3:]
+    armed_cancel="--armed-cancel" in sys.argv[3:]
+    armed_wrong="--armed-wrong-key" in sys.argv[3:]
+    armed_test=armed_test or armed_cancel or armed_wrong
+    x11_test="--x11-view-test" in sys.argv[3:]
     av_test="--av-test" in sys.argv[3:]
     audio_test="--audio-test" in sys.argv[3:]
     if audio_test and exchange_sender:raise RuntimeError("Choose one test profile")
@@ -67,7 +72,7 @@ def main():
         pin="07"*32
         env=dict(os.environ,REMOTE_EX_SIGNAL_BIND="127.0.0.1:0",
                  REMOTE_EX_TLS_CERT=cert,REMOTE_EX_TLS_KEY=key,REMOTE_EX_SERVER_ID=pin)
-        deadline=time.monotonic()+(160 if extended_test else 100)
+        deadline=time.monotonic()+(160 if extended_test or armed_test or x11_test else 100)
         try:
             if relay_only:
                 # CI-only private interface, not an open or Internet relay.
@@ -128,6 +133,12 @@ def main():
                 host_flags.extend(["--desktop-session",flag,source]);controller_flags.extend(["--desktop-session",flag,target])
             if clipboard_test:
                 host_flags.extend(["--clipboard-sync-test","--desktop-session"]);controller_flags.extend(["--clipboard-sync-test","--desktop-session"])
+            if armed_test:
+                host_flags.extend(["--armed-test","--desktop-session"])
+            if x11_test:
+                probe=subprocess.check_output([peer_exe,"--probe-x11"],text=True).strip().split()
+                if probe[:3]!=["PASS","X11","CAPTURE"]:raise RuntimeError("Local X11 capture probe failed")
+                host_flags.extend(["--view",probe[3],"--desktop-session"]);controller_flags.extend(["--view","--desktop-session"])
             if extended_test:
                 host_flags.extend(["--extended-test","--desktop-session"]);controller_flags.extend(["--extended-test","--desktop-session"])
             if av_test:
@@ -201,6 +212,24 @@ def main():
             elif clipboard_test:
                 for pair,key in ((host,ck),(controller,hk)):
                     pair[0].stdin.write(key+"\nALLOW TEST CLIPBOARD SYNC\n");pair[0].stdin.flush()
+            elif armed_test:
+                expected=secrets.token_hex(32) if armed_wrong else ck
+                host[0].stdin.write(expected+"\nALLOW ROUTED TEST ARMED FOR UP TO 300 SECONDS\n");host[0].stdin.flush()
+                expect(host,"LISTENING ARMED ",deadline)
+                if armed_cancel:
+                    host[0].stdin.close()
+                    if host[0].wait(timeout=8)==0:raise RuntimeError("Canceled armed wait unexpectedly succeeded")
+                    print("PASS: armed host revoked before incoming session",flush=True);return
+                if armed_wrong:
+                    approve(controller,hk)
+                    expect(host,"FAIL: Unknown peer or unexpected test grant",deadline)
+                    if host[0].wait(timeout=8)==0:raise RuntimeError("Wrong peer accepted")
+                    print("PASS: armed host refused unapproved peer",flush=True);return
+                time.sleep(24)
+                approve(controller,hk)
+            elif x11_test:
+                for pair,key,consent in ((host,ck,"ALLOW ROUTED SCREEN"),(controller,hk,"ALLOW ROUTED VIEW")):
+                    pair[0].stdin.write(key+"\n"+consent+"\n");pair[0].stdin.flush()
             elif extended_test:
                 for pair,key in ((host,ck),(controller,hk)):
                     pair[0].stdin.write(key+"\nALLOW EXTENDED SYNTHETIC TEST\n");pair[0].stdin.flush()
@@ -248,8 +277,16 @@ def main():
             expect(host,"PASS ROUTED HOST:",deadline)
             result=expect(controller,"PASS ROUTED CONTROLLER:",deadline)
             if extended_test and "extended_seconds=" not in result:raise RuntimeError("Extended duration missing")
+            if x11_test:
+                import re
+                match=re.search(r"decoded_frames=(\d+)",result)
+                if not match or int(match.group(1))<5:raise RuntimeError("No real X11 frames decoded")
             for proc,_ in peers[-2:]:
                 if proc.wait(timeout=5)!=0:raise RuntimeError("peer exited unsuccessfully")
+            if armed_test:
+                print("PASS: armed host admitted only its preapproved peer after old 20-second wait",flush=True);return
+            if x11_test:
+                print("PASS: authenticated read-only X11 capture and native viewer on disposable Xvfb",flush=True);return
             if extended_test:
                 print("PASS: actual VP8 low/full resolution switching and >60-second authenticated session",flush=True)
                 return

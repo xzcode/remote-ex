@@ -123,6 +123,7 @@ jobs:
           python3 scripts/test_routed_diagnostic.py "target/release/remote-ex-rendezvous${suffix}" "crates/media/target/release/routed_diagnostic${suffix}" --manage-test
           python3 scripts/test_routed_diagnostic.py "target/release/remote-ex-rendezvous${suffix}" "crates/media/target/release/routed_diagnostic${suffix}" --manage-directory-test
           python3 scripts/test_routed_diagnostic.py "target/release/remote-ex-rendezvous${suffix}" "crates/media/target/release/routed_diagnostic${suffix}" --extended-test
+          python3 scripts/test_routed_diagnostic.py "target/release/remote-ex-rendezvous${suffix}" "crates/media/target/release/routed_diagnostic${suffix}" --armed-test
           python3 scripts/test_routed_diagnostic.py "target/release/remote-ex-rendezvous${suffix}" "crates/media/target/release/routed_diagnostic${suffix}" --catalog-batch-test
       - name: Collect Windows development package
         if: runner.os == 'Windows'

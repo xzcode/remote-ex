@@ -7,7 +7,7 @@ type Stage="idle"|"starting"|"awaiting_approval"|"connecting"|"listening"|"conne
 type CatalogEntry={parts:string[];directory:boolean;size:number};
 type Change={op:'create_folder';parent:number|null;name:string}|{op:'create_file';parent:number|null;name:string}|{op:'rename';index:number;name:string}|{op:'recycle';index:number}|{op:'restore';index:number;parent:number|null;name:string};
 type FileReview={items:{operation:string;source:string[]|null;destination:string[];subtree_entries?:number|null;subtree_bytes?:number|null}[];recovery:string|null};
-type Snapshot={stage:Stage;active:boolean;local_key:string|null;device_id:string|null;detail:string|null;profile:string;input_released:boolean;decoded_fps?:number|null;decoded_bps?:number|null;transfer_done?:number|null;transfer_total?:number|null;transfer_verified?:boolean;transfer_paused?:boolean;checkpoint_saved?:number|null;directory_entries?:number|null;clipboard_sent?:number|null;clipboard_received?:number|null;catalog?:CatalogEntry[];catalog_ready?:boolean;catalog_selected?:number|null;manage_review?:FileReview|null;manage_token?:string|null;manage_submitted?:boolean;manage_approved?:boolean;manage_applied?:number|null;extended?:boolean;stream_quality?:string|null;stream_decoded?:string|null;resume_offset?:number|null;audio_volume?:number|null;network_bps?:number|null;rtt_ms?:number|null;loss_pct?:number|null;route_type?:string|null};
+type Snapshot={stage:Stage;active:boolean;local_key:string|null;device_id:string|null;detail:string|null;profile:string;input_released:boolean;decoded_fps?:number|null;decoded_bps?:number|null;transfer_done?:number|null;transfer_total?:number|null;transfer_verified?:boolean;transfer_paused?:boolean;checkpoint_saved?:number|null;directory_entries?:number|null;clipboard_sent?:number|null;clipboard_received?:number|null;catalog?:CatalogEntry[];catalog_ready?:boolean;catalog_selected?:number|null;manage_review?:FileReview|null;manage_token?:string|null;manage_submitted?:boolean;manage_approved?:boolean;manage_applied?:number|null;armed?:boolean;extended?:boolean;stream_quality?:string|null;stream_decoded?:string|null;resume_offset?:number|null;audio_volume?:number|null;network_bps?:number|null;rtt_ms?:number|null;loss_pct?:number|null;route_type?:string|null};
 type Device={device_id:string;public_key:string;label:string};
 type Display={id:number;name:string;width:number;height:number;primary:boolean};
 const props=defineProps<{t:(key:TextKey)=>string;slot:number;visible:boolean}>();
@@ -51,17 +51,19 @@ watch(shareAvailable,value=>{if(!value)sharedIdentity.value=false;});
 watch(sharedIdentity,()=>{enrollment.value=null;});
 const displays=ref<Display[]>([]),displayId=ref<number|null>(null),trusted=ref<Device[]>([]),chosen=ref(""),peerId=ref(""),peerKey=ref("");
 const approved=ref(false),submitted=ref(false),busy=ref(false),error=ref("");
-const saveHistory=ref(false),invitation=ref(""),quality=ref("compat"),extended=ref(false);
+const saveHistory=ref(false),invitation=ref(""),quality=ref("compat"),extended=ref(false),armed=ref(false);
+const armAvailable=computed(()=>role.value==="host"&&persistent.value&&(mode.value==="view"||mode.value==="control"));
 type Invitation={url:string;server_id:string;device_id:string;public_key:string;mode:"test"|"view"|"control"|"av_view"|"av_control";expires_at:number};
 const snapshot=ref<Snapshot>({stage:"idle",active:false,local_key:null,device_id:null,detail:null,profile:"routed_test",input_released:false});
 watch(()=>snapshot.value.manage_token,()=>{reviewConfirmed.value=false;});
 let timer:number|undefined,disposed=false,polling=false,revision=0;
 const statuses:Record<Stage,TextKey>={idle:"lanIdle",starting:"lanStarting",awaiting_approval:"lanAwaiting",connecting:"lanConnecting",listening:"lanListening",connected:"routedConnected",stopping:"controlStopping",passed:"controlEnded",failed:"lanFailed",canceled:"lanCanceled"};
-const status=computed(()=>props.t(statuses[snapshot.value.stage]));
+const status=computed(()=>props.t(snapshot.value.armed&&snapshot.value.stage==="listening"?"armedWaiting":statuses[snapshot.value.stage]));
 const validHex=(s:string)=>/^[a-fA-F0-9]{64}$/.test(s.trim());
 const canPrepare=computed(()=>native&&!busy.value&&!snapshot.value.active&&url.value.trim().startsWith("wss://")&&validHex(serverId.value)&&(!isDisplay.value||role.value==="controller"||displayId.value!==null)&&(!(["file","directory","catalog","catalog_batch"].includes(mode.value)||mode.value==="manage"&&role.value==="host")||!!transferPath.value.trim()));
-const canConfirm=computed(()=>!busy.value&&snapshot.value.stage==="awaiting_approval"&&!!snapshot.value.device_id&&validHex(peerId.value)&&validHex(peerKey.value)&&approved.value&&!submitted.value&&peerKey.value.trim().toLowerCase()!==snapshot.value.local_key);
-watch([role,mode],()=>{extended.value=false;secondaryControl.value=false;displayId.value=null;extraDisplays.value=[];displays.value=[];approved.value=false;});
+const canConfirm=computed(()=>!busy.value&&snapshot.value.stage==="awaiting_approval"&&!!snapshot.value.device_id&&validHex(peerId.value)&&validHex(peerKey.value)&&approved.value&&!submitted.value&&(!snapshot.value.armed||!!chosen.value&&trusted.value.some(d=>d.device_id===chosen.value&&d.public_key===peerKey.value))&&peerKey.value.trim().toLowerCase()!==snapshot.value.local_key);
+watch(armAvailable,v=>{if(!v)armed.value=false;});
+watch([role,mode],()=>{armed.value=false;extended.value=false;secondaryControl.value=false;displayId.value=null;extraDisplays.value=[];displays.value=[];approved.value=false;});
 watch(displayId,()=>{extraDisplays.value=[];});
 watch(serverId,()=>{trusted.value=[];chosen.value="";peerId.value="";peerKey.value="";approved.value=false;});
 watch(chosen,id=>{if(id){peerId.value=id;peerKey.value=trusted.value.find(x=>x.device_id===id)?.public_key??"";}approved.value=false;});
@@ -120,7 +122,7 @@ async function makeInvitation(){
 function prepare(){
  approved.value=false;submitted.value=false;catalogChoice.value=null;batchChoice.value=[];catalogQuery.value="";changes.value=[];parentIndex.value=null;fileIndex.value=null;newName.value="";reviewConfirmed.value=false;planConfirmed.value=false;
  return command("routed_prepare",{role:role.value,mode:mode.value,url:url.value.trim(),serverId:serverId.value.trim(),
- displayId:role.value==="host"&&isDisplay.value?displayId.value:null,relayOnly:relay.value,persistent:persistent.value,storageConsent:persistent.value,caPath:ca.value.trim()||null,saveHistory:saveHistory.value,quality:quality.value,sender:isExchange.value?sender.value:null,transferPath:(["file","directory","catalog","catalog_batch"].includes(mode.value)||mode.value==="manage"&&role.value==="host")?transferPath.value.trim():null,volume:volume.value,extraDisplays:role.value==="host"&&isView.value?extraDisplays.value:[],resumeFrom:fileReceiver.value?resumeFrom.value.trim()||null:null,checkpointPath:fileReceiver.value?checkpointPath.value.trim()||null:null,sharedIdentity:shareAvailable.value&&sharedIdentity.value,secondaryControl:canSecondary.value&&secondaryControl.value,extended:isDisplay.value&&extended.value});
+ displayId:role.value==="host"&&isDisplay.value?displayId.value:null,relayOnly:relay.value,persistent:persistent.value,storageConsent:persistent.value,caPath:ca.value.trim()||null,saveHistory:saveHistory.value,quality:quality.value,sender:isExchange.value?sender.value:null,transferPath:(["file","directory","catalog","catalog_batch"].includes(mode.value)||mode.value==="manage"&&role.value==="host")?transferPath.value.trim():null,volume:volume.value,extraDisplays:role.value==="host"&&isView.value?extraDisplays.value:[],resumeFrom:fileReceiver.value?resumeFrom.value.trim()||null:null,checkpointPath:fileReceiver.value?checkpointPath.value.trim()||null:null,sharedIdentity:shareAvailable.value&&sharedIdentity.value,secondaryControl:canSecondary.value&&secondaryControl.value,extended:isDisplay.value&&extended.value,armed:armAvailable.value&&armed.value});
 }
 function confirm(){if(!canConfirm.value)return;submitted.value=true;return command("routed_confirm",{deviceId:peerId.value.trim(),peerKey:peerKey.value.trim(),approved:true});}
 let stopDrop:(()=>void)|undefined;
@@ -167,6 +169,8 @@ onBeforeUnmount(()=>{disposed=true;stopDrop?.();if(timer!==undefined)window.clea
   <p v-if="mode==='clipboard_sync'" class="view-notice">{{ t("clipboardSyncNotice") }}</p>
   <template v-if="hasAudio"><label>{{ t("audioVolume") }}: {{ volume }}%</label><input type="range" v-model.number="volume" min="0" max="100" :disabled="busy||(snapshot.active&&(role==='host'||snapshot.stage!=='connected'))" @change="snapshot.stage==='connected'&&role==='controller'&&command('routed_audio_volume',{volume})"/><p class="muted">{{ t("audioNotice") }}</p></template>
   <label>{{ t("qualityPreset") }}</label><select v-model="quality" :disabled="busy||snapshot.active"><option value="compat">540p · 10 fps</option><option value="low">480p · 15 fps</option><option value="balanced">720p · 30 fps</option><option value="high">1080p · 30 fps</option><option value="qhd">1440p · 30 fps</option><option value="uhd">2160p · 30 fps</option></select><p class="muted">{{ t("qualityNotice") }}</p>
+  <label v-if="armAvailable" class="check-label"><input type="checkbox" v-model="armed" :disabled="busy||snapshot.active"/>{{ t("armedHost") }}</label>
+  <p v-if="armAvailable&&armed" class="muted">{{ t("armedNotice") }}</p>
   <label v-if="isDisplay" class="check-label"><input type="checkbox" v-model="extended" :disabled="busy||snapshot.active"/>{{ t("extendedSession") }}</label>
   <p v-if="isDisplay&&extended" class="muted">{{ t("extendedNotice") }}</p>
   <label class="check-label"><input type="checkbox" v-model="relay" :disabled="busy||snapshot.active"/>{{ t("routedRelay") }}</label>
@@ -185,9 +189,11 @@ onBeforeUnmount(()=>{disposed=true;stopDrop?.();if(timer!==undefined)window.clea
   <label>{{ t("lanPeerKey") }}</label><input v-model="peerKey" maxlength="64" class="key-input" :disabled="busy||submitted||!!chosen"/>
   <p class="muted">{{ t("routedVerify") }}</p>
   <label class="check-label"><input type="checkbox" v-model="approved" :disabled="busy||submitted"/>{{ t(mode==="manage"?(role==="host"?"manageHostConsent":"manageControllerConsent"):canSecondary&&secondaryControl?(isAv?"secondaryAvConsent":"secondaryConsent"):isAv?(isView?(role==="host"?"avViewHostConsent":"avViewControllerConsent"):(role==="host"?"avControlHostConsent":"avControlControllerConsent")):mode==="catalog_batch"?(role==="host"?"catalogBatchHostConsent":"catalogBatchControllerConsent"):mode==="catalog"?(role==="host"?"catalogHostConsent":"catalogControllerConsent"):mode==="clipboard_sync"?"clipboardSyncConsent":mode==="audio"?(role==="host"?"audioSendConsent":"audioPlayConsent"):isExchange?(role===sender?"exchangeSendConsent":"exchangeReceiveConsent"):mode==="test"?"routedTestConsent":mode==="view"?(role==="host"?(extraDisplays.length?"multiDisplayConsent":"viewHostConsent"):"viewControllerConsent"):(role==="host"?"controlHostConsent":"controlControllerConsent")) }}</label>
+  <p v-if="snapshot.armed" class="muted">{{ t("armedConfirm") }}</p>
   <p v-if="snapshot.extended" class="muted">{{ t("extendedConsent") }}</p>
   <button class="primary" :disabled="!canConfirm" @click="confirm">{{ t("lanApprove") }}</button>
  </div>
+ <p v-if="snapshot.armed&&snapshot.stage==='listening'" class="view-notice">{{ t("armedWaiting") }} — {{ t("armedNotice") }}</p>
  <div v-if="snapshot.stage==='connected'&&isDisplay" class="field"><label>{{ t("networkStats") }}</label><p class="muted">{{ t("networkBitrate") }}: {{ snapshot.network_bps==null?"—":(snapshot.network_bps/1000000).toFixed(2)+" Mb/s" }} · RTT: {{ snapshot.rtt_ms==null?"—":snapshot.rtt_ms+" ms" }} · {{ t("networkLoss") }}: {{ snapshot.loss_pct==null?"—":snapshot.loss_pct.toFixed(2)+"%" }} · {{ t("networkRoute") }}: {{ snapshot.route_type==="relay"?"TURN":snapshot.route_type==="direct"?"P2P":"—" }}</p></div>
  <p v-if="snapshot.extended&&snapshot.stream_quality" class="muted">{{ t("streamRequested") }}: {{ snapshot.stream_quality }} · {{ t("streamActual") }}: {{ snapshot.stream_decoded??"—" }}</p>
  <p v-if="snapshot.decoded_fps!=null" class="muted">{{ t("decodedFps") }}: {{ snapshot.decoded_fps.toFixed(1) }} · {{ t("decodedThroughput") }}: {{ ((snapshot.decoded_bps??0)/1000000).toFixed(1) }} Mb/s</p>

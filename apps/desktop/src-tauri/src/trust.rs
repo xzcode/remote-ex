@@ -71,7 +71,9 @@ pub fn trusted_add(window:WebviewWindow,server_id:String,device_id:String,public
 }
 #[tauri::command]
 pub fn trusted_remove(window:WebviewWindow,server_id:String,device_id:String,confirmed:bool)->Result<Vec<TrustedDevice>,String>{
-    let db=database(&window)?;remove(&db,&server_id,&device_id,confirmed)?;list(&db,&server_id)
+    let db=database(&window)?;remove(&db,&server_id,&device_id,confirmed)?;
+    window.state::<crate::lan::RoutedManagers>().revoke_pin(&scope(&server_id)?,&scope(&device_id)?);
+    list(&db,&server_id)
 }
 #[cfg(test)]
 mod tests{

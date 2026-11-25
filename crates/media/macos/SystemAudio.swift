@@ -47,7 +47,8 @@ final class Output: NSObject, SCStreamOutput, SCStreamDelegate {
         guard #available(macOS 13.0, *), isatty(STDIN_FILENO) == 0, isatty(STDOUT_FILENO) == 0 else { Darwin.exit(1) }
         // Fixed short initial line; no arbitrary helper command.
         // Bound lifetime from launch, including permission or framework stalls.
-        DispatchQueue.global().asyncAfter(deadline: .now() + 35) { Darwin.exit(0) }
+        let launch = DispatchTime.now()
+        DispatchQueue.global().asyncAfter(deadline: launch + 305) { Darwin.exit(0) }
         var line = [UInt8]()
         for _ in 0..<32 {
             var byte: UInt8 = 0
@@ -55,7 +56,10 @@ final class Output: NSObject, SCStreamOutput, SCStreamDelegate {
             if byte == 10 { break }
             line.append(byte)
         }
-        guard line == Array("CAPTURE SYSTEM AUDIO".utf8) else { Darwin.exit(1) }
+        let extended = line == Array("CAPTURE SYSTEM AUDIO EXTENDED".utf8)
+        guard extended || line == Array("CAPTURE SYSTEM AUDIO".utf8) else { Darwin.exit(1) }
+        let duration: UInt64 = extended ? 300 : 30
+        DispatchQueue.global().asyncAfter(deadline: launch + Int(duration + 5)) { Darwin.exit(0) }
         DispatchQueue.global().async {
             var b: UInt8 = 0
             _ = Darwin.read(STDIN_FILENO, &b, 1)
@@ -80,7 +84,7 @@ final class Output: NSObject, SCStreamOutput, SCStreamDelegate {
             let stream = SCStream(filter: filter, configuration: config, delegate: output)
             try stream.addStreamOutput(output, type: .audio, sampleHandlerQueue: DispatchQueue(label: "remote-ex.system-audio"))
             try await stream.startCapture()
-            try await Task.sleep(nanoseconds: 30_000_000_000)
+            try await Task.sleep(nanoseconds: duration * 1_000_000_000)
             try await stream.stopCapture()
         } catch { Darwin.exit(7) }
     }

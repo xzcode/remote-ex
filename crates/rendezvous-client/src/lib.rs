@@ -131,6 +131,33 @@ impl Connection {
             Err(_)=>{self.failed=true;Err("Signaling receive timed out".into())}
         }
     }
+    /// Wait for one incoming route with a bounded local arming window.
+    /// No authorization is granted here. The caller verifies the exact
+    /// pinned controller, grant and authenticated media before sharing.
+    pub async fn wait_armed_incoming(&mut self,limit:Duration,canceled:impl Fn()->bool)->Result<Server>{
+        let limit=limit.min(Duration::from_secs(300));
+        if limit.is_zero()||!self.pending.is_empty(){return Err("Invalid armed wait state".into());}
+        let start=Instant::now();let mut incoming=None;
+        // No pending pong is allowed to escape into subsequent handshake.
+        loop{
+            if canceled(){return Err("Armed host canceled".into());}
+            if start.elapsed()>=limit{return Err("Armed host window expired".into());}
+            if incoming.is_some()&&self.ping_pending.is_none(){return incoming.take().ok_or_else(||"Incoming request missing".into());}
+            if self.ping_pending.is_some_and(|at|at.elapsed()>=IO_LIMIT){return Err("Armed host heartbeat timed out".into());}
+            if incoming.is_none()&&self.ping_pending.is_none()&&self.last_ping.elapsed()>=Duration::from_secs(10){
+                self.send(Client::Ping).await?;let now=Instant::now();self.last_ping=now;self.ping_pending=Some(now);
+            }
+            tokio::select!{
+                biased;
+                event=self.receive(IO_LIMIT)=>match event?{
+                    Server::Pong if self.ping_pending.take().is_some()=>{},
+                    event @ Server::Incoming{..} if incoming.is_none()=>incoming=Some(event),
+                    _=>return Err("Unexpected armed host signaling response".into()),
+                },
+                _=tokio::time::sleep(Duration::from_millis(50))=>{},
+            }
+        }
+    }
     /// Both route members opt into the one-time bounded lease before ICE.
     pub async fn request_extended_lease(&mut self,session:&str)->Result<()>{
         if !self.pending.is_empty(){return Err("Unexpected pending records before lease".into());}

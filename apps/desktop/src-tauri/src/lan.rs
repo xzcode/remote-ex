@@ -58,6 +58,8 @@ pub struct Snapshot {
     manage_approved:bool,
     manage_applied:Option<usize>,
     secondary_control:bool,
+    armed:bool,
+    server_scope:Option<String>,
     extended:bool,
     stream_quality:Option<String>,
     stream_decoded:Option<String>,
@@ -70,7 +72,7 @@ pub struct Snapshot {
 }
 impl Default for Snapshot {
     fn default() -> Self {
-        Self { stage: Stage::Idle, active: false, local_key: None, detail: None, profile: Profile::Diagnostic, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, transfer_paused:false, checkpoint_saved:None, directory_entries:None, clipboard_sent:None, clipboard_received:None, catalog:Vec::new(), catalog_ready:false,catalog_selected:None,manage_review:None,manage_token:None,manage_submitted:false,manage_approved:false,manage_applied:None,secondary_control:false,extended:false,stream_quality:None,stream_decoded:None,resume_offset:None, audio_volume:None, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None }
+        Self { stage: Stage::Idle, active: false, local_key: None, detail: None, profile: Profile::Diagnostic, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, transfer_paused:false, checkpoint_saved:None, directory_entries:None, clipboard_sent:None, clipboard_received:None, catalog:Vec::new(), catalog_ready:false,catalog_selected:None,manage_review:None,manage_token:None,manage_submitted:false,manage_approved:false,manage_applied:None,secondary_control:false,armed:false,server_scope:None,extended:false,stream_quality:None,stream_decoded:None,resume_offset:None, audio_volume:None, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None }
     }
 }
 
@@ -161,6 +163,7 @@ fn sidecar_path(profile: Profile) -> Result<PathBuf, String> {
         (Profile::Control, false) => "lan_control",
         (Profile::RoutedTest,true)=>"routed_diagnostic.exe",
         (Profile::RoutedTest,false)=>"routed_diagnostic",
+        (Profile::RoutedView,false) if cfg!(target_os="linux")=>"routed_x11_view",
         (p,true) if p.exchange().is_some()=>"routed_control.exe",
         (p,false) if p.exchange().is_some()=>"routed_control",
         (Profile::RoutedView|Profile::RoutedControl|Profile::RoutedAvView|Profile::RoutedAvControl|Profile::RoutedAudio|Profile::RoutedClipboardSync|Profile::RoutedCatalog|Profile::RoutedCatalogBatch|Profile::RoutedManage,true)=>"routed_control.exe",
@@ -367,7 +370,7 @@ fn supervise(
             handle_output(&shared, message, &mut pass, &mut failure);
         }
         let reason = if overflow.load(Ordering::Acquire) { Some("Media process output limit exceeded".into()) }
-            else if started.elapsed() >= (if locked(&shared).extended{Duration::from_secs(480)}else{SESSION_LIMIT}) { Some("Session expired".into()) }
+            else if started.elapsed() >= ({let s=locked(&shared);if s.armed{Duration::from_secs(780)}else if s.extended{Duration::from_secs(480)}else{SESSION_LIMIT}}) { Some("Session expired".into()) }
             else { failure.clone() };
         if stopping.is_none() && (stop.load(Ordering::Acquire) || reason.is_some()) {
             if !profile.graceful() {
@@ -402,6 +405,7 @@ fn supervise(
                 // No arbitrary text, path, password or command is forwarded.
                 let consent=if snapshot.secondary_control&&host{if profile.av(){"ALLOW SELECTED DISPLAY AUDIO AND INPUT"}else{"ALLOW SELECTED DISPLAY AND INPUT"}}else{profile.consent(host)};
                 let consent=if snapshot.extended{format!("{consent} FOR UP TO 300 SECONDS")}else{consent.to_owned()};
+                let consent=if snapshot.armed{format!("{consent} ARMED FOR UP TO 300 SECONDS")}else{consent};
                 if writeln!(pipe, "{peer}\n{consent}").and_then(|_| pipe.flush()).is_err() {
                     failure = Some("Could not deliver local approval".into());
                     continue;
@@ -498,8 +502,10 @@ pub struct SessionManager {
 }
 impl SessionManager {
     fn snapshot(&self) -> Snapshot { locked(&self.shared).clone() }
-    fn busy(&self)->bool{locked(&self.worker).as_ref().is_some_and(|w|!w.join.is_finished())}
+    pub(crate) fn busy(&self)->bool{locked(&self.worker).as_ref().is_some_and(|w|!w.join.is_finished())}
     fn prepare(&self, role: &str, address: &str, preview: bool, profile: Profile, display_id: Option<u32>) -> Result<Snapshot, String> {
+        #[cfg(target_os="linux")]
+        if !matches!(profile,Profile::Diagnostic|Profile::SecureTest){return Err("Linux real viewing uses the separately gated routed X11 viewer".into());}
         let addr = local_endpoint(address)?;
         let flag = match role { "host" => "--listen", "controller" => "--connect", _ => return Err("Unknown diagnostic role".into()) };
         let host = role == "host";
@@ -525,15 +531,18 @@ impl SessionManager {
                 command.arg("--desktop-session");
             }
         }
-        self.spawn(command,profile,host,None,false,false)
+        self.spawn(command,profile,host,None,false,false,false,None)
     }
-    fn prepare_routed(&self,role:&str,url:&str,server_id:&str,profile:Profile,display_id:Option<u32>,relay_only:bool,persistent:bool,storage_consent:bool,ca_path:Option<String>,history_path:Option<PathBuf>,quality:&str,transfer_path:Option<String>,volume:u8,extra_displays:Vec<u32>,identity_slot:u8,resume_from:Option<String>,checkpoint_path:Option<String>,shared_identity:bool,secondary:bool,extended:bool)->Result<Snapshot,String>{
+    fn prepare_routed(&self,role:&str,url:&str,server_id:&str,profile:Profile,display_id:Option<u32>,relay_only:bool,persistent:bool,storage_consent:bool,ca_path:Option<String>,history_path:Option<PathBuf>,quality:&str,transfer_path:Option<String>,volume:u8,extra_displays:Vec<u32>,identity_slot:u8,resume_from:Option<String>,checkpoint_path:Option<String>,shared_identity:bool,secondary:bool,extended:bool,armed:bool)->Result<Snapshot,String>{
         if !profile.routed()||url.len()>512{return Err("Invalid routed session configuration".into());}
         if persistent&&!storage_consent{return Err("Persistent routed identity requires explicit native storage consent".into());}
         if shared_identity&&(!persistent||role!="controller"||!matches!(profile,Profile::RoutedTest|Profile::RoutedView|Profile::RoutedControl|Profile::RoutedAvView|Profile::RoutedAvControl)){return Err("Shared identity requires an explicitly selected persistent outgoing desktop session".into());}
         let pin=remote_ex_signaling::decode_hex::<32>(server_id).map_err(|_|"Invalid expected server ID")?;
         let _=remote_ex_rendezvous_client::Endpoint::secure(url,pin)?;
         let host=match role{"host"=>true,"controller"=>false,_=>return Err("Unknown routed role".into())};
+        if armed&&(!host||!persistent||!matches!(profile,Profile::RoutedView|Profile::RoutedControl)){return Err("Armed host requires persistent identity and screen-only host mode".into());}
+        #[cfg(target_os="linux")]
+        {if !matches!(profile,Profile::RoutedTest|Profile::RoutedView)||persistent||armed||secondary{return Err("Linux candidate supports temporary X11 view or synthetic test only".into());}if profile==Profile::RoutedView{remote_ex_desktop_features::platform::require_linux_x11()?;}}
         if extended&&!matches!(profile,Profile::RoutedView|Profile::RoutedControl|Profile::RoutedAvView|Profile::RoutedAvControl){return Err("Extended lease is restricted to native display sessions".into());}
         if secondary&&(!cfg!(any(target_os="windows",target_os="macos"))||!host||!matches!(profile,Profile::RoutedControl|Profile::RoutedAvControl)){return Err("Experimental secondary display control requires Windows or macOS host control".into());}
         if (resume_from.is_some()||checkpoint_path.is_some())&&!profile.exchange().is_some_and(|(kind,sender)|kind=="file"&&sender!=host){return Err("Checkpoint options require the local file receiver".into());}
@@ -613,9 +622,10 @@ impl SessionManager {
         }
         command.arg("--desktop-session");
         let history=history_path.map(|path|(path,remote_ex_signaling::hex(&pin)));
-        self.spawn(command,profile,host,history,secondary,extended)
+        if armed{command.arg("--armed-host");}
+        self.spawn(command,profile,host,history,secondary,extended,armed,Some(remote_ex_signaling::hex(&pin)))
     }
-    fn spawn(&self,mut command:Command,profile:Profile,host:bool,history:Option<(PathBuf,String)>,secondary:bool,extended:bool)->Result<Snapshot,String>{
+    fn spawn(&self,mut command:Command,profile:Profile,host:bool,history:Option<(PathBuf,String)>,secondary:bool,extended:bool,armed:bool,server_scope:Option<String>)->Result<Snapshot,String>{
         let mut worker=locked(&self.worker);
         if worker.as_ref().is_some_and(|w|!w.join.is_finished()){return Err("A remote session is already running".into());}
         if let Some(old)=worker.take(){let _=old.join.join();}
@@ -626,7 +636,7 @@ impl SessionManager {
         }
         let child = command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped())
             .spawn().map_err(|e| format!("Cannot start native media diagnostic: {e}"))?;
-        *locked(&self.shared) = Snapshot { stage: Stage::Starting, active: true, local_key: None, detail: None, profile, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, transfer_paused:false, checkpoint_saved:None, directory_entries:None, clipboard_sent:None, clipboard_received:None, catalog:Vec::new(), catalog_ready:false,catalog_selected:None,manage_review:None,manage_token:None,manage_submitted:false,manage_approved:false,manage_applied:None,secondary_control:secondary,extended,stream_quality:None,stream_decoded:None,resume_offset:None, audio_volume:None, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None };
+        *locked(&self.shared) = Snapshot { stage: Stage::Starting, active: true, local_key: None, detail: None, profile, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, transfer_paused:false, checkpoint_saved:None, directory_entries:None, clipboard_sent:None, clipboard_received:None, catalog:Vec::new(), catalog_ready:false,catalog_selected:None,manage_review:None,manage_token:None,manage_submitted:false,manage_approved:false,manage_applied:None,secondary_control:secondary,armed,server_scope,extended,stream_quality:None,stream_decoded:None,resume_offset:None, audio_volume:None, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None };
         let (tx, rx) = mpsc::sync_channel(4);
         let shared = self.shared.clone();
         let stop = Arc::new(AtomicBool::new(false));
@@ -706,6 +716,11 @@ fn slot_index(slot:Option<u8>)->Result<usize,String>{
 }
 impl RoutedManagers{
     pub fn any_busy(&self)->bool{locked(&self.slots).sessions.iter().any(SessionManager::busy)}
+    pub(crate) fn stop_all(&self){for s in &locked(&self.slots).sessions{s.request_stop();}}
+    pub(crate) fn revoke_pin(&self,server:&str,device:&str){
+        let slots=locked(&self.slots);
+        for session in &slots.sessions{let s=session.snapshot();if s.active&&s.server_scope.as_deref()==Some(server)&&(s.armed||s.peer_id.as_deref()==Some(device)){session.request_stop();}}
+    }
     pub fn shutdown(&self){
         let slots=locked(&self.slots);
         for manager in &slots.sessions{manager.request_stop();}
@@ -824,7 +839,7 @@ pub async fn select_transfer_file(window:WebviewWindow,receive:bool,directory:Op
     {let _=(receive,directory);Err("Native file selection unavailable".into())}
 }
 #[tauri::command]
-pub fn routed_prepare(window:WebviewWindow,manager:State<'_,SessionManager>,managers:State<'_,RoutedManagers>,slot:Option<u8>,role:String,url:String,server_id:String,mode:String,display_id:Option<u32>,relay_only:bool,persistent:bool,storage_consent:bool,ca_path:Option<String>,save_history:Option<bool>,quality:Option<String>,sender:Option<String>,transfer_path:Option<String>,volume:Option<u8>,extra_displays:Option<Vec<u32>>,resume_from:Option<String>,checkpoint_path:Option<String>,shared_identity:Option<bool>,secondary_control:Option<bool>,extended:Option<bool>)->Result<Snapshot,String>{
+pub fn routed_prepare(window:WebviewWindow,manager:State<'_,SessionManager>,managers:State<'_,RoutedManagers>,slot:Option<u8>,role:String,url:String,server_id:String,mode:String,display_id:Option<u32>,relay_only:bool,persistent:bool,storage_consent:bool,ca_path:Option<String>,save_history:Option<bool>,quality:Option<String>,sender:Option<String>,transfer_path:Option<String>,volume:Option<u8>,extra_displays:Option<Vec<u32>>,resume_from:Option<String>,checkpoint_path:Option<String>,shared_identity:Option<bool>,secondary_control:Option<bool>,extended:Option<bool>,armed:Option<bool>)->Result<Snapshot,String>{
     require_main(&window)?;
     let profile=match (mode.as_str(),sender.as_deref()){
         ("test",_)=>Profile::RoutedTest,("view",_)=>Profile::RoutedView,("control",_)=>Profile::RoutedControl,("av_view",_)=>Profile::RoutedAvView,("av_control",_)=>Profile::RoutedAvControl,("audio",_)=>Profile::RoutedAudio,("clipboard_sync",_)=>Profile::RoutedClipboardSync,("catalog",_)=>Profile::RoutedCatalog,("catalog_batch",_)=>Profile::RoutedCatalogBatch,("manage",_)=>Profile::RoutedManage,
@@ -847,7 +862,7 @@ pub fn routed_prepare(window:WebviewWindow,manager:State<'_,SessionManager>,mana
         if exclusive||slots.exclusive[n]{return Err("Host and content-sharing sessions require exclusive access".into());}
         if persistent&&slots.identity_slot[n]==Some(identity)&&!(shared&&slots.shared[n]){return Err("Choose shared identity in all slots using the same device ID".into());}
     }
-    let result=slots.sessions[i].prepare_routed(&role,url.trim(),server_id.trim(),profile,display_id,relay_only,persistent,storage_consent,ca_path,history,quality.as_deref().unwrap_or("compat"),transfer_path,volume.unwrap_or(75),extra_displays.unwrap_or_default(),identity,resume_from,checkpoint_path,shared,secondary_control.unwrap_or(false),extended.unwrap_or(false))?;
+    let result=slots.sessions[i].prepare_routed(&role,url.trim(),server_id.trim(),profile,display_id,relay_only,persistent,storage_consent,ca_path,history,quality.as_deref().unwrap_or("compat"),transfer_path,volume.unwrap_or(75),extra_displays.unwrap_or_default(),identity,resume_from,checkpoint_path,shared,secondary_control.unwrap_or(false),extended.unwrap_or(false),armed.unwrap_or(false))?;
     slots.exclusive[i]=exclusive;slots.identity_slot[i]=persistent.then_some(identity);slots.shared[i]=shared;Ok(result)
 }
 #[tauri::command]
@@ -864,6 +879,12 @@ pub fn routed_confirm(window:WebviewWindow,managers:State<'_,RoutedManagers>,slo
     let key=remote_ex_signaling::decode_hex::<32>(peer_key.trim()).map_err(|_|"Invalid peer key")?;
     let expected=remote_ex_signaling::hex(&remote_ex_security::fingerprint(&key));
     if expected!=device_id.trim().to_ascii_lowercase(){return Err("Device ID does not match the verified public key".into());}
+    let snapshot=manager.snapshot();
+    if snapshot.armed{
+        let server=snapshot.server_scope.ok_or("Missing armed host server scope")?;
+        let trusted=crate::trust::trusted_list(window,server)?;
+        if !trusted.iter().any(|d|d.device_id==expected&&d.public_key==remote_ex_signaling::hex(&key)){return Err("Armed host requires an existing verified peer pin for this server".into());}
+    }
     manager.confirm(&peer_key,approved)
 }
 #[tauri::command]
@@ -893,7 +914,7 @@ mod tests {
     fn control_requires_distinct_consent_and_release_marker() {
         assert_eq!(Profile::Control.consent(true), "ALLOW SCREEN AND INPUT");
         assert_eq!(Profile::Control.consent(false), "ALLOW REMOTE INPUT");
-        let shared = Mutex::new(Snapshot { stage: Stage::Connected, active: true, local_key: None, detail: None, profile: Profile::Control, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, transfer_paused:false, checkpoint_saved:None, directory_entries:None, clipboard_sent:None, clipboard_received:None, catalog:Vec::new(), catalog_ready:false,catalog_selected:None,manage_review:None,manage_token:None,manage_submitted:false,manage_approved:false,manage_applied:None,secondary_control:false,extended:false,stream_quality:None,stream_decoded:None,resume_offset:None, audio_volume:None, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None });
+        let shared = Mutex::new(Snapshot { stage: Stage::Connected, active: true, local_key: None, detail: None, profile: Profile::Control, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, transfer_paused:false, checkpoint_saved:None, directory_entries:None, clipboard_sent:None, clipboard_received:None, catalog:Vec::new(), catalog_ready:false,catalog_selected:None,manage_review:None,manage_token:None,manage_submitted:false,manage_approved:false,manage_applied:None,secondary_control:false,armed:false,server_scope:None,extended:false,stream_quality:None,stream_decoded:None,resume_offset:None, audio_volume:None, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None });
         let (mut pass, mut failure) = (false, None);
         stage(&shared, Stage::Stopping, None);
         assert!(locked(&shared).active);
@@ -903,7 +924,7 @@ mod tests {
     }
     #[test]
     fn status_requires_valid_local_key_and_terminal_state() {
-        let shared = Mutex::new(Snapshot { stage: Stage::Starting, active: true, local_key: None, detail: None, profile: Profile::Diagnostic, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, transfer_paused:false, checkpoint_saved:None, directory_entries:None, clipboard_sent:None, clipboard_received:None, catalog:Vec::new(), catalog_ready:false,catalog_selected:None,manage_review:None,manage_token:None,manage_submitted:false,manage_approved:false,manage_applied:None,secondary_control:false,extended:false,stream_quality:None,stream_decoded:None,resume_offset:None, audio_volume:None, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None });
+        let shared = Mutex::new(Snapshot { stage: Stage::Starting, active: true, local_key: None, detail: None, profile: Profile::Diagnostic, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, transfer_paused:false, checkpoint_saved:None, directory_entries:None, clipboard_sent:None, clipboard_received:None, catalog:Vec::new(), catalog_ready:false,catalog_selected:None,manage_review:None,manage_token:None,manage_submitted:false,manage_approved:false,manage_applied:None,secondary_control:false,armed:false,server_scope:None,extended:false,stream_quality:None,stream_decoded:None,resume_offset:None, audio_volume:None, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None });
         let (mut pass, mut fail) = (false, None);
         handle_output(&shared, Output::Stdout(format!("KEY {}", "ab".repeat(32))), &mut pass, &mut fail);
         assert_eq!(locked(&shared).stage, Stage::AwaitingApproval);

@@ -31,10 +31,12 @@ pub(super) enum Capture{
     Mac(MacCapture),
 }
 impl Capture{
-    pub(super) fn new(test:bool)->MediaResult<Self>{
+    pub(super) fn new(test:bool)->MediaResult<Self>{Self::with_limit(test,false)}
+    pub(super) fn with_limit(test:bool,extended:bool)->MediaResult<Self>{
         if canceled(){return Err("Audio grant revoked".into());}
         #[cfg(target_os="macos")]
-        if !test{return Ok(Self::Mac(MacCapture::new()?));}
+        if !test{return Ok(Self::Mac(MacCapture::new(extended)?));}
+        let _=extended;
         let source=if test{"audiotestsrc is-live=true samplesperbuffer=320 wave=sine"}else{
             if !cfg!(target_os="windows"){return Err("System loopback capture unavailable".into());}
             "wasapi2src loopback=true low-latency=true"
@@ -69,7 +71,7 @@ struct MacCapture{
 }
 #[cfg(target_os="macos")]
 impl MacCapture{
-    fn new()->MediaResult<Self>{
+    fn new(extended:bool)->MediaResult<Self>{
         use std::process::{Command,Stdio};
         let exe=std::env::current_exe().map_err(error)?;
         let helper=exe.parent().ok_or("Missing app directory")?.join("remote-ex-mac-audio");
@@ -77,7 +79,8 @@ impl MacCapture{
         let mut child=Command::new(helper).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().map_err(|_|"Cannot start macOS system audio helper")?;
         let Some(mut consent)=child.stdin.take()else{let _=child.kill();let _=child.wait();return Err("Missing local audio consent pipe".into());};
         let Some(mut output)=child.stdout.take()else{let _=child.kill();let _=child.wait();return Err("Missing audio pipe".into());};
-        if consent.write_all(b"CAPTURE SYSTEM AUDIO\n").and_then(|_|consent.flush()).is_err(){
+        let command:&[u8]=if extended{b"CAPTURE SYSTEM AUDIO EXTENDED\n"}else{b"CAPTURE SYSTEM AUDIO\n"};
+        if consent.write_all(command).and_then(|_|consent.flush()).is_err(){
             let _=child.kill();let _=child.wait();return Err("Could not deliver audio consent".into());
         }
         let(tx,samples)=std::sync::mpsc::sync_channel(4);

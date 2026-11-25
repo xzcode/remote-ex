@@ -5,10 +5,11 @@ import { en, zh, type TextKey } from "./i18n";
 import LanPanel from "./LanPanel.vue";
 import PresencePanel from "./PresencePanel.vue";
 import RoutedPanel from "./RoutedPanel.vue";
+import ServicePanel from "./ServicePanel.vue";
 
 type Language = "system" | "en" | "zh";
 type Theme = "system" | "light" | "dark" | "black";
-type Page = "remote" | "routed" | "server" | "diagnostics" | "preferences";
+type Page = "remote" | "routed" | "server" | "diagnostics" | "service" | "preferences";
 type Permission = "granted" | "required" | "system_managed";
 type Display = { id: number; name: string; width: number; height: number; primary: boolean };
 
@@ -99,7 +100,7 @@ function navigate(page: Page) {
   active.value = page;
 }
 const pages: { key: Page; symbol: string }[] = [
-  { key: "remote", symbol: "▣" }, { key: "routed", symbol: "↔" }, { key: "server", symbol: "◎" }, { key: "diagnostics", symbol: "◫" }, { key: "preferences", symbol: "⚙" }
+  { key: "remote", symbol: "▣" }, { key: "routed", symbol: "↔" }, { key: "server", symbol: "◎" }, { key: "diagnostics", symbol: "◫" }, { key: "service", symbol: "◉" }, { key: "preferences", symbol: "⚙" }
 ];
 </script>
 
@@ -162,6 +163,9 @@ const pages: { key: Page; symbol: string }[] = [
               <span v-else class="muted">{{ t("previewEmpty") }}</span>
             </div>
           </section>
+        </template>
+        <template v-else-if="active === 'service'">
+          <ServicePanel :t="t" />
         </template>
         <template v-else>
           <section class="panel">

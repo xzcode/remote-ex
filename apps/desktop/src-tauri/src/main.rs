@@ -4,14 +4,22 @@ mod capture;
 mod lan;
 mod presence;
 mod trust;
+mod service;
 use tauri::Manager;
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent,None))
+        .setup(|app|{service::setup_tray(app.handle());Ok(())})
         .manage(lan::SessionManager::default())
         .manage(lan::RoutedManagers::default())
         .manage(presence::PresenceManager::default())
         .invoke_handler(tauri::generate_handler![
+            service::platform_capabilities,
+            service::startup_status,
+            service::startup_change,
+            service::stop_all,
+            service::wake_lan,
             capture::capture_permission,
             capture::request_capture_permission,
             capture::list_displays,

@@ -1,6 +1,7 @@
 //! Native session owner; real frames and OS input are strictly after endpoint
 //! authorization, signed SDP, DTLS verification and encrypted readiness.
 use super::*;
+#[cfg(any(target_os="windows",target_os="macos"))]
 use remote_ex_input::native::NativeBackend;
 use std::sync::{Arc,atomic::AtomicUsize,mpsc::{sync_channel,TryRecvError,TrySendError}};
 use remote_ex_desktop_features::viewport::{self,Rect};
@@ -26,6 +27,8 @@ fn monitor(display:u32,area:Option<DisplayArea>,input:bool,secondary:bool)->Medi
     Ok((m,current))
 }
 fn permissions(input:bool)->MediaResult<()>{
+    #[cfg(target_os="linux")]
+    {if input{return Err("Linux native input is not supported".into());}remote_ex_desktop_features::platform::require_linux_x11()?;}
     #[cfg(target_os="macos")]
     {
         #[link(name="CoreGraphics",kind="framework")] extern "C"{fn CGPreflightScreenCaptureAccess()->bool;}
@@ -92,7 +95,7 @@ async fn serve<B:Backend>(peer:&Peer,channel:&ControlChannel,conn:&mut Connectio
         }
     };
     peer.push_rgba(initial.pixels)?;
-    let mut audio_capture=if av{Some(audio::Capture::new(false)?)}else{None};
+    let mut audio_capture=if av{Some(audio::Capture::with_limit(false,extended)?)}else{None};
     channel.send(READY_ACK)?;
     out(if input{"CONNECTED ROUTED CONTROL"}else{"CONNECTED ROUTED VIEW"})?;
     if !input{channel.send(&[VIEW_LAYOUT_ACK,initial.layout as u8,capture.count as u8])?;}
@@ -195,10 +198,13 @@ pub(super) async fn host(peer:&Peer,channel:&ControlChannel,conn:&mut Connection
             let d=Dispatcher::new(gate,backend,area)?;
             return serve(peer,channel,conn,session,d,capture(displays,true,config,true),true,profile.av(),profile.extended()).await;
         }
-        let backend=NativeBackend::new()?;
+        #[cfg(target_os="linux")]
+        {return Err("Linux X11 view-only; native input unavailable".into());}
+        #[cfg(any(target_os="windows",target_os="macos"))]
+        {let backend=NativeBackend::new()?;
         if backend.primary_area()?!=area{return Err("Primary display DPI/geometry mismatch".into());}
         let d=Dispatcher::new(gate,backend,area)?;
-        serve(peer,channel,conn,session,d,capture(displays,true,config,false),true,profile.av(),profile.extended()).await
+        serve(peer,channel,conn,session,d,capture(displays,true,config,false),true,profile.av(),profile.extended()).await}
     }else{
         // Never instantiate a native input backend in the view-only profile.
         let d=Dispatcher::new(gate,Inert::default(),area)?;
