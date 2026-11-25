@@ -9,9 +9,15 @@ remote-ex-security = { path = "../security" }
 remote-ex-signaling = { path = "../signaling" }
 remote-ex-rendezvous-protocol = { path = "../rendezvous-protocol" }
 serde_json.workspace = true
-tokio = { version = "1", features = ["net", "time", "macros", "rt-multi-thread", "sync"] }
+tokio = { version = "1", features = ["net", "time", "macros", "rt-multi-thread", "sync", "signal"] }
 futures-util = "0.3"
 tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 webpki-roots = "1"
 url = "2"
+
+rustls-pemfile = "2"
+
+[features]
+default = []
+persistent = ["remote-ex-security/native-vault"]

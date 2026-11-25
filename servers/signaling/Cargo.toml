@@ -15,6 +15,11 @@ axum = { version = "0.8", features = ["ws"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "sync", "time", "signal"] }
 futures-util = "0.3"
 
+axum-server = { version = "=0.8.0", features = ["tls-rustls-no-provider"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+
 [dev-dependencies]
+remote-ex-rendezvous-client = { path = "../../crates/rendezvous-client" }
+rcgen = "0.13"
 tokio-tungstenite = "0.28"
 
