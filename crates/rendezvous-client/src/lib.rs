@@ -16,6 +16,7 @@ pub type Result<T> = std::result::Result<T,String>;
 const CONNECT_LIMIT: Duration = Duration::from_secs(10);
 const IO_LIMIT: Duration = Duration::from_secs(5);
 
+#[derive(Clone)]
 pub struct Endpoint { url: Url, expected: Option<Fingerprint> }
 impl Endpoint {
     fn parse(value:&str)->Result<Url>{
@@ -104,7 +105,8 @@ impl Connection {
                     }
                     Some(Ok(Message::Ping(_)))=>{self.ws.flush().await.map_err(|_|"WebSocket pong failed")?;}
                     Some(Ok(Message::Pong(_)))=>{},
-                    _=>return Err("Signaling connection closed or invalid frame".into()),
+                    Some(Ok(Message::Close(_)))|None|Some(Err(_))=>return Err("Signaling transport closed".into()),
+                    _=>return Err("Invalid signaling frame".into()),
                 }
             }
         }).await;
@@ -192,6 +194,51 @@ pub async fn presence(
                     }
                     Server::Closed{..}=>{},
                     _=>return Err("Unexpected presence response".into()),
+                }
+            }
+        }
+    }
+}
+
+#[derive(Clone,Debug,PartialEq,Eq)]
+pub enum PresenceLifecycle { Online(String), Heartbeat, RequestDeclined, Reconnecting(u8) }
+
+/// Retry presence only after an established connection fails. Authentication,
+/// TLS, protocol or pin mismatches are terminal. Re-registration uses the same
+/// locally owned identity but never resumes a session or prior input grant.
+pub async fn online_with_retry(
+    endpoint:Endpoint,identity:&DeviceIdentity,mut stop:tokio::sync::watch::Receiver<bool>,
+    duration:Duration,retry:bool,mut event:impl FnMut(PresenceLifecycle),
+)->Result<()>{
+    use tokio::time::Instant;
+    let deadline=Instant::now()+duration.min(Duration::from_secs(300));
+    let mut attempts=0u8;
+    loop{
+        if *stop.borrow()||Instant::now()>=deadline{return Ok(());}
+        let mut conn=tokio::select!{
+            biased;
+            _=stop.changed()=>return Ok(()),
+            _=tokio::time::sleep_until(deadline)=>return Ok(()),
+            result=Connection::register(endpoint.clone(),identity)=>result?,
+        };
+        event(PresenceLifecycle::Online(conn.device_id().to_owned()));
+        let remaining=deadline.saturating_duration_since(Instant::now());
+        let result=presence(&mut conn,stop.clone(),remaining,|e|event(match e{
+            PresenceEvent::Heartbeat=>PresenceLifecycle::Heartbeat,
+            PresenceEvent::RequestDeclined=>PresenceLifecycle::RequestDeclined,
+        })).await;
+        let close=conn.close().await;
+        match result{
+            Ok(())=>return if *stop.borrow(){Ok(())}else{close},
+            Err(e)=>{
+                if !retry||attempts>=3||!matches!(e.as_str(),"Signaling transport closed"|"Signaling write failed"|"Presence heartbeat timed out"|"Signaling receive timed out"){return Err(e);}
+                attempts+=1;
+                event(PresenceLifecycle::Reconnecting(attempts));
+                tokio::select!{
+                    biased;
+                    _=stop.changed()=>return Ok(()),
+                    _=tokio::time::sleep_until(deadline)=>return Ok(()),
+                    _=tokio::time::sleep(Duration::from_secs(1u64<<attempts))=>{},
                 }
             }
         }

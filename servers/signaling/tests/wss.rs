@@ -85,3 +85,18 @@ async fn presence_declines_requests_and_stops_on_local_cancel() {
     a.close().await.unwrap();
     server.abort();
 }
+
+#[tokio::test]
+async fn enrollment_rejects_unlisted_identity_and_allows_explicitly_listed(){
+    use std::collections::HashSet;
+    let permitted=DeviceIdentity::generate();
+    let unknown=DeviceIdentity::generate();
+    let ids=HashSet::from([remote_ex_signaling::hex(&permitted.fingerprint())]);
+    let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url=format!("ws://{}/v1/ws",listener.local_addr().unwrap());
+    let router=remote_ex_rendezvous::router_configured([7;32],None,Some(ids)).unwrap();
+    let task=tokio::spawn(async move{axum::serve(listener,router).await.unwrap();});
+    assert!(Connection::register(Endpoint::development(&url).unwrap(),&unknown).await.is_err());
+    let conn=Connection::register(Endpoint::development(&url).unwrap(),&permitted).await.unwrap();
+    conn.close().await.unwrap();task.abort();
+}

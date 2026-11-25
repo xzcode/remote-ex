@@ -19,6 +19,7 @@ use rand_core::{OsRng, RngCore};
 use remote_ex_security::{DeviceIdentity, fingerprint, verify_registration};
 use remote_ex_signaling::{decode_hex, hex};
 use std::{
+    collections::HashSet,
     sync::{Arc, Mutex, atomic::{AtomicU64, Ordering}},
     time::{Duration, Instant},
 };
@@ -36,6 +37,7 @@ struct App {
     hub: Arc<Mutex<Hub>>,
     slots: Arc<Semaphore>,
     next_connection: Arc<AtomicU64>,
+    allowed_devices: Option<Arc<HashSet<String>>>,
 }
 
 pub fn router() -> Router {
@@ -49,6 +51,12 @@ pub fn router_with_identity(server_id: [u8;32]) -> Result<Router, &'static str> 
 }
 
 pub fn router_with_ice(server_id:[u8;32],issuer:Option<turn::IceIssuer>)->Result<Router,&'static str>{
+    router_configured(server_id,issuer,None)
+}
+
+/// Explicit operator enrollment. An absent allowlist is development-only.
+pub fn router_configured(server_id:[u8;32],issuer:Option<turn::IceIssuer>,allowed:Option<HashSet<String>>)->Result<Router,&'static str>{
+    if allowed.as_ref().is_some_and(|ids|ids.is_empty()||ids.len()>4096||ids.iter().any(|id|!valid_device_id(id))){return Err("invalid device allowlist");}
     if server_id == [0;32] { return Err("invalid server identity"); }
     let hub=match issuer{Some(issuer)=>Hub::with_issuer(issuer),None=>Hub::default()};
     let state = App {
@@ -56,11 +64,16 @@ pub fn router_with_ice(server_id:[u8;32],issuer:Option<turn::IceIssuer>)->Result
         hub: Arc::new(Mutex::new(hub)),
         slots: Arc::new(Semaphore::new(MAX_CONNECTIONS)),
         next_connection: Arc::new(AtomicU64::new(1)),
+        allowed_devices:allowed.map(Arc::new),
     };
     Ok(Router::new()
         .route("/healthz", get(|| async { "ok" }))
         .route("/v1/ws", get(upgrade))
         .with_state(state))
+}
+
+pub fn valid_device_id(id:&str)->bool{
+    id.len()==64&&id.bytes().all(|b|b.is_ascii_digit()||(b'a'..=b'f').contains(&b))&&decode_hex::<32>(id).is_ok_and(|key|key!=[0;32])
 }
 
 async fn upgrade(State(app): State<App>, ws: WebSocketUpgrade) -> Response {
@@ -119,6 +132,10 @@ async fn serve(socket: WebSocket, app: App) {
     let (Ok(key), Ok(sig)) = (decode_hex::<32>(&public_key), decode_hex::<64>(&signature)) else { return; };
     if !verify_registration(&key, &app.server_id, &challenge, &sig) { return; }
     let id = hex(&fingerprint(&key));
+    if app.allowed_devices.as_ref().is_some_and(|ids|!ids.contains(&id)){
+        let _=write(&mut sink,Server::Error{code:"registration_unavailable".into()}).await;
+        return;
+    }
     let connection = app.next_connection.fetch_add(1, Ordering::Relaxed);
     let (tx, mut rx) = mpsc::channel(32);
     let registered = app.hub.lock().unwrap_or_else(|e| e.into_inner())
