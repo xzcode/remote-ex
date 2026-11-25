@@ -57,3 +57,7 @@ M3.1 地址簿、在线状态和历史；M3.2 邀请码与验证；M3.3 原生�
 
 - 第三批核心、媒体（实际断点、目录、synthetic clipboard）、两平台 desktop CI 已通过；第二批 Windows/macOS 完整开发包均上传。第四批新增独立域签名的同 ID 主控注册，精确 socket session ownership，最多三条并行主控，GUI 显式共享原设备身份；新增只读远程文件列表、授权根及按 index 下载一文件，仍无任意远程文件操作。最新核心/媒体/desktop/native build 待复验，完整同 ID 并行画面/实机待。详细证据见 M3_FULL_HANDOFF.md。
 - 下一步：交付最新 M3 包、音视频同会话、macOS system audio、剩余文件管理与非主屏控制等实际功能/验收；不提前标记 M3 完成。
+
+### M3 第五轮收尾
+
+- 第四批 81e56b6 核心/媒体/双平台桌面 CI 通过；完整原生包 #45614297499 尚在执行。新增 macOS 13+ ScreenCaptureKit 系统声音采集候选、VP8+Opus RTP+可靠输入同会话、明确签名音频权限及 GStreamer 共享时钟/播放音量；Windows 单一选定次屏实验控制与 DPI/实际光标/前台窗口检查。最新核心、媒体、桌面、原生构建 #45616132615/#45616132618/#45616132613/#45616132589 待结果。详见 M3_FULL_HANDOFF.md。物理 A/V 同步、真实 macOS 系统音频、Windows 非主屏 DPI、macOS 非主屏、完整文件写入/管理、长时间真实会话等仍待，不标记 M3 完成。

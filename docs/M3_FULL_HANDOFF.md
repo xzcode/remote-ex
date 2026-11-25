@@ -91,3 +91,17 @@
 - 同 ID 多主控的真实同时视频/输入、三个槽位物理测试；当前 host/内容独占，普通在线状态服务不能与同 ID shared controller 同时注册。不是单 WebSocket 多路复用。服务器需更新。
 - 远程文件管理现为只读授权列表与单次下载，既有双向单文件和整目录传输独立；非完整远程写入、删除/改名或多文件并发管理。断点与合成 clipboard 最新原生构建、实机操作仍待。
 - macOS 系统输出声音采集、音视频同会话/A-V 同步、非主屏键鼠、长会话稳定性、高画质/动态分辨率、真实跨公网/设备验收。当前无已授权真实图形桌面，不把 CI 当物理验收。下一批优先根据最新失败日志修复、交付实际新 artifact，再推进音视频，不重复无用构建。
+
+## 第五轮收尾（音视频联合会话、macOS 系统声音、Windows 次屏控制）
+
+### 已核对上一批
+- 81e56b6 的 [Core #45614297475](https://github.com/xzcode/remote-ex/actions/runs/45614297475)、[Native media #45614297428](https://github.com/xzcode/remote-ex/actions/runs/45614297428)、[Desktop #45614297420](https://github.com/xzcode/remote-ex/actions/runs/45614297420) 全部成功。包括同 ID scoped registration 加密路由、授权目录 catalog/选定文件下载、此前断点/目录/clipboard/audio/双 NAT 回归。未实际操作物理设备。#45614297499 第四批完整 native development build 记录时仍在运行，不能提前声称产物。
+
+### 本轮代码
+- 3be4439：复用已授权音频源，macOS 13+ ScreenCaptureKit helper (crates/media/macos/SystemAudio.swift)，主显示器 content filter、16kHz mono PCM、明确本机同意后固定相邻子进程，普通 OS Screen Recording preflight，独立时间上限/父进程 EOF/kill 清理，不添加屏幕输出或麦克风、不自动采集或落盘。系统输出范围受实际 SCK content filter/平台权限限制；真实声音质量、实际 TCC 与打包后 helper 启动待验证。依据官方 API 文档 https://developer.apple.com/documentation/screencapturekit/capturing-screen-content-in-macos 。Windows WASAPI loopback 保留。
+- c9c8f8a / 05cd996 / baec661：独立签名 profile16 synthetic /17 A/V view /18 A/V control；A/V 使用同一 WebRTC pipeline，独立 VP8 RTP 和 Opus RTP 及原可靠控制通道；3 m-line 严格 profile、ICE bounds、两个 RTP transceiver 和 SCTP 实际 DTLS 检查；静音/黑帧协商 seed，真实采集只在 peer proof+本机授权+DTLS/ready 后；音频 valve/gain 默认关闭/静音，确认就绪后才启用；播放音量实时控制与断开静音，GStreamer pipeline 共享时钟及 sync sink，非已验证精确 A/V sync。合成联合测试必须取得30帧视频、至少50个非全静音解码音频 buffer 及模拟输入释放；无真实系统音频或画面。GUI 分别显示只读画面/声音或画面/声音/控制，默认不含 audio。旧 audio-only 仍为 PCM SCTP 独立会话。macOS swiftc compile/sign/package 步骤新增，未核实 helper 真机可运行。
+- 6f88d59 / 1463dfb：Windows 实验性 secondary control，host 明确勾选并预选单一显示器（非默认）；使用线程 per-monitor DPI aware context、XCap 原点/尺寸与 Win32 GetMonitorInfoW 矩形精确比对；SetCursorPos 后实际坐标确认，点击/滚动限定当前所选矩形，按键按下要求前台窗口所属屏与实际鼠标位置一致，释放不受焦点变化阻塞。每次注入前复验显示器，capture worker 使用相同 DPI scope，尺寸不符/几何改变 fail closed。未启用 macOS 次屏控制，未绕过系统授权。此候选需 Windows 实机 DPI/坐标/焦点/拖动/释放验证，不能当作多屏控制已验收。新增 portable negative-origin bounds 和 A/V grant domain 测试。
+
+### 当前运行状态与接手
+- #45615957191 core success (6f88d59)；最新 1463dfb [Core #45616132615](https://github.com/xzcode/remote-ex/actions/runs/45616132615)、[Native media #45616132618](https://github.com/xzcode/remote-ex/actions/runs/45616132618)、[Desktop #45616132613](https://github.com/xzcode/remote-ex/actions/runs/45616132613)、[Native input #45616132614](https://github.com/xzcode/remote-ex/actions/runs/45616132614)、[完整开发包 #45616132589](https://github.com/xzcode/remote-ex/actions/runs/45616132589) 记录时未结束。检查实际结果，按错误日志修复。较早重复增量/排队 run 被取消，不算通过。新 build 含 Swift helper 与 A/V synthetic runtime 测试；第四批包仍需查具体产物 SHA。不要反复提交无关内容导致 CI 取消。
+- AV track integration/实际 A/V 延迟及同步精度、macOS TCC 与真实音频、Win32 次屏实机仍未完成。完整 remote file manager 写入/改名/删除、多文件管理仍待独立权限设计；当前只读列表/单次下载及独立本机双向文件/目录已实现并测试。30秒真实控制和真实跨公网物理验收限制仍保留；未部署或修改用户服务器、未正式 Release。
