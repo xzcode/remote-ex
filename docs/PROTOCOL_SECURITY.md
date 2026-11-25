@@ -50,3 +50,7 @@ crates/signaling 定义 4 字节 big-endian 长度、版本 1、256 KiB frame、
 ## M1 第七批：加密只读会话
 
 独立 secure::SecureWire 使用 Noise KK，双方预先在可信渠道核对完整 X25519+Ed25519 公钥 bundle。Noise transport records 16-bit length，最大 65535 bytes；发送和接收限时，任何错误使通道永久失败。只读 CLI 额外校验双方相同 profile、VIEW-only grant、双方随机数和原始 SDP 的 Ed25519 transcript；在已连接的实际视频 transceiver sender/receiver DTLS transport 中读取 remote-certificate，对 PEM leaf DER 做 SHA-256，与所有已签名 SDP fingerprint 一致校验；缺失或冲突拒绝。若启用数据通道，通用 certificate helper 也检查 SCTP transport，当前只读 CLI 不创建数据通道。必须由两个交互式终端本地批准真实屏幕，只有指定显示器，在加密 Ready 与本地 gate 激活后采集；心跳中断、权限错误或截止停止新帧，进程退出释放 pipeline。无输入/无人值守功能。此实现待实际 GStreamer 证书属性集成测试、安全审查及跨平台验证；严禁把核心 Noise 单测通过当成完整真实屏幕认证已验证。
+
+## M1 第八批：只读桌面与输入边界
+
+UI 区分加密真实共享、加密合成测试和历史明文合成诊断；固定 profile 后禁止更改角色、地址与显示器直至断开。真实共享须有显示器选择、128 hex 双公钥核对、独立明确只读同意；supervisor 管理固定相邻二进制，保留同意管道，媒体子进程在管道消失时退出。无实际输入、无人值守或权限升级。未来正式发行需签名及验证 sidecar，防止本地替换；本阶段依赖可信开发构建。输入 Dispatcher 要求已经验证连接的 SessionGate；所有消息经过 gate，view-only、重复/错序等拒绝，不直接操作 OS。实际输入状态另行跟踪，失败/关闭时释放；原生适配尚未连接到数据通道，不能称为已支持远程键鼠。OS 级释放失败与突然进程终止需要额外设计、实机确认及错误反馈。

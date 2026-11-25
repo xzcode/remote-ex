@@ -95,3 +95,9 @@ lan_diagnostic 两端各自生成临时密钥，双方在可信途径确认完�
 ## ADR-011：独立加密只读屏幕路径
 
 生产候选安全通道采用 Snow 的 Noise KK (X25519/ChaChaPoly/BLAKE2s) 双方预先核对完整临时公钥，原始诊断 TCP framing 不再承载真实桌面会话。独立 lan_view CLI 在两端交互确认、Noise 信令加密、Ed25519 双签名绑定 SDP、实际视频 DTLS 证书 SHA-256 校验、双端 Ready 后，才允许 appsrc 获得 XCap 真实屏幕像素。单视频 m-line、view-only、固定显示器、有界帧与 10fps/960×540 letterbox、30秒会话期限、加密 heartbeat、无远程系统输入/无人值守/文件/剪贴板。无自动升级诊断权限；--test 与真实屏幕 profile 必须一致。当前 CLI 不替换桌面诊断界面、不使用未签名 GUI sidecar 做实际屏幕共享。依赖雪库、GStreamer、XCap 及跨平台运行时需要审计、锁定和实机验证。正式连续采集、持久身份、撤销 UI、更多能力、生产信令/发布均未实现。
+
+## ADR-012：桌面只读会话与原生输入适配
+
+桌面新增 screen / secure_test / diagnostic 三个固定 profile，绑定各自媒体可执行文件名、参数、公钥长度及明确的授权语句。真实 host 必须选择显示器 ID；预先核对 128 hex 完整公钥 bundle，保留本机 UI 中可见状态及断开入口，仍限 30 秒、VIEW-only。lan_view --desktop-session 使用专用监督管道，批准后父进程持续持有 stdin；EOF/额外字节即退出只读子进程。正常命令行真实模式仍要求交互终端。可信组件开发期手工安装，未完成生产签名或校验；真实模式不通过旧明文诊断链路。
+
+crates/input 加入 portable workspace；Dispatcher 串行校验 SessionGate、消息顺序、授权区域、指针状态和速率，跟踪真实尝试的按下键及按钮，失败/关闭时尽力释放；释放失败需报告和重试，不承诺 kill/崩溃时能自动释放。原生候选为 Enigo 0.6.1（Windows/macOS 可选 native feature），仅普通桌面、主显示器和常用物理 HID 键。独立编译与 inert fake backend 测试，未接网络输入/OS 操作命令。后续正式输入 owner 必须完成完整 DTLS/SCTP 绑定、单独本机输入授权、控制端事件采集、屏幕坐标/黑边/DPI 对齐、撤销及正常释放，不能复用只读授权。

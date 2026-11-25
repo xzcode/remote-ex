@@ -60,3 +60,10 @@ Rust 核心 CI 通过：[45564676252](https://github.com/xzcode/remote-ex/action
 - Native media engine #45571374184 成功：上一轮 CONNECTED/preview 参数增量后同/跨进程合成回环通过；不验证 GUI preview。
 - Core CI #45571614512 成功：新增 Noise 双向预先固定公钥加密往返与错误对端测试通过。第七批 screen profile/实际 DTLS 属性校验及双进程测试需看最新 Native media engine。
 - 真实屏幕 CLI 依赖 local-screen feature，默认 headless test 不读取屏幕。该 feature 与跨平台 native rendering 仍待物理设备确认；测试原型 960×540/10fps，非性能指标。
+
+## M1 第八批实际记录
+
+- #45571851093 Native media engine 成功：前一批 Noise 加密只读 profile 的双进程 synthetic test、实际视频 DTLS remote certificate 与已签名 SDP 的验证均通过；没有读取真实屏幕。
+- #45571374218 Desktop checks Windows/macOS 完整通过（第六批桌面监督器）。
+- 9d5ca6f：新增 desktop-session 与只读 UI；Core CI #45572297985 通过，媒体 #45572298025 与桌面 #45572297978 记录时未结束。真实 screen feature、OS permission 和原生 GUI 待实机。
+- 4ec3de4：新增 input portable dispatcher 与可选 Enigo Windows/macOS native adapter；Core CI #45572463188 及 Native input checks #45572463267 待结果，测试不注入系统事件。Enigo 上游 https://docs.rs/enigo/0.6.1/enigo/；依赖及许可证仍待审查。
