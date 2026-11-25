@@ -117,6 +117,7 @@ pub fn unpack(bundle:&[u8],target:&Path,confirmed:bool,mut canceled:impl FnMut()
     if !target.is_absolute()||target.file_name().is_none()||!target.parent().is_some_and(|p|p.is_dir()){return Err("Choose a new local directory path".into());}
     fs::create_dir(target).map_err(|_|"Destination must be a new directory; overwrite refused")?;
     let root=target.canonicalize().map_err(|_|"Cannot resolve new destination")?;
+    if !check_metadata(&fs::symlink_metadata(target).map_err(|_|"Destination changed")?){return Err("Destination changed to an unsafe link".into());}
     let result=(||->Result<(),String>{
         let mut offset=0usize;
         for e in entries{

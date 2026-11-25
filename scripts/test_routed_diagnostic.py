@@ -40,6 +40,8 @@ def main():
     if pause_test and not exchange_sender:raise RuntimeError("Pause test needs file transfer")
     directory_test="--directory-exchange" in sys.argv[3:]
     resume_test="--file-resume" in sys.argv[3:]
+    checkpoint_test="--file-checkpoint" in sys.argv[3:]
+    if checkpoint_test and (not exchange_sender or resume_test or directory_test or pause_test):raise RuntimeError("Choose a separate interrupted-file test")
     if resume_test and not exchange_sender:raise RuntimeError("Resume test requires file mode")
     if directory_test and (not exchange_sender or resume_test or pause_test):raise RuntimeError("Choose a separate directory transfer test")
     clipboard_test="--clipboard-sync-test" in sys.argv[3:]
@@ -93,7 +95,7 @@ def main():
             url=f"wss://localhost:{port}/v1/ws"
             flags=["--ca",cert]+(["--relay-only"] if relay_only else [])
             source=os.path.join(directory,"source.bin");target=os.path.join(directory,"received.bin")
-            payload=bytes(range(256))*257
+            payload=bytes(range(256))*(32768 if checkpoint_test else 257)
             host_flags=list(flags);controller_flags=list(flags)
             if clipboard_test:
                 host_flags.extend(["--clipboard-sync-test","--desktop-session"]);controller_flags.extend(["--clipboard-sync-test","--desktop-session"])
@@ -108,6 +110,8 @@ def main():
                 for role,args in (("host",host_flags),("controller",controller_flags)):
                     args.extend(["--desktop-session","--exchange","directory" if directory_test else "file",exchange_sender,source if role==exchange_sender else target])
             partial=os.path.join(directory,"resume.rexpart")
+            if checkpoint_test:
+                (controller_flags if exchange_sender=="host" else host_flags).extend(["--save-checkpoint",partial])
             if resume_test:
                 # The receiver validates existence before printing its public key.
                 with open(partial,"xb"):pass
@@ -139,6 +143,24 @@ def main():
             else:
                 approve(host,ck)
                 approve(controller,hk)
+            if checkpoint_test:
+                recipient=controller if exchange_sender=="host" else host
+                expect(recipient,"TRANSFER_PROGRESS ",deadline)
+                recipient[0].stdin.close() # explicit local revocation after actual bytes arrived
+                saved=int(expect(recipient,"CHECKPOINT_SAVED ",deadline))
+                if not 0<saved<len(payload):raise RuntimeError("No incomplete prefix saved")
+                if recipient[0].wait(timeout=5)==0:raise RuntimeError("Interrupted transfer unexpectedly succeeded")
+                if os.path.exists(target):raise RuntimeError("Incomplete content was published")
+                with open(partial,"rb") as stream:
+                    if stream.read(8)!=b"REXPART1":raise RuntimeError("Invalid checkpoint")
+                    n=struct.unpack(">I",stream.read(4))[0]
+                    if not 0<n<=4096:raise RuntimeError("Invalid checkpoint header size")
+                    h=json.loads(stream.read(n));prefix=stream.read()
+                sender_key,receiver_key=(hk,ck) if exchange_sender=="host" else (ck,hk)
+                if h["scope"]!={"sender":list(bytes.fromhex(sender_key)),"receiver":list(bytes.fromhex(receiver_key))}:raise RuntimeError("Wrong checkpoint identity binding")
+                if h["offer"]["sha256"]!=list(hashlib.sha256(payload).digest()) or h["offset"]!=saved or h["prefix_hash"]!=list(hashlib.sha256(prefix).digest()) or prefix!=payload[:saved] or len(prefix)!=saved:raise RuntimeError("Checkpoint bytes or digest mismatch")
+                print(f"PASS: interrupted authorized transfer retained {saved} verified prefix bytes; destination absent",flush=True)
+                return
             if resume_test:
                 for pair in (host,controller):
                     marker=expect(pair,"TRANSFER_RESUME_OFFSET ",deadline)
