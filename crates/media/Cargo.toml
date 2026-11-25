@@ -27,3 +27,5 @@ prost = "0.13"
 
 sha2 = "0.10"
 pem = "3"
+
+remote-ex-input = { path = "../input" }
