@@ -56,3 +56,21 @@
 - 最新代码基线 fe04f85：[Core #45599426885](https://github.com/xzcode/remote-ex/actions/runs/45599426885) / [Native media #45599426956](https://github.com/xzcode/remote-ex/actions/runs/45599426956) / [Desktop #45599427074](https://github.com/xzcode/remote-ex/actions/runs/45599427074) 记录时运行中。较早 runs 因新提交取消，不视为成功。
 - DEV_BUILD.md 触发新完整 Windows/macOS development build，查最新 run 的 SHA 和原生编译、文件/音频测试证据，再给实际 artifact 下载链接。新 Winit/Softbuffer 窗口原生功能还未实机。优先修复构建、协议或测试问题，不重复频繁取消 CI。
 - 未完成：同 ID 复用多会话（当前3个独立稳定身份）、非主屏控制、多屏独立窗口、跨连接文件续传、远程目录/拖拽、持续剪贴板、macOS system-audio、A/V 同步、真实系统权限及持续连接/性能测试。用户要求推进 M3，不把未实现项或 CI pending 当完成。未改用户服务器、未发布正式 Release。
+
+## 第三轮收尾（文件恢复、目录、剪贴板）
+
+### 已核对运行证据
+- [#45599426885](https://github.com/xzcode/remote-ex/actions/runs/45599426885) Core success、[#45599427074](https://github.com/xzcode/remote-ex/actions/runs/45599427074) Windows/macOS Desktop success、[#45599426956](https://github.com/xzcode/remote-ex/actions/runs/45599426956) Native media success，均 fe04f85。媒体完整回归（WSS、Noise、DTLS、双 NAT fallback/relay、文件双向与暂停恢复、合成 PCM）通过。非真实剪贴板、音频硬件或画面捕获测试。
+- [#45599629435](https://github.com/xzcode/remote-ex/actions/runs/45599629435) 04b1cfd Windows/macOS 原生 Release 已编译；运行测试进行中，未核实新 artifact。保留现有构建，避免浪费；该包不含第三批。未再触发另一完整 dev build，待最新媒体成功后再构建。
+- [#45600547094](https://github.com/xzcode/remote-ex/actions/runs/45600547094) (381b42c) 与 [#45600808482](https://github.com/xzcode/remote-ex/actions/runs/45600808482) (5bf6f46) Core success；[#45600808425](https://github.com/xzcode/remote-ex/actions/runs/45600808425) Native input success。较早增量运行被后续提交取消，不能当作通过。
+
+### 本轮代码
+- c98fc96：REXPART1 本机 checkpoint 格式，精确双方 signing 公钥、完整文件 offer、前缀 offset/hash，重建 Receiver hash 状态。
+- 25f8aca / 4dc018d：发送端在新授权连接后校验接收方请求的完整前缀；接受合法偏移才从该位置发送；最终整体 SHA-256；显式接收端 --resume-from / --save-checkpoint 及本机 UI。断点、目标均不覆盖既有文件，旧断点不删除；中断只在指定新路径写入，不是默认留存。断点包含原始部分文件数据，非加密存储，必须自行妥善保管。相同双方身份（建议持久）和原始文件 offer 必须重新核对，不保存旧授权。
+- 135c23f / 381b42c：REXDIR01 有界目录包，单独 profile 11/12 绑定发送方，明确本机选定源和新目标；最大256条/8层/64MiB，包括空目录；检查相对路径、重复/大小写冲突、特殊名称和大小，拒绝符号链接及 Windows reparse points，接收端不允许覆盖，先校验完整包再新建目录。提取中断可能留下不完整的新目录，明确报错；不自动递归删除。非任意远程目录浏览、编辑或远程删除。GUI 支持 drag-to-select 单个本机文件或目录（只当前可见 slot，不自动发送）及目录选择。
+- 5bf6f46：独立 profile 13 (synthetic) /14 (native) 双向文本剪贴板同步，双方明确批准、仅此后变更，8KiB / 30秒，初始内容不发送，不持续同步图片，回声抑制并优先保留同步轮次中本机新复制内容。只传加密 WebRTC 数据，不记录内容，统计数量，取消/超时终止。真实 OS clipboard 仍未操作。
+- b35a17e：媒体 CI 实际中断（8 MiB fixture，收到进度后关闭接收本机管道，验证保存 prefix 与未发布目标）、预置 checkpoint (12,345 字节) 通过实际 WebRTC 续传、含空目录的目录包、无 OS clipboard 的双向 text fixture。前两测试分别覆盖保存及恢复，不是同一对真实设备跨两连接完整中断重试实测。新增目录包路径安全核心测试，需核对最新 CI。
+
+### 最新任务
+- [Core #45601036492](https://github.com/xzcode/remote-ex/actions/runs/45601036492)、[Media #45601036641](https://github.com/xzcode/remote-ex/actions/runs/45601036641)、[Desktop #45600808563](https://github.com/xzcode/remote-ex/actions/runs/45600808563) 记录时排队/进行中。先按真实结果修复，再构建最新版并核对实际 artifact。
+- 仍需真正同一设备身份多会话复用（当前每槽位单独登记）、非主屏键鼠、完整远程目录浏览/管理、断点同身份实机重连与异常强杀恢复、macOS 系统声音、音视频同会话和同步、长期/实机验收。当前文本同步与文件/音频都是单独独占会话，不自动与真实控制合并。用户未指定服务器部署、域名或签名/许可证；未改用户主机、未部署或发布 Release。

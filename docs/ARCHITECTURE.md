@@ -141,3 +141,7 @@ Explicit OS-protected persistent signing identity and pre-enrollment display of 
 ## ADR-022：M3 原生远程窗口及明确预选多屏
 
 Routed viewer 候选使用 Winit 0.30.13 + Softbuffer 0.4.8 + font8x8 0.3；原 LAN minifb 路径保留。软件渲染复用 physical viewport 几何，工具栏在远程画面外；焦点、鼠标进入工具栏、窗口 resize/fullscreen 或暂停输入时释放远程输入，关闭窗口或 Esc 停止。F11 是本地快捷键。只读会话 host 在本机批准前明确选最多四块屏幕，固定 ID 与 geometry，encrypted ViewLayout count，fixed Next screen message，capture owner 限速在预授权列表/拼接之间轮转，成功 push 后返回 layout ACK。控制仍 primary-only，首张真实帧成功才 readiness。所有平台实际 UI/DPI/性能待验；新依赖许可证审查待 M5。三个独立 controller slot 可分别启用原生凭据 vault，slot0 保持旧身份，额外槽位预登记，非单 ID multiplex。文件暂停和实时音量为固定有界 local pipe 命令，LF/CRLF 支持；未知命令/EOF 撤销，无远端命令接口。
+
+## ADR-023：M3 独立内容交换与断点
+
+REXPART1 文件由用户显式选择本地输入/新保存路径，绑定两个完整签名公钥、完整 Offer 及 prefix hash/offset。接收端重新读取/哈希并复制到新临时文件；发送方确认 prefix 与选定源内容一致，完整文件仍需哈希匹配才无覆盖提交。无旧会话 ID/授权持久化，无自动恢复；临时 checkpoint 只是局部明文数据。REXDIR01 bounded manifest + 原始 bytes，独立授权 profile11/12，最大256条、8层、64MiB；先整体验证再新建本机目录，禁止链接、特殊文件、路径逃逸、覆盖，不自动执行或递归删除。目录是整体交换而非远程文件系统 API。Profile13/14 text clipboard sync 是独立会话，双方新 grant、30秒/8KiB、初始 baseline 不发送、每轮 host/controller text exchange、内容哈希、去回声，冲突优先保留本机新变更。不会自动开启或组合真实控制。GUI local drop selection 仅当前可见 slot，所有路径仍后端验证、用户批准。
