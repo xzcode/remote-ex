@@ -512,7 +512,7 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
     }
     if (profile.native_view()||profile.native_control())&&!cfg!(all(feature="native-control",any(target_os="windows",target_os="macos"))){return Err("Native mode not compiled for this platform".into());}
     if supervised&&(io::stdin().is_terminal()||io::stdout().is_terminal()){return Err("Desktop mode requires supervisor pipes".into());}
-    if profile!=Profile::Test&&!supervised&&(!io::stdin().is_terminal()||!io::stdout().is_terminal()){return Err("Visible local consent required".into());}
+    if !profile.synthetic()&&!supervised&&(!io::stdin().is_terminal()||!io::stdout().is_terminal()){return Err("Visible local consent required".into());}
     ctrlc::set_handler(||CANCEL.store(true,Ordering::Release)).map_err(error)?;
     let id=if persistent{
         if !supervised{

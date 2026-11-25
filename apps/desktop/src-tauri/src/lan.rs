@@ -78,7 +78,7 @@ fn stage(shared: &Mutex<Snapshot>, next: Stage, detail: Option<String>) {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
-enum Profile { Diagnostic, SecureTest, Screen, Control, RoutedTest, RoutedView, RoutedControl, RoutedFileHost, RoutedFileController, RoutedTextHost, RoutedTextController, RoutedPngHost, RoutedPngController, RoutedAudio, RoutedDirectoryHost, RoutedDirectoryController, RoutedClipboardSync, RoutedCatalog }
+enum Profile { Diagnostic, SecureTest, Screen, Control, RoutedTest, RoutedView, RoutedControl, RoutedFileHost, RoutedFileController, RoutedTextHost, RoutedTextController, RoutedPngHost, RoutedPngController, RoutedAudio, RoutedDirectoryHost, RoutedDirectoryController, RoutedClipboardSync, RoutedCatalog, RoutedAvView, RoutedAvControl }
 impl Profile {
     fn parse(value: &str) -> Result<Self, String> {
         match value {
@@ -89,10 +89,13 @@ impl Profile {
             _ => Err("Unknown session profile".into()),
         }
     }
-    fn routed(self)->bool{matches!(self,Self::RoutedTest|Self::RoutedView|Self::RoutedControl)||self.exchange().is_some()||matches!(self,Self::RoutedAudio|Self::RoutedClipboardSync|Self::RoutedCatalog)}
+    fn routed(self)->bool{matches!(self,Self::RoutedTest|Self::RoutedView|Self::RoutedControl|Self::RoutedAvView|Self::RoutedAvControl)||self.exchange().is_some()||matches!(self,Self::RoutedAudio|Self::RoutedClipboardSync|Self::RoutedCatalog)}
     fn exchange(self)->Option<(&'static str,bool)>{match self{Self::RoutedFileHost=>Some(("file",true)),Self::RoutedFileController=>Some(("file",false)),Self::RoutedTextHost=>Some(("text",true)),Self::RoutedTextController=>Some(("text",false)),Self::RoutedPngHost=>Some(("png",true)),Self::RoutedPngController=>Some(("png",false)),Self::RoutedDirectoryHost=>Some(("directory",true)),Self::RoutedDirectoryController=>Some(("directory",false)),_=>None}}
     fn graceful(self)->bool{self.requires_release()||self.exchange().is_some()||matches!(self,Self::RoutedAudio|Self::RoutedClipboardSync|Self::RoutedCatalog)}
-    fn requires_release(self)->bool{matches!(self,Self::Control|Self::RoutedControl|Self::RoutedView)}
+    fn av(self)->bool{matches!(self,Self::RoutedAvView|Self::RoutedAvControl)}
+    fn view(self)->bool{matches!(self,Self::RoutedView|Self::RoutedAvView)}
+    fn audio(self)->bool{self==Self::RoutedAudio||self.av()}
+    fn requires_release(self)->bool{matches!(self,Self::Control|Self::RoutedControl|Self::RoutedView|Self::RoutedAvView|Self::RoutedAvControl)}
     fn key_len(self) -> usize { if self == Self::Diagnostic || self.routed() { 64 } else { 128 } }
     fn consent(self, host: bool) -> &'static str {
         match self {
@@ -107,6 +110,10 @@ impl Profile {
             Self::RoutedView=>"ALLOW ROUTED VIEW",
             Self::RoutedControl if host=>"ALLOW ROUTED SCREEN AND INPUT",
             Self::RoutedControl=>"ALLOW ROUTED INPUT",
+            Self::RoutedAvView if host=>"ALLOW ROUTED SCREEN AND AUDIO",
+            Self::RoutedAvView=>"ALLOW ROUTED VIEW AND PLAY AUDIO",
+            Self::RoutedAvControl if host=>"ALLOW ROUTED SCREEN AUDIO AND INPUT",
+            Self::RoutedAvControl=>"ALLOW ROUTED INPUT AND PLAY AUDIO",
             Self::RoutedFileHost|Self::RoutedFileController=>if self.exchange().unwrap().1==host{"ALLOW SEND FILE"}else{"ALLOW RECEIVE FILE"},
             Self::RoutedTextHost|Self::RoutedTextController=>if self.exchange().unwrap().1==host{"ALLOW SEND CLIPBOARD TEXT"}else{"ALLOW RECEIVE CLIPBOARD TEXT"},
             Self::RoutedPngHost|Self::RoutedPngController=>if self.exchange().unwrap().1==host{"ALLOW SEND CLIPBOARD IMAGE"}else{"ALLOW RECEIVE CLIPBOARD IMAGE"},
@@ -145,8 +152,8 @@ fn sidecar_path(profile: Profile) -> Result<PathBuf, String> {
         (Profile::RoutedTest,false)=>"routed_diagnostic",
         (p,true) if p.exchange().is_some()=>"routed_control.exe",
         (p,false) if p.exchange().is_some()=>"routed_control",
-        (Profile::RoutedView|Profile::RoutedControl|Profile::RoutedAudio|Profile::RoutedClipboardSync|Profile::RoutedCatalog,true)=>"routed_control.exe",
-        (Profile::RoutedView|Profile::RoutedControl|Profile::RoutedAudio|Profile::RoutedClipboardSync|Profile::RoutedCatalog,false)=>"routed_control",
+        (Profile::RoutedView|Profile::RoutedControl|Profile::RoutedAvView|Profile::RoutedAvControl|Profile::RoutedAudio|Profile::RoutedClipboardSync|Profile::RoutedCatalog,true)=>"routed_control.exe",
+        (Profile::RoutedView|Profile::RoutedControl|Profile::RoutedAvView|Profile::RoutedAvControl|Profile::RoutedAudio|Profile::RoutedClipboardSync|Profile::RoutedCatalog,false)=>"routed_control",
         (_, true) => "lan_view.exe",
         (_, false) => "lan_view",
     };
@@ -248,7 +255,7 @@ fn handle_output(shared: &Mutex<Snapshot>, output: Output, pass: &mut bool, fail
                     let mut snap=locked(shared);if (snap.profile.exchange().is_some()||snap.profile==Profile::RoutedCatalog&&snap.catalog_selected.is_some())&&done<=total&&total<=64*1024*1024{snap.transfer_done=Some(done);snap.transfer_total=Some(total);}
                 }
             } else if let Some(v)=text.strip_prefix("AUDIO_VOLUME "){
-                let mut snap=locked(shared);if snap.profile==Profile::RoutedAudio{snap.audio_volume=v.parse::<u8>().ok().filter(|v|*v<=100);}
+                let mut snap=locked(shared);if snap.profile.audio(){snap.audio_volume=v.parse::<u8>().ok().filter(|v|*v<=100);}
             } else if let Some(line)=text.strip_prefix("CATALOG_ENTRY "){
                 let mut snap=locked(shared);
                 if snap.profile==Profile::RoutedCatalog&&snap.stage==Stage::Connected&&!snap.catalog_ready{
@@ -376,7 +383,7 @@ fn supervise(
                 }
             }
             Ok(WorkerCommand::Volume(volume))=>{
-                if approved&&profile==Profile::RoutedAudio&&!host&&volume<=100&&locked(&shared).stage==Stage::Connected{
+                if approved&&profile.audio()&&!host&&volume<=100&&locked(&shared).stage==Stage::Connected{
                     if let Some(pipe)=stdin.as_mut(){if writeln!(pipe,"VOLUME {volume}").and_then(|_|pipe.flush()).is_err(){failure=Some("Could not deliver local audio volume".into());}}
                 }
             }
@@ -451,7 +458,7 @@ impl SessionManager {
                 command.arg("--desktop-session");
             }
             p if p.routed()=>return Err("Use the routed connection entry point".into()),
-            Profile::RoutedTest|Profile::RoutedView|Profile::RoutedControl|Profile::RoutedFileHost|Profile::RoutedFileController|Profile::RoutedTextHost|Profile::RoutedTextController|Profile::RoutedPngHost|Profile::RoutedPngController|Profile::RoutedAudio|Profile::RoutedDirectoryHost|Profile::RoutedDirectoryController|Profile::RoutedClipboardSync|Profile::RoutedCatalog=>return Err("Use the routed connection entry point".into()),
+            Profile::RoutedTest|Profile::RoutedView|Profile::RoutedControl|Profile::RoutedFileHost|Profile::RoutedFileController|Profile::RoutedTextHost|Profile::RoutedTextController|Profile::RoutedPngHost|Profile::RoutedPngController|Profile::RoutedAudio|Profile::RoutedDirectoryHost|Profile::RoutedDirectoryController|Profile::RoutedClipboardSync|Profile::RoutedCatalog|Profile::RoutedAvView|Profile::RoutedAvControl=>return Err("Use the routed connection entry point".into()),
             Profile::Screen => {
                 if host {
                     let display = display_id.ok_or("Choose the specific display to share")?;
@@ -465,7 +472,7 @@ impl SessionManager {
     fn prepare_routed(&self,role:&str,url:&str,server_id:&str,profile:Profile,display_id:Option<u32>,relay_only:bool,persistent:bool,storage_consent:bool,ca_path:Option<String>,history_path:Option<PathBuf>,quality:&str,transfer_path:Option<String>,volume:u8,extra_displays:Vec<u32>,identity_slot:u8,resume_from:Option<String>,checkpoint_path:Option<String>,shared_identity:bool)->Result<Snapshot,String>{
         if !profile.routed()||url.len()>512{return Err("Invalid routed session configuration".into());}
         if persistent&&!storage_consent{return Err("Persistent routed identity requires explicit native storage consent".into());}
-        if shared_identity&&(!persistent||role!="controller"||!matches!(profile,Profile::RoutedTest|Profile::RoutedView|Profile::RoutedControl)){return Err("Shared identity requires an explicitly selected persistent outgoing desktop session".into());}
+        if shared_identity&&(!persistent||role!="controller"||!matches!(profile,Profile::RoutedTest|Profile::RoutedView|Profile::RoutedControl|Profile::RoutedAvView|Profile::RoutedAvControl)){return Err("Shared identity requires an explicitly selected persistent outgoing desktop session".into());}
         let pin=remote_ex_signaling::decode_hex::<32>(server_id).map_err(|_|"Invalid expected server ID")?;
         let _=remote_ex_rendezvous_client::Endpoint::secure(url,pin)?;
         let host=match role{"host"=>true,"controller"=>false,_=>return Err("Unknown routed role".into())};
@@ -474,15 +481,16 @@ impl SessionManager {
         command.arg(if host{"--host"}else{"--controller"}).arg(url).arg(remote_ex_signaling::hex(&pin));
         match profile{
             Profile::RoutedTest=>{},
-            Profile::RoutedView|Profile::RoutedControl=>{
-                command.arg(if profile==Profile::RoutedView{"--view"}else{"--control"});
+            Profile::RoutedView|Profile::RoutedControl|Profile::RoutedAvView|Profile::RoutedAvControl=>{
+                command.arg(match profile{Profile::RoutedView=>"--view",Profile::RoutedControl=>"--control",Profile::RoutedAvView=>"--av-view",_=>"--av-control"});
                 if host{
                     let main=display_id.ok_or("Choose a display")?;
                     command.arg(main.to_string());
-                    if profile==Profile::RoutedControl&&!extra_displays.is_empty(){return Err("Control requires only the primary display".into());}
+                    if !profile.view()&&!extra_displays.is_empty(){return Err("Control requires only the primary display".into());}
                     if extra_displays.len()>3||extra_displays.iter().enumerate().any(|(i,d)|*d==main||extra_displays[..i].contains(d)){return Err("Select up to four distinct displays".into());}
                     for d in extra_displays{command.arg("--view-extra").arg(d.to_string());}
                 }else if !extra_displays.is_empty(){return Err("Only the host can authorize additional displays".into());}
+                if profile.av(){if volume>100{return Err("Invalid audio volume".into());}command.arg("--volume").arg(volume.to_string());}
             },
             Profile::RoutedCatalog=>{
                 let path=PathBuf::from(transfer_path.ok_or("Choose local catalog root or destination")?);
@@ -558,7 +566,7 @@ impl SessionManager {
             supervise(ChildGuard(child), rx, shared.clone(), profile, host, worker_stop);
             if let Some((path,server))=history{
                 let snap=locked(&shared).clone();
-                let mode=match profile{Profile::RoutedTest=>"test",Profile::RoutedView=>"view",Profile::RoutedControl=>"control",_=>return};
+                let mode=match profile{Profile::RoutedTest=>"test",Profile::RoutedView|Profile::RoutedAvView=>"view",Profile::RoutedControl|Profile::RoutedAvControl=>"control",_=>return};
                 let outcome=match snap.stage{Stage::Passed=>"passed",Stage::Failed=>"failed",Stage::Canceled=>"canceled",_=>return};
                 if let Some(id)=snap.peer_id {
                     // A history failure cannot change actual release confirmation.
@@ -690,7 +698,7 @@ pub fn routed_catalog_select(window:WebviewWindow,managers:State<'_,RoutedManage
 pub fn routed_audio_volume(window:WebviewWindow,managers:State<'_,RoutedManagers>,slot:Option<u8>,volume:u8)->Result<Snapshot,String>{
     require_main(&window)?;
     let slots=locked(&managers.slots);let manager=&slots.sessions[slot_index(slot)?];let snap=manager.snapshot();
-    if snap.stage!=Stage::Connected||snap.profile!=Profile::RoutedAudio||volume>100{return Err("No active audio playback".into());}
+    if snap.stage!=Stage::Connected||!snap.profile.audio()||volume>100{return Err("No active audio playback".into());}
     let worker=locked(&manager.worker);worker.as_ref().ok_or("No active audio process")?.tx.try_send(WorkerCommand::Volume(volume)).map_err(|_|"Audio control unavailable".to_owned())?;Ok(snap)
 }
 #[tauri::command]
@@ -709,7 +717,7 @@ pub async fn select_transfer_file(window:WebviewWindow,receive:bool,directory:Op
 pub fn routed_prepare(window:WebviewWindow,manager:State<'_,SessionManager>,managers:State<'_,RoutedManagers>,slot:Option<u8>,role:String,url:String,server_id:String,mode:String,display_id:Option<u32>,relay_only:bool,persistent:bool,storage_consent:bool,ca_path:Option<String>,save_history:Option<bool>,quality:Option<String>,sender:Option<String>,transfer_path:Option<String>,volume:Option<u8>,extra_displays:Option<Vec<u32>>,resume_from:Option<String>,checkpoint_path:Option<String>,shared_identity:Option<bool>)->Result<Snapshot,String>{
     require_main(&window)?;
     let profile=match (mode.as_str(),sender.as_deref()){
-        ("test",_)=>Profile::RoutedTest,("view",_)=>Profile::RoutedView,("control",_)=>Profile::RoutedControl,("audio",_)=>Profile::RoutedAudio,("clipboard_sync",_)=>Profile::RoutedClipboardSync,("catalog",_)=>Profile::RoutedCatalog,
+        ("test",_)=>Profile::RoutedTest,("view",_)=>Profile::RoutedView,("control",_)=>Profile::RoutedControl,("av_view",_)=>Profile::RoutedAvView,("av_control",_)=>Profile::RoutedAvControl,("audio",_)=>Profile::RoutedAudio,("clipboard_sync",_)=>Profile::RoutedClipboardSync,("catalog",_)=>Profile::RoutedCatalog,
         ("file",Some("host"))=>Profile::RoutedFileHost,("file",Some("controller"))=>Profile::RoutedFileController,
         ("text",Some("host"))=>Profile::RoutedTextHost,("text",Some("controller"))=>Profile::RoutedTextController,
         ("png",Some("host"))=>Profile::RoutedPngHost,("png",Some("controller"))=>Profile::RoutedPngController,

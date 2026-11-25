@@ -45,7 +45,7 @@ impl Invitation{
         key(&self.server_id)?;
         if hex(&fingerprint(&key(&self.public_key)?))!=self.device_id{return Err("Invitation identity mismatch".into());}
         if self.expires_at<=t||self.expires_at>t.saturating_add(TTL){return Err("Invitation expired or invalid lifetime".into());}
-        if !matches!(self.mode.as_str(),"test"|"view"|"control"){return Err("Invalid invitation profile".into());}
+        if !matches!(self.mode.as_str(),"test"|"view"|"control"|"av_view"|"av_control"){return Err("Invalid invitation profile".into());}
         Ok(())
     }
 }

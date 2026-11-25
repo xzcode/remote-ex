@@ -8,6 +8,7 @@ on:
       - 'scripts/ci/install-gstreamer.*'
       - 'docs/DEV_BUILD.md'
       - 'scripts/ci/macos-development-info.plist'
+      - 'crates/media/macos/SystemAudio.swift'
 permissions:
   contents: read
 concurrency:
@@ -52,6 +53,12 @@ jobs:
         shell: bash
         run: |
           cargo build --release --manifest-path crates/media/Cargo.toml --features native-control --bins
+      - name: Build macOS system-audio helper (compile only, no OS capture)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          swiftc -swift-version 5 -parse-as-library -O -target "$(uname -m)-apple-macosx13.0" crates/media/macos/SystemAudio.swift -o crates/media/target/release/remote-ex-mac-audio
+          codesign --force --sign - crates/media/target/release/remote-ex-mac-audio
       - name: Verify macOS media runtime linkage
         if: runner.os == 'macOS'
         shell: bash
@@ -95,6 +102,12 @@ jobs:
           suffix=""
           if [ "$RUNNER_OS" = "Windows" ]; then suffix=".exe"; fi
           python3 scripts/test_routed_diagnostic.py "target/release/remote-ex-rendezvous${suffix}" "crates/media/target/release/routed_diagnostic${suffix}" --audio-test
+      - name: Simultaneous VP8 and Opus RTP media (synthetic)
+        shell: bash
+        run: |
+          suffix=""
+          if [ "$RUNNER_OS" = "Windows" ]; then suffix=".exe"; fi
+          python3 scripts/test_routed_diagnostic.py "target/release/remote-ex-rendezvous${suffix}" "crates/media/target/release/routed_diagnostic${suffix}" --av-test
       - name: Collect Windows development package
         if: runner.os == 'Windows'
         shell: pwsh
@@ -120,6 +133,8 @@ jobs:
             cp "crates/media/target/release/$name" "$app/Contents/MacOS/"
             codesign --force --sign - "$app/Contents/MacOS/$name"
           done
+          cp crates/media/target/release/remote-ex-mac-audio "$app/Contents/MacOS/"
+          codesign --force --sign - "$app/Contents/MacOS/remote-ex-mac-audio"
           codesign --force --sign - "$app"
           codesign --verify --deep --strict "$app"
           cp docs/DEV_BUILD.md stage/README.md
