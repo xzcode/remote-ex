@@ -2,6 +2,7 @@
 //! Authenticated registration client. WSS requires verified CA/hostname
 //! and a separately configured application server ID. The only plaintext
 //! option is explicitly selected numeric IPv4 loopback development.
+pub mod secure_route;
 use futures_util::{SinkExt,StreamExt};
 use remote_ex_rendezvous_protocol::{Client,ClientFrame,Server,ServerFrame,VERSION,MAX_MESSAGE};
 use remote_ex_security::{DeviceIdentity,Fingerprint};

@@ -35,6 +35,8 @@ pub enum Signal {
     Proof { signature: String },
     Ice { mline: u32, candidate: String },
     IceBatch { items: Vec<IceItem> },
+    NoiseHandshake { step: u8, packet: String },
+    Sealed { packet: String },
 }
 
 /// Bounded non-trickle candidate exchange after both session proofs.
@@ -81,7 +83,7 @@ impl Client {
     }
 }
 impl Signal {
-    fn validate(&self) -> Result<(), &'static str> {
+    pub fn validate(&self) -> Result<(), &'static str> {
         match self {
             Self::Offer { sdp } | Self::Answer { sdp }
                 if !sdp.is_empty() && sdp.len() <= MAX_SDP && !sdp.contains('\0') => Ok(()),
@@ -93,6 +95,9 @@ impl Signal {
                 && items.iter().any(|i| !i.candidate.is_empty())
                 && items.iter().all(|i| i.mline <= 1 && i.candidate.len() <= MAX_ICE
                     && !i.candidate.contains(['\r','\n','\0'])) => Ok(()),
+            Self::NoiseHandshake { step:1, packet } if packet.len()==64 && hex_packet(packet) => Ok(()),
+            Self::NoiseHandshake { step:2, packet } if packet.len()==96 && hex_packet(packet) => Ok(()),
+            Self::Sealed { packet } if (32..=65568).contains(&packet.len()) && hex_packet(packet) => Ok(()),
             _ => Err("invalid signal"),
         }
     }
@@ -125,3 +130,5 @@ impl Server {
 fn short_code(s: &str)->bool{
     !s.is_empty() && s.len()<=64 && s.bytes().all(|b|b.is_ascii_lowercase()||b.is_ascii_digit()||b==b'_')
 }
+
+fn hex_packet(s:&str)->bool{s.len()%2==0&&s.bytes().all(|b|b.is_ascii_digit()||(b'a'..=b'f').contains(&b))}

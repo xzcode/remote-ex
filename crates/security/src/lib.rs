@@ -3,6 +3,7 @@
 pub mod session;
 pub mod pairing;
 pub mod identity_store;
+pub mod route_binding;
 pub use session::{SessionTranscript, Role, VerifiedSession, ProofError, hash_sdp, verify_session};
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use rand_core::OsRng;

@@ -29,6 +29,8 @@ struct Session {
     answer: bool,
     proofs: [bool;2],
     ice_count: [u16;2],
+    noise_step: u8,
+    sealed_count: [u8;2],
 }
 #[derive(Default)]
 pub struct Hub {
@@ -117,7 +119,7 @@ impl Hub {
         self.devices.get_mut(&target).unwrap().session = Some(session.clone());
         self.sessions.insert(session.clone(), Session {
             controller: id.into(), host: target.clone(), requested, controller_nonce, grant: None,
-            deadline: now + PENDING_TTL, offer: false, answer: false, proofs: [false;2], ice_count: [0;2],
+            deadline: now + PENDING_TTL, offer: false, answer: false, proofs: [false;2], ice_count: [0;2], noise_step:0, sealed_count:[0;2],
         });
         Server::Requested { session, target }
     }
@@ -150,6 +152,10 @@ impl Hub {
         // First M2 profile retains M1 host-as-offerer convention. Both
         // endpoints must still verify signatures and actual DTLS themselves.
         let valid = match &payload {
+            Signal::NoiseHandshake { step:1,.. } if role==0 && s.noise_step==0 && !s.offer => {s.noise_step=1;true}
+            Signal::NoiseHandshake { step:2,.. } if role==1 && s.noise_step==1 => {s.noise_step=2;true}
+            Signal::Sealed { .. } if s.noise_step==2 && s.sealed_count[role]<24 => {s.sealed_count[role]+=1;true}
+            _ if s.noise_step!=0 => false,
             Signal::Offer { .. } if role == 1 && !s.offer => { s.offer = true; true }
             Signal::Answer { .. } if role == 0 && s.offer && !s.answer => { s.answer = true; true }
             Signal::Proof { .. } if s.answer && !s.proofs[role] => { s.proofs[role] = true; true }

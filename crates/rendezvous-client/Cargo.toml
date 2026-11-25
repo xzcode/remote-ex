@@ -17,6 +17,8 @@ webpki-roots = "1"
 url = "2"
 
 rustls-pemfile = "2"
+snow = "0.10"
+zeroize = "1"
 
 [features]
 default = []
