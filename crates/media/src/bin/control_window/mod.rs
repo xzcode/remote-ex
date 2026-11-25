@@ -37,7 +37,7 @@ pub fn run(peer:&Peer,channel:&ControlChannel,session:[u8;16],geometry:Geometry)
     let mut keys=BTreeSet::new();let mut buttons=BTreeSet::new();
     let mut armed=false;let mut previous=None;let mut last_frame=Instant::now();
     let mut heartbeat=Instant::now()-Duration::from_secs(1);let started=Instant::now();
-    let result=(||{
+    let result: MediaResult<u32>=(||{
         while window.is_open()&&!canceled()&&started.elapsed()<Duration::from_secs(28){
             connected(peer,channel)?;
             if heartbeat.elapsed()>=Duration::from_millis(300){channel.send(HEARTBEAT)?;heartbeat=Instant::now();}

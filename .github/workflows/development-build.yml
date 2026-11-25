@@ -37,7 +37,7 @@ jobs:
       - name: Check GStreamer SDK
         shell: bash
         run: |
-          pkg-config --modversion gstreamer-1.0 gstreamer-webrtc-1.0 gstreamer-app-1.0
+          "${PKG_CONFIG:-pkg-config}" --modversion gstreamer-1.0 gstreamer-webrtc-1.0 gstreamer-app-1.0
           gst-inspect-1.0 webrtcbin
           gst-inspect-1.0 vp8enc
       - name: Build desktop

@@ -89,7 +89,7 @@ impl Backend for Inert{
 }
 fn serve<B:Backend,F:FnMut(u32)->MediaResult<Vec<u8>>>(peer:&Peer,channel:&ControlChannel,mut d:Dispatcher<B>,mut frame:F,test:bool)->MediaResult<(u32,u32)>{
     let started=Instant::now();let mut last=started;let mut next=started;let mut frames=0;let mut events=0;
-    let result=(||{loop{
+    let result: MediaResult<()>=(||{loop{
         connected(peer,channel)?;
         if started.elapsed()>=Duration::from_secs(if test{12}else{30})||last.elapsed()>Duration::from_secs(2){return Err("Control deadline or heartbeat lost".into());}
         for _ in 0..64{
