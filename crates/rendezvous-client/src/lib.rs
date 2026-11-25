@@ -7,7 +7,7 @@ use futures_util::{SinkExt,StreamExt};
 use remote_ex_rendezvous_protocol::{Client,ClientFrame,Server,ServerFrame,VERSION,MAX_MESSAGE};
 use remote_ex_security::{DeviceIdentity,Fingerprint};
 use remote_ex_signaling::{decode_hex,hex};
-use std::{sync::Arc,time::Duration};
+use std::{collections::VecDeque,sync::Arc,time::Duration};
 use tokio::{net::TcpStream,time::timeout};
 use tokio_tungstenite::{connect_async_tls_with_config,Connector,MaybeTlsStream,WebSocketStream,tungstenite::{Message,protocol::WebSocketConfig}};
 use url::{Url,Host};
@@ -42,6 +42,7 @@ pub struct Connection {
     ws: WebSocketStream<MaybeTlsStream<TcpStream>>,
     device_id: String,
     failed: bool,
+    pending:VecDeque<Server>,
 }
 impl Connection {
     pub async fn register(endpoint: Endpoint, identity:&DeviceIdentity)->Result<Self>{
@@ -57,7 +58,7 @@ impl Connection {
         let cfg=WebSocketConfig::default().max_message_size(Some(MAX_MESSAGE)).max_frame_size(Some(MAX_MESSAGE)).max_write_buffer_size(2*MAX_MESSAGE);
         let (ws,_)=timeout(CONNECT_LIMIT,connect_async_tls_with_config(endpoint.url.as_str(),Some(cfg),true,Some(Connector::Rustls(Arc::new(tls)))))
             .await.map_err(|_|"Signaling connection timed out")?.map_err(|_|"Signaling connection or TLS verification failed")?;
-        let mut conn=Self{ws,device_id:hex(&identity.fingerprint()),failed:false};
+        let mut conn=Self{ws,device_id:hex(&identity.fingerprint()),failed:false,pending:VecDeque::new()};
         let Server::Challenge{server,nonce}=conn.receive(IO_LIMIT).await? else{return Err("Expected registration challenge".into());};
         let server=decode_hex::<32>(&server).map_err(|_|"Invalid server identity")?;
         let nonce=decode_hex::<32>(&nonce).map_err(|_|"Invalid registration nonce")?;
@@ -85,6 +86,11 @@ impl Connection {
     }
     pub async fn receive(&mut self,limit:Duration)->Result<Server>{
         if self.failed{return Err("Signaling closed".into());}
+        if let Some(event)=self.pending.pop_front(){return Ok(event);}
+        self.receive_network(limit).await
+    }
+    async fn receive_network(&mut self,limit:Duration)->Result<Server>{
+        if self.failed{return Err("Signaling closed".into());}
         let limit=limit.min(Duration::from_secs(60));
         let result=timeout(limit,async{
             loop{
@@ -107,6 +113,23 @@ impl Connection {
             Ok(Err(e))=>{self.failed=true;Err(e)},
             Err(_)=>{self.failed=true;Err("Signaling receive timed out".into())}
         }
+    }
+    /// Request operator-configured ICE credentials once after the encrypted
+    /// handshake. Preserve up to four racing ciphertext records in order.
+    pub async fn request_ice(&mut self,session:&str)->Result<remote_ex_rendezvous_protocol::IceConfig>{
+        if !self.pending.is_empty(){return Err("Unexpected pending records before ICE configuration".into());}
+        self.send(Client::IceConfig{session:session.into()}).await?;
+        for _ in 0..5{
+            match self.receive_network(IO_LIMIT).await?{
+                Server::IceConfig{session:id,config} if id==session=>return Ok(config),
+                event @ Server::Signal{session:_,payload:remote_ex_rendezvous_protocol::Signal::Sealed{..}}=>{
+                    if !matches!(&event,Server::Signal{session:id,..} if id==session){self.failed=true;return Err("Wrong ICE session".into());}
+                    self.pending.push_back(event);
+                },
+                _=>{self.failed=true;return Err("Unexpected ICE configuration response".into());}
+            }
+        }
+        self.failed=true;Err("ICE configuration record limit exceeded".into())
     }
     pub async fn close(mut self)->Result<()>{
         timeout(IO_LIMIT,self.ws.close(None)).await.map_err(|_|"Signaling close timed out")?.map_err(|_|"Signaling close failed".into())

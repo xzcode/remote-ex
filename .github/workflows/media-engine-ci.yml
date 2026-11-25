@@ -20,7 +20,7 @@ jobs:
       - name: Install native media dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libgstreamer-plugins-bad1.0-dev gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-nice
+          sudo apt-get install -y pkg-config libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libgstreamer-plugins-bad1.0-dev gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-nice coturn
       - name: Media bounds tests
         run: cargo test --manifest-path crates/media/Cargo.toml
       - name: WebRTC video loopback
@@ -44,3 +44,5 @@ jobs:
           cargo build -p remote-ex-rendezvous
           cargo build --manifest-path crates/media/Cargo.toml --bin routed_diagnostic
           timeout 100s python3 scripts/test_routed_diagnostic.py target/debug/remote-ex-rendezvous crates/media/target/debug/routed_diagnostic
+      - name: Forced TURN relay with temporary credentials (synthetic only)
+        run: timeout 120s python3 scripts/test_routed_diagnostic.py target/debug/remote-ex-rendezvous crates/media/target/debug/routed_diagnostic --relay-only

@@ -222,6 +222,32 @@ impl Peer {
         Ok(Self { pipeline, webrtc, input, output, config, events: rx, overflow, running: false, data_enabled: false })
     }
 
+    /// Configure operator-provided ICE servers before starting negotiation.
+    /// Default "all" allows direct candidate preference and TURN fallback;
+    /// relay-only requires a valid temporary TURN credential.
+    pub fn configure_ice(&mut self,config:&remote_ex_rendezvous_protocol::IceConfig,relay_only:bool)->MediaResult<()>{
+        use percent_encoding::{utf8_percent_encode,NON_ALPHANUMERIC};
+        use zeroize::Zeroizing;
+        if self.running{return Err("ICE configuration must precede media start".into());}
+        config.validate().map_err(str::to_owned)?;
+        if relay_only&&config.turn.is_none(){return Err("Relay-only requires a TURN credential".into());}
+        if let Some(stun)=&config.stun{self.webrtc.set_property("stun-server",stun.as_str());}
+        if let Some(turn)=&config.turn{
+            let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|_|"System clock invalid")?.as_secs();
+            if turn.expires_at<=now+10||turn.expires_at>now+600{return Err("TURN credential outside accepted lifetime".into());}
+            let parsed=remote_ex_rendezvous_protocol::ice_url(&turn.url,&["turn","turns"]).map_err(str::to_owned)?;
+            let user=utf8_percent_encode(&turn.username,NON_ALPHANUMERIC);
+            let password=utf8_percent_encode(&turn.password,NON_ALPHANUMERIC);
+            let uri=Zeroizing::new(format!("{}://{user}:{password}@{}:{}",parsed.scheme(),parsed.host_str().ok_or("Invalid TURN host")?,parsed.port().ok_or("Invalid TURN port")?));
+            if !self.webrtc.emit_by_name::<bool>("add-turn-server",&[&uri.as_str()]){
+                return Err("Media engine rejected TURN configuration".into());
+            }
+        }
+        let policy=if relay_only{rtc::WebRTCICETransportPolicy::Relay}else{rtc::WebRTCICETransportPolicy::All};
+        self.webrtc.set_property("ice-transport-policy",policy);
+        Ok(())
+    }
+
     pub fn start(&mut self) -> MediaResult<()> {
         if self.running { return Err("Peer already running".into()); }
         self.pipeline.set_state(gst::State::Playing).map_err(|e| e.to_string())?;

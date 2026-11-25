@@ -59,8 +59,8 @@ impl Backend for Inert{
 async fn recv(conn:&mut Connection)->MediaResult<Server>{
     conn.receive(Duration::from_secs(20)).await
 }
-async fn ice(peer:&Peer,conn:&mut Connection,cipher:&mut RouteCipher)->MediaResult<()>{
-    let deadline=Instant::now()+Duration::from_secs(8);
+async fn ice(peer:&Peer,conn:&mut Connection,cipher:&mut RouteCipher,relay_only:bool)->MediaResult<()>{
+    let deadline=Instant::now()+Duration::from_secs(18);
     let mut items=Vec::new();
     loop{
         for event in peer.drain_events()?{
@@ -82,9 +82,21 @@ async fn ice(peer:&Peer,conn:&mut Connection,cipher:&mut RouteCipher)->MediaResu
         if Instant::now()>=deadline{return Err("ICE gathering timeout".into());}
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
+    if relay_only { require_relay(&items)?; }
     cipher.send(conn,Signal::IceBatch{items}).await?;
     let Signal::IceBatch{items}=cipher.receive(conn).await? else{return Err("Expected ICE batch".into());};
+    if relay_only { require_relay(&items)?; }
     for item in items{peer.add_ice(&IceCandidate{mline:item.mline,candidate:item.candidate})?;}
+    Ok(())
+}
+fn require_relay(items:&[IceItem])->MediaResult<()>{
+    let mut count=0;
+    for item in items.iter().filter(|i|!i.candidate.is_empty()){
+        let parts:Vec<_>=item.candidate.split_ascii_whitespace().collect();
+        if !parts.windows(2).any(|p|p==["typ","relay"]){return Err("Non-relay ICE candidate in forced relay mode".into());}
+        count+=1;
+    }
+    if count==0{return Err("No TURN relay candidates".into());}
     Ok(())
 }
 fn gate(proof:&VerifiedSession)->MediaResult<SessionGate>{
@@ -125,7 +137,7 @@ async fn finish(conn:&mut Connection,session:&str)->MediaResult<()>{
     }
 }
 
-async fn host(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey)->MediaResult<()>{
+async fn host(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey,relay_only:bool)->MediaResult<()>{
     let Server::Incoming{session,controller,controller_key,requested,controller_nonce}=recv(conn).await?
         else{return Err("Expected incoming device request".into());};
     if controller!=hex(&fingerprint(&expected)) || decode_hex::<32>(&controller_key).map_err(error)?!=expected || requested!=GRANT{
@@ -142,7 +154,9 @@ async fn host(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey)->Media
     let binding=RouteBinding{session:sid,controller:expected,host:id.public_key(),controller_nonce:nonce,host_nonce:hn,requested:GRANT,granted:GRANT};
     let mut cipher=RouteCipher::establish(conn,&binding,id,Role::Host).await?;
 
+    let config=conn.request_ice(&session).await?;
     let mut peer=Peer::sender(CONFIG,Source::NativeRgba)?;
+    peer.configure_ice(&config,relay_only)?;drop(config);
     peer.start()?;peer.push_rgba(frame(0))?;
     let channel=peer.create_control_channel()?;
     let offer=offer(&peer)?;
@@ -156,7 +170,7 @@ async fn host(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey)->Media
     let Signal::Proof{signature}=cipher.receive(conn).await? else{return Err("Expected peer proof".into());};
     let proof=signed.finish(&decode_hex::<64>(&signature).map_err(error)?,offer.sdp.as_bytes(),answer.sdp.as_bytes()).map_err(error)?;
     peer.set_description(false,&answer)?;
-    ice(&peer,conn,&mut cipher).await?;
+    ice(&peer,conn,&mut cipher,relay_only).await?;
     ready(&peer,&channel,&answer.sdp,true)?;
     let backend=Inert::default();let log=backend.events.clone();
     let mut dispatcher=Dispatcher::new(gate(&proof)?,backend,DisplayArea{x:0,y:0,width:CONFIG.width,height:CONFIG.height})?;
@@ -193,7 +207,7 @@ async fn host(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey)->Media
     finish(conn,&session).await?;
     out(&format!("PASS ROUTED HOST: sent_frames={frames}, input_released=true"))
 }
-async fn controller(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey)->MediaResult<()>{
+async fn controller(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey,relay_only:bool)->MediaResult<()>{
     let target=hex(&fingerprint(&expected));
     let request=OutgoingPairing::new(id,expected,GRANT).map_err(error)?;
     let cn=request.nonce();
@@ -210,7 +224,9 @@ async fn controller(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey)-
     let approved=pending.approve_local(granted).map_err(error)?;
     let binding=RouteBinding{session:sid,controller:id.public_key(),host:expected,controller_nonce:cn,host_nonce:decode_hex::<32>(&nonce).map_err(error)?,requested:GRANT,granted};
     let mut cipher=RouteCipher::establish(conn,&binding,id,Role::Controller).await?;
-    let mut peer=Peer::receiver(CONFIG)?;peer.start()?;
+    let config=conn.request_ice(&session).await?;
+    let mut peer=Peer::receiver(CONFIG)?;
+    peer.configure_ice(&config,relay_only)?;drop(config);peer.start()?;
     let channel=peer.create_control_channel()?;
     let Signal::Offer{sdp}=cipher.receive(conn).await? else{return Err("Expected offer".into());};
     if !valid_sdp(&sdp){return Err("Unexpected offer profile".into());}
@@ -226,7 +242,7 @@ async fn controller(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey)-
     let local=signed.signature();
     let _proof=signed.finish(&decode_hex::<64>(&signature).map_err(error)?,offer.sdp.as_bytes(),answer.sdp.as_bytes()).map_err(error)?;
     cipher.send(conn,Signal::Proof{signature:hex(&local)}).await?;
-    ice(&peer,conn,&mut cipher).await?;
+    ice(&peer,conn,&mut cipher,relay_only).await?;
     ready(&peer,&channel,&offer.sdp,false)?;
     channel.send(READY)?;
     wait_data(&peer,&channel,conn,READY_ACK).await?;
@@ -267,8 +283,12 @@ async fn run()->MediaResult<()>{
     let url=a.next().ok_or("Missing WSS URL")?;
     let pin=decode_hex::<32>(&a.next().ok_or("Missing server ID")?).map_err(error)?;
     let endpoint=Endpoint::secure(&url,pin)?;
-    let ca=match a.next().as_deref(){None=>None,Some("--ca")=>Some(a.next().ok_or("Missing CA path")?),_=>return Err("Unexpected argument".into())};
-    if a.next().is_some(){return Err("Unexpected argument".into());}
+    let mut ca=None;let mut relay_only=false;
+    while let Some(arg)=a.next(){match arg.as_str(){
+        "--ca" if ca.is_none()=>ca=Some(a.next().ok_or("Missing CA path")?),
+        "--relay-only" if !relay_only=>relay_only=true,
+        _=>return Err("Unexpected argument".into()),
+    }}
     let id=DeviceIdentity::generate();
     out(&format!("KEY {}",hex(&id.public_key())))?;
     let mut conn=if let Some(path)=ca{Connection::register_with_roots(endpoint,&id,roots(&path)?).await?}else{Connection::register(endpoint,&id).await?};
@@ -278,7 +298,7 @@ async fn run()->MediaResult<()>{
     if expected==[0;32]||expected==id.public_key(){return Err("Invalid peer key".into());}
     out("CONSENT (type ALLOW ROUTED TEST — synthetic video and inert input only)")?;
     if input()? !="ALLOW ROUTED TEST"{return Err("Local consent denied".into());}
-    let result=if host{self::host(&mut conn,&id,expected).await}else{controller(&mut conn,&id,expected).await};
+    let result=if host{self::host(&mut conn,&id,expected,relay_only).await}else{controller(&mut conn,&id,expected,relay_only).await};
     let close=conn.close().await;result?;close
 }
 #[tokio::main(flavor="current_thread")]
