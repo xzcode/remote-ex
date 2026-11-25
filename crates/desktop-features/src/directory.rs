@@ -10,7 +10,7 @@ const MAX_DEPTH:usize=8;
 const MAX_HEADER:usize=1024*1024;
 #[derive(Clone,Debug,Serialize,Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Entry{parts:Vec<String>,directory:bool,size:u64}
+pub struct Entry{pub parts:Vec<String>,pub directory:bool,pub size:u64}
 fn component(s:&str)->bool{
     if s.is_empty()||s.len()>200||matches!(s,"."|"..")||s.ends_with(['.',' '])
         ||s.chars().any(|c|c.is_control()||matches!(c,'/'|'\\'|':'|'*'|'?'|'<'|'>'|'|'|'"')){return false;}
@@ -79,6 +79,38 @@ fn secure_source(root:&Path,parts:&[String])->Result<File,String>{
     if !f.metadata().map_err(|_|"Cannot inspect open file")?.is_file(){return Err("Selected entry is not a regular file".into());}
     Ok(f)
 }
+pub const CATALOG_LIMIT:usize=512*1024;
+/// Immutable, bounded catalog of a locally approved root. Only relative
+/// names and sizes leave the host. Selections are indexes, never peer paths.
+pub struct Catalog{root:PathBuf,entries:Vec<Entry>}
+impl Catalog{
+    pub fn open(root:&Path)->Result<Self,String>{
+        let meta=fs::symlink_metadata(root).map_err(|_|"Selected directory unavailable")?;
+        if !root.is_absolute()||!check_metadata(&meta)||!meta.is_dir(){return Err("Choose an ordinary absolute local directory".into());}
+        let root=root.canonicalize().map_err(|_|"Cannot resolve selected directory")?;
+        let mut entries=Vec::new();let mut total=0;
+        walk(&root,&mut Vec::new(),&mut entries,&mut total)?;validate(&entries)?;
+        Ok(Self{root,entries})
+    }
+    pub fn manifest(&self)->Result<Vec<u8>,String>{
+        let data=serde_json::to_vec(&self.entries).map_err(|_|"Cannot encode catalog")?;
+        if data.len()>CATALOG_LIMIT{return Err("Catalog exceeds limit".into());}
+        Ok(data)
+    }
+    pub fn open_file(&self,index:usize)->Result<(File,&Entry),String>{
+        let e=self.entries.get(index).filter(|e|!e.directory).ok_or("Not an approved catalog file")?;
+        let root_meta=fs::symlink_metadata(&self.root).map_err(|_|"Approved root unavailable")?;
+        if !check_metadata(&root_meta)||!root_meta.is_dir()||self.root.canonicalize().map_err(|_|"Approved root changed")?!=self.root{return Err("Approved root changed".into());}
+        let f=secure_source(&self.root,&e.parts)?;
+        if f.metadata().map_err(|_|"Cannot inspect selected file")?.len()!=e.size{return Err("Selected catalog file changed".into());}
+        Ok((f,e))
+    }
+}
+pub fn decode_catalog(data:&[u8])->Result<Vec<Entry>,String>{
+    if data.is_empty()||data.len()>CATALOG_LIMIT{return Err("Catalog exceeds limit".into());}
+    let entries:Vec<Entry>=serde_json::from_slice(data).map_err(|_|"Invalid catalog")?;
+    validate(&entries)?;Ok(entries)
+}
 pub fn pack(root:&Path)->Result<Vec<u8>,String>{
     let meta=fs::symlink_metadata(root).map_err(|_|"Selected directory unavailable")?;
     if !check_metadata(&meta)||!meta.is_dir(){return Err("Choose an ordinary local directory".into());}
@@ -141,6 +173,19 @@ pub fn unpack(bundle:&[u8],target:&Path,confirmed:bool,mut canceled:impl FnMut()
 }
 #[cfg(test)]mod tests{
     use super::*;
+    #[test]fn catalog_only_opens_preapproved_regular_file_indexes(){
+        let dir=tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("nested")).unwrap();
+        fs::write(dir.path().join("nested/a.txt"),b"abc").unwrap();
+        let catalog=Catalog::open(dir.path()).unwrap();
+        let data=decode_catalog(&catalog.manifest().unwrap()).unwrap();
+        assert_eq!(data.len(),2);assert!(data[0].directory);
+        assert!(catalog.open_file(0).is_err());assert!(catalog.open_file(2).is_err());
+        let(mut file,entry)=catalog.open_file(1).unwrap();let mut bytes=Vec::new();file.read_to_end(&mut bytes).unwrap();
+        assert_eq!(entry.parts,vec!["nested","a.txt"]);assert_eq!(bytes,b"abc");
+        fs::write(dir.path().join("nested/a.txt"),b"changed").unwrap();
+        assert!(catalog.open_file(1).is_err());
+    }
     #[test]fn directory_roundtrip_and_no_overwrite(){
         let dir=tempfile::tempdir().unwrap();let source=dir.path().join("src");fs::create_dir(&source).unwrap();
         fs::create_dir(source.join("sub")).unwrap();fs::create_dir(source.join("empty")).unwrap();fs::write(source.join("sub/a.bin"),b"fixture").unwrap();

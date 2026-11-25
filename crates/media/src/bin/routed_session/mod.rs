@@ -18,13 +18,14 @@ mod native;
 mod exchange;
 mod audio;
 mod clipboard_sync;
+mod catalog;
 static CANCEL:AtomicBool=AtomicBool::new(false);
 fn canceled()->bool{CANCEL.load(Ordering::Acquire)}
 #[derive(Clone,Copy,PartialEq,Eq)]
-enum Profile{Test,View,Control,Exchange(exchange::Mode),Audio(bool),ClipboardSync(bool)}
+enum Profile{Test,View,Control,Exchange(exchange::Mode),Audio(bool),ClipboardSync(bool),Catalog}
 impl Profile{
-    fn code(self)->u8{match self{Self::Test=>0,Self::View=>1,Self::Control=>2,Self::Exchange(mode)=>mode.code(),Self::Audio(test)=>if test{9}else{10},Self::ClipboardSync(test)=>if test{13}else{14}}}
-    fn grant(self)->u8{if self==Self::View||matches!(self,Self::Exchange(_)|Self::Audio(_)|Self::ClipboardSync(_)){VIEW}else{VIEW|INPUT}}
+    fn code(self)->u8{match self{Self::Test=>0,Self::View=>1,Self::Control=>2,Self::Exchange(mode)=>mode.code(),Self::Audio(test)=>if test{9}else{10},Self::ClipboardSync(test)=>if test{13}else{14},Self::Catalog=>15}}
+    fn grant(self)->u8{if self==Self::View||matches!(self,Self::Exchange(_)|Self::Audio(_)|Self::ClipboardSync(_)|Self::Catalog){VIEW}else{VIEW|INPUT}}
     fn consent(self,host:bool)->&'static str{match(self,host){
         (Self::Test,_)=>"ALLOW ROUTED TEST",(Self::View,true)=>"ALLOW ROUTED SCREEN",
         (Self::View,false)=>"ALLOW ROUTED VIEW",(Self::Control,true)=>"ALLOW ROUTED SCREEN AND INPUT",
@@ -35,6 +36,8 @@ impl Profile{
         (Self::Audio(false),false)=>"ALLOW PLAY SYSTEM AUDIO",
         (Self::ClipboardSync(true),_)=>"ALLOW TEST CLIPBOARD SYNC",
         (Self::ClipboardSync(false),_)=>"ALLOW LIVE CLIPBOARD TEXT SYNC",
+        (Self::Catalog,true)=>"ALLOW LIST AND DOWNLOAD SELECTED ROOT",
+        (Self::Catalog,false)=>"ALLOW BROWSE AND RECEIVE ONE FILE",
     }}
 }
 const HEARTBEAT:&[u8]=b"remote-ex-routed/heartbeat/v1";
@@ -219,6 +222,12 @@ async fn host(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey,relay_o
     peer.set_description(false,&answer)?;
     ice(&peer,conn,&mut cipher,relay_only).await?;
     ready(&peer,&channel,&answer.sdp,true)?;
+    if profile==Profile::Catalog{
+        wait_data(&peer,&channel,conn,READY).await?;channel.send(READY_ACK)?;
+        catalog::host(&peer,&channel,conn,exchange_path.ok_or("Select local directory")?).await?;
+        channel.send(catalog::HOST_DONE)?;finish(conn,&session).await?;
+        return out("PASS ROUTED HOST: scoped file catalog complete");
+    }
     if let Profile::ClipboardSync(test)=profile{
         wait_data(&peer,&channel,conn,READY).await?;channel.send(READY_ACK)?;
         clipboard_sync::run(&peer,&channel,conn,true,test).await?;
@@ -318,6 +327,13 @@ async fn controller(mut owned:Connection,id:&DeviceIdentity,expected:PublicKey,r
     cipher.send(conn,Signal::Proof{signature:hex(&local)}).await?;
     ice(&peer,conn,&mut cipher,relay_only).await?;
     ready(&peer,&channel,&offer.sdp,false)?;
+    if profile==Profile::Catalog{
+        channel.send(READY)?;wait_data(&peer,&channel,conn,READY_ACK).await?;
+        catalog::controller(&peer,&channel,conn,exchange_path.ok_or("Choose local destination")?).await?;
+        wait_data(&peer,&channel,conn,catalog::HOST_DONE).await?;
+        conn.send(Client::Close{session:session.clone()}).await?;finish(conn,&session).await?;
+        return out("PASS ROUTED CONTROLLER: scoped file catalog complete");
+    }
     if let Profile::ClipboardSync(test)=profile{
         channel.send(READY)?;wait_data(&peer,&channel,conn,READY_ACK).await?;
         clipboard_sync::run(&peer,&channel,conn,false,test).await?;
@@ -414,6 +430,7 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
             let n=a.next().ok_or("Missing identity slot")?.parse::<u8>().map_err(error)?;
             remote_ex_security::identity_store::credential_name(n)?;identity_slot=Some(n);
         },
+        "--catalog" if profile==Profile::Test=>{profile=Profile::Catalog;exchange_path=Some(std::path::PathBuf::from(a.next().ok_or("Choose local catalog root or destination")?));},
         "--clipboard-sync" if native_allowed&&profile==Profile::Test=>profile=Profile::ClipboardSync(false),
         "--clipboard-sync-test" if !native_allowed&&profile==Profile::Test=>profile=Profile::ClipboardSync(true),
         "--audio" if native_allowed&&profile==Profile::Test=>profile=Profile::Audio(false),
@@ -438,6 +455,10 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
     if identity_slot.is_some()&&!persistent{return Err("Identity slot requires explicit persistent storage opt-in".into());}
     if defer_test_registration&&(!supervised||persistent||profile!=Profile::Test){return Err("Test registration barrier requires synthetic temporary supervised mode".into());}
     if native_allowed&&profile==Profile::Test{return Err("Choose a separate view, control or exchange profile".into());}
+    if profile==Profile::Catalog{
+        if !supervised{return Err("Catalog requires explicit visible desktop supervision".into());}
+        quality="compat".into();
+    }
     if let Profile::ClipboardSync(test)=profile{
         if !test&&!cfg!(all(feature="native-control",any(target_os="windows",target_os="macos"))){return Err("Native clipboard unavailable".into());}
         quality="compat".into();
@@ -500,10 +521,11 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
     if supervised{
         let allow_pause=matches!(profile,Profile::Exchange(m) if m.kind==remote_ex_desktop_features::exchange::Kind::File&&m.sending(host));
         let allow_volume=profile==Profile::Audio(false)&&!host;
+        let allow_catalog=profile==Profile::Catalog&&!host;
         std::thread::spawn(move||{
             use std::io::BufRead;
             let mut pipe=io::stdin().lock();
-            if allow_pause||allow_volume{
+            if allow_pause||allow_volume||allow_catalog{
                 loop{
                     let mut line=Vec::new();
                     match (&mut pipe).take(16).read_until(b'\n',&mut line){
@@ -518,6 +540,10 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
                                 cmd if allow_volume&&cmd.starts_with(b"VOLUME ")=>{
                                     let value=std::str::from_utf8(&cmd[7..]).ok().filter(|s|!s.is_empty()&&s.len()<=3&&s.bytes().all(|b|b.is_ascii_digit())).and_then(|s|s.parse::<u8>().ok());
                                     if let Some(v)=value.filter(|v|*v<=100){audio::VOLUME.store(v,Ordering::Release);}else{break;}
+                                },
+                                cmd if allow_catalog&&cmd.starts_with(b"SELECT ")=>{
+                                    let value=std::str::from_utf8(&cmd[7..]).ok().filter(|s|!s.is_empty()&&s.len()<=3&&s.bytes().all(|b|b.is_ascii_digit())).and_then(|s|s.parse::<usize>().ok());
+                                    if let Some(v)=value.filter(|v|*v<256){if catalog::SELECTED.compare_exchange(usize::MAX,v,Ordering::AcqRel,Ordering::Acquire).is_err(){break;}}else{break;}
                                 },
                                 _=>break,
                             }

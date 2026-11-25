@@ -3,7 +3,7 @@
 use super::*;
 use remote_ex_desktop_features::{checkpoint::{self,Scope},exchange::{self,Kind,Offer,Receiver,CHUNK}};
 use std::{fs::OpenOptions,io::{Cursor,Seek,SeekFrom},path::Path};
-const OFFER:u8=1;const ACCEPT:u8=2;const DATA:u8=3;const CREDIT:u8=4;const END:u8=5;const DONE:u8=6;const PAUSE:u8=7;const RESUME:u8=8;const WAIT:u8=9;const RESUME_ACCEPT:u8=10;
+pub(super) const OFFER:u8=1;const ACCEPT:u8=2;const DATA:u8=3;const CREDIT:u8=4;const END:u8=5;pub(super) const DONE:u8=6;const PAUSE:u8=7;const RESUME:u8=8;const WAIT:u8=9;const RESUME_ACCEPT:u8=10;
 pub(super) static PAUSED:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
 pub(super) const HOST_DONE:&[u8]=b"remote-ex-transfer/host-done/v1";
 const WINDOW:usize=16;
@@ -43,7 +43,7 @@ fn check_local_path(path:Option<&Path>)->MediaResult<&Path>{
     if !p.is_absolute()||p.file_name().is_none(){return Err("Choose an absolute local file path".into());}
     Ok(p)
 }
-async fn send_source<R:Read+Seek>(source:&mut R,offer:&Offer,peer:&Peer,channel:&ControlChannel,conn:&mut Connection,deadline:Instant)->MediaResult<()>{
+pub(super) async fn send_source<R:Read+Seek>(source:&mut R,offer:&Offer,peer:&Peer,channel:&ControlChannel,conn:&mut Connection,deadline:Instant)->MediaResult<()>{
     let json=serde_json::to_vec(offer).map_err(error)?;
     channel.send(&packet(OFFER,&json))?;
     let response=receive(peer,channel,conn,deadline).await?;
@@ -91,7 +91,7 @@ async fn send_source<R:Read+Seek>(source:&mut R,offer:&Offer,peer:&Peer,channel:
     if receive(peer,channel,conn,deadline).await?!=[DONE]{return Err("Transfer completion not confirmed".into());}
     Ok(())
 }
-async fn receive_to<W:Write>(writer:W,offer:Offer,peer:&Peer,channel:&ControlChannel,conn:&mut Connection,deadline:Instant,prefix:&[u8])->MediaResult<W>{
+pub(super) async fn receive_to<W:Write>(writer:W,offer:Offer,peer:&Peer,channel:&ControlChannel,conn:&mut Connection,deadline:Instant,prefix:&[u8])->MediaResult<W>{
     let size=offer.size;let file=offer.kind==Kind::File;let mut paused=false;let mut r=Receiver::with_prefix(writer,offer,true,prefix)?;
     if prefix.is_empty(){channel.send(&[ACCEPT])?;}else{
         let mut response=packet(RESUME_ACCEPT,&r.offset().to_be_bytes());response.extend_from_slice(&checkpoint::digest(prefix));
