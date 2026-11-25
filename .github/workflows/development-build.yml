@@ -108,6 +108,15 @@ jobs:
           suffix=""
           if [ "$RUNNER_OS" = "Windows" ]; then suffix=".exe"; fi
           python3 scripts/test_routed_diagnostic.py "target/release/remote-ex-rendezvous${suffix}" "crates/media/target/release/routed_diagnostic${suffix}" --av-test
+      - name: Scoped file management core checks
+        shell: bash
+        run: cargo test -p remote-ex-desktop-features directory::managed
+      - name: Host-reviewed file changes in temporary fixture
+        shell: bash
+        run: |
+          suffix=""
+          if [ "$RUNNER_OS" = "Windows" ]; then suffix=".exe"; fi
+          python3 scripts/test_routed_diagnostic.py "target/release/remote-ex-rendezvous${suffix}" "crates/media/target/release/routed_diagnostic${suffix}" --manage-test
       - name: Collect Windows development package
         if: runner.os == 'Windows'
         shell: pwsh

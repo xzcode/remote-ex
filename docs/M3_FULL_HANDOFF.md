@@ -105,3 +105,19 @@
 ### 当前运行状态与接手
 - #45615957191 core success (6f88d59)；最新 1463dfb [Core #45616132615](https://github.com/xzcode/remote-ex/actions/runs/45616132615)、[Native media #45616132618](https://github.com/xzcode/remote-ex/actions/runs/45616132618)、[Desktop #45616132613](https://github.com/xzcode/remote-ex/actions/runs/45616132613)、[Native input #45616132614](https://github.com/xzcode/remote-ex/actions/runs/45616132614)、[完整开发包 #45616132589](https://github.com/xzcode/remote-ex/actions/runs/45616132589) 记录时未结束。检查实际结果，按错误日志修复。较早重复增量/排队 run 被取消，不算通过。新 build 含 Swift helper 与 A/V synthetic runtime 测试；第四批包仍需查具体产物 SHA。不要反复提交无关内容导致 CI 取消。
 - AV track integration/实际 A/V 延迟及同步精度、macOS TCC 与真实音频、Win32 次屏实机仍未完成。完整 remote file manager 写入/改名/删除、多文件管理仍待独立权限设计；当前只读列表/单次下载及独立本机双向文件/目录已实现并测试。30秒真实控制和真实跨公网物理验收限制仍保留；未部署或修改用户服务器、未正式 Release。
+
+## 第六轮收尾（审批式远程文件变更）
+
+### 上一批实际验收
+- 1463dfb 的 [Core #45616132615](https://github.com/xzcode/remote-ex/actions/runs/45616132615)、[Native media #45616132618](https://github.com/xzcode/remote-ex/actions/runs/45616132618)、[Desktop #45616132613](https://github.com/xzcode/remote-ex/actions/runs/45616132613)、Native input #45616132614 均 success。实际 A/V 日志：AV_AUDIO_SENT 168、AV_AUDIO_RECEIVED 169、decoded_frames=30、release_ack=true；含旧断点/目录/clipboard/catalog、共享身份、双 NAT 回归。非真实音频设备或物理输入。
+- [#45616132589](https://github.com/xzcode/remote-ex/actions/runs/45616132589) 两平台完整开发包 success，macOS Swift helper compile/sign、合成 VP8/Opus、文件及模拟输入测试通过。[Windows artifact 15022622948](https://github.com/xzcode/remote-ex/actions/runs/45616132589/artifacts/15022622948) 12,141,750 bytes；[macOS artifact 15022982319](https://github.com/xzcode/remote-ex/actions/runs/45616132589/artifacts/15022982319) 12,890,352 bytes；2026-12-09 到期，外部 GStreamer runtime。旧第五批包不含第六批管理功能，非正式 Release。#45614297499 第四批也成功，已由第五批替代。
+
+### 本轮代码
+- 015ae27 / d7ed965 / 116a56a / 1c7fb95：新独立签名 profile19，主控只能提交相对 catalog index 和合法单一新名称；被控端明确选定本机根目录并允许提交请求（不是写入授权），接收后核对实际操作及目标路径，再用本机监督管道批准对应 session+review+source fingerprint SHA-256 token。不得从只读 catalog 或其他 profile 升级。每批最多4项，一次会话一个计划，75秒上限。
+- 新建空目录/空文件，普通文件同目录改名及多文件移入新本机恢复目录；无永久删除、目录重命名或递归删除。使用 cap-std 4.0.3 capability-relative Dir handle、非覆盖创建/硬链接、完整内容指纹重验，先创建目标 link 并验证，再移除旧名；不支持硬链接的文件系统明确失败且保留源。审批后发生变化、目标冲突、非法名称、路径逃逸、失效或取消应拒绝。部分批次失败可能留下已完成项、恢复目录或重复链接，报告并由用户本地处理，不自动 rollback。并发恶意本机文件系统突变不属于已证明安全边界；实际 Windows/macOS 重命名与 recovery 仍待平台测试。恢复目录含普通原始文件数据，不自动清空。
+- 新 GUI 主控组装最多四项计划，被控端显示精确相对路径/恢复目录、再次明确审批；已批准与回执数量展示。无需传任意本机绝对路径、shell、文件内容到主控；目录清单不作持久历史。
+- 新依赖 cap-std 4.0.3，来源 https://docs.rs/crate/cap-std/4.0.3/source/Cargo.toml ，上游声明 Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT。须在 M5 进行全部直接/传递依赖许可及通知文件审核；未选项目最终许可证。
+
+### 当前验证与接手
+- [#45629332749](https://github.com/xzcode/remote-ex/actions/runs/45629332749) Core success；实际日志 managed::tests::exact_review_creates_and_moves_without_overwrite、rejects_escape_collision_stale_and_cancellation success。最新 [Core #45629582593](https://github.com/xzcode/remote-ex/actions/runs/45629582593)、[Media #45629582665](https://github.com/xzcode/remote-ex/actions/runs/45629582665)、[Desktop #45629582212](https://github.com/xzcode/remote-ex/actions/runs/45629582212) 运行于 1c7fb95，记录时尚未结束。新媒体用例在 CI 临时根执行四项操作，验证审批前原目录不变及审批后改名、恢复内容匹配。新版开发 workflow 增加 Win/macOS 核心和实际协议 fixture；核对实际 run SHA、失败日志和 artifacts，不能提前宣称成功。
+- 剩余 M3：远程文件多文件下载、目录改名与删除/恢复流程、macOS 非主屏键鼠（仍主屏限制）、动态分辨率、长期连接稳定性、真实音视频/显示器/DPI/同时多会话与系统权限验收；文件管理候选不等于任意远程文件系统访问。无用户服务器变更、未部署/发行。优先完成实际必要验证，避免反复无关构建。
