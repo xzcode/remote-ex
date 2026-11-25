@@ -121,3 +121,10 @@
 ### 当前验证与接手
 - [#45629332749](https://github.com/xzcode/remote-ex/actions/runs/45629332749) Core success；实际日志 managed::tests::exact_review_creates_and_moves_without_overwrite、rejects_escape_collision_stale_and_cancellation success。最新 [Core #45629582593](https://github.com/xzcode/remote-ex/actions/runs/45629582593)、[Media #45629582665](https://github.com/xzcode/remote-ex/actions/runs/45629582665)、[Desktop #45629582212](https://github.com/xzcode/remote-ex/actions/runs/45629582212) 运行于 1c7fb95，记录时尚未结束。新媒体用例在 CI 临时根执行四项操作，验证审批前原目录不变及审批后改名、恢复内容匹配。新版开发 workflow 增加 Win/macOS 核心和实际协议 fixture；核对实际 run SHA、失败日志和 artifacts，不能提前宣称成功。
 - 剩余 M3：远程文件多文件下载、目录改名与删除/恢复流程、macOS 非主屏键鼠（仍主屏限制）、动态分辨率、长期连接稳定性、真实音视频/显示器/DPI/同时多会话与系统权限验收；文件管理候选不等于任意远程文件系统访问。无用户服务器变更、未部署/发行。优先完成实际必要验证，避免反复无关构建。
+
+
+## 第七轮（批量文件下载候选）
+- 上批实际核验：1c7fb95 的 Core #45629582593、Media #45629582665、Desktop #45629582212 均成功；f0046c8 的 [双平台开发构建 #45629925477](https://github.com/xzcode/remote-ex/actions/runs/45629925477) 成功，包含实际临时目录审批测试，Windows artifact 15031092570、macOS artifact 15032035181，2026-12-09 到期。未实机验收。
+- 新增独立签名 profile20：双方明确同意一次最多4个列表内文件；主控选择不可变目录索引，保留相对路径和必要父目录，64 MiB 包含 manifest 的总大小限制。拒绝目录索引、重复/越界选择、与选定清单不匹配的包；目标必须为新目录，拒绝覆盖。接收端 SHA-256 校验后再展开。取消或 IO 故障可能留下新建的部分目录，不自动删除本机数据；继承目录树检查与本机并发突变限制。
+- 旧 profile15 单文件、profile19 审批变更不升级权限。新增核心负例、实际两端加密下载 fixture、双平台编译/运行构建步骤。新提交 CI 尚待结果，不宣布通过或发布。
+- 剩余 M3：目录改名/恢复审批、macOS 非主屏控制、动态分辨率、长期连接及真实物理设备验收。

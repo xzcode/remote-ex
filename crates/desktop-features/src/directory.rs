@@ -9,7 +9,7 @@ const MAGIC:&[u8;8]=b"REXDIR01";
 const MAX_ENTRIES:usize=256;
 const MAX_DEPTH:usize=8;
 const MAX_HEADER:usize=1024*1024;
-#[derive(Clone,Debug,Serialize,Deserialize)]
+#[derive(Clone,Debug,Serialize,Deserialize,PartialEq,Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Entry{pub parts:Vec<String>,pub directory:bool,pub size:u64}
 fn component(s:&str)->bool{
@@ -93,6 +93,23 @@ impl Catalog{
         walk(&root,&mut Vec::new(),&mut entries,&mut total)?;validate(&entries)?;
         Ok(Self{root,entries})
     }
+    /// Pack only the selected files and their necessary parent directories.
+    pub fn pack_selected(&self,indexes:&[usize])->Result<Vec<u8>,String>{
+        let entries=selected_entries(&self.entries,indexes)?;
+        let total=validate(&entries)?;
+        let header=serde_json::to_vec(&entries).map_err(|_|"Cannot encode selection")?;
+        if header.len()>MAX_HEADER||total+12+header.len() as u64>MAX_FILE{return Err("Selected bundle exceeds 64 MiB".into());}
+        let mut data=Vec::with_capacity(total as usize+12+header.len());
+        data.extend_from_slice(MAGIC);data.extend_from_slice(&(header.len() as u32).to_be_bytes());data.extend_from_slice(&header);
+        for e in entries.iter().filter(|e|!e.directory){
+            let index=self.entries.iter().position(|x|x==e).ok_or("Selected entry unavailable")?;
+            let (file,_)=self.open_file(index)?;
+            let before=data.len();
+            file.take(e.size+1).read_to_end(&mut data).map_err(|_|"Cannot read selected file")?;
+            if data.len()-before!=e.size as usize{return Err("Selected file changed during download".into());}
+        }
+        Ok(data)
+    }
     pub fn manifest(&self)->Result<Vec<u8>,String>{
         let data=serde_json::to_vec(&self.entries).map_err(|_|"Cannot encode catalog")?;
         if data.len()>CATALOG_LIMIT{return Err("Catalog exceeds limit".into());}
@@ -106,6 +123,24 @@ impl Catalog{
         if f.metadata().map_err(|_|"Cannot inspect selected file")?.len()!=e.size{return Err("Selected catalog file changed".into());}
         Ok((f,e))
     }
+}
+pub const MAX_BATCH_FILES:usize=4;
+/// Indexes are immutable catalog positions, not remote filesystem paths.
+pub fn selected_entries(entries:&[Entry],indexes:&[usize])->Result<Vec<Entry>,String>{
+    validate(entries)?;
+    if indexes.is_empty()||indexes.len()>MAX_BATCH_FILES{return Err("Select one to four files".into());}
+    let mut seen=BTreeSet::new();
+    for &i in indexes{
+        if !seen.insert(i)||!entries.get(i).is_some_and(|e|!e.directory){return Err("Invalid or duplicate file selection".into());}
+    }
+    let chosen=entries.iter().enumerate().filter(|(i,e)|seen.contains(i)||e.directory&&indexes.iter().any(|&n|entries[n].parts.starts_with(&e.parts))).map(|(_,e)|e.clone()).collect::<Vec<_>>();
+    validate(&chosen)?;Ok(chosen)
+}
+pub fn unpack_selected(bundle:&[u8],entries:&[Entry],indexes:&[usize],target:&Path,confirmed:bool,canceled:impl FnMut()->bool)->Result<(),String>{
+    let expected=selected_entries(entries,indexes)?;
+    let (actual,_)=parse(bundle)?;
+    if actual!=expected{return Err("Download bundle does not match selected files".into());}
+    unpack(bundle,target,confirmed,canceled)
 }
 pub fn decode_catalog(data:&[u8])->Result<Vec<Entry>,String>{
     if data.is_empty()||data.len()>CATALOG_LIMIT{return Err("Catalog exceeds limit".into());}
@@ -186,6 +221,25 @@ pub fn unpack(bundle:&[u8],target:&Path,confirmed:bool,mut canceled:impl FnMut()
         assert_eq!(entry.parts,vec!["nested","a.txt"]);assert_eq!(bytes,b"abc");
         fs::write(dir.path().join("nested/a.txt"),b"changed").unwrap();
         assert!(catalog.open_file(1).is_err());
+    }
+    #[test]fn batch_download_preserves_paths_and_rejects_unselected_content(){
+        let dir=tempfile::tempdir().unwrap();let root=dir.path().join("root");fs::create_dir(&root).unwrap();
+        fs::create_dir(root.join("nested")).unwrap();
+        fs::write(root.join("nested/a.txt"),b"alpha").unwrap();
+        fs::write(root.join("nested/b.txt"),b"excluded").unwrap();
+        fs::write(root.join("z.txt"),b"omega").unwrap();
+        let catalog=Catalog::open(&root).unwrap();
+        let entries=decode_catalog(&catalog.manifest().unwrap()).unwrap();
+        for invalid in [vec![],vec![0],vec![1,1],vec![256],vec![1,2,3,4,5]]{assert!(catalog.pack_selected(&invalid).is_err());}
+        let data=catalog.pack_selected(&[3,1]).unwrap();
+        let target=dir.path().join("received");
+        assert!(unpack_selected(&data,&entries,&[1,2],&target,true,||false).is_err());assert!(!target.exists());
+        assert!(unpack_selected(&data,&entries,&[1,3],&target,false,||false).is_err());assert!(!target.exists());
+        unpack_selected(&data,&entries,&[1,3],&target,true,||false).unwrap();
+        assert_eq!(fs::read(target.join("nested/a.txt")).unwrap(),b"alpha");
+        assert_eq!(fs::read(target.join("z.txt")).unwrap(),b"omega");
+        assert!(!target.join("nested/b.txt").exists());
+        assert!(unpack_selected(&data,&entries,&[1,3],&target,true,||false).is_err());
     }
     #[test]fn directory_roundtrip_and_no_overwrite(){
         let dir=tempfile::tempdir().unwrap();let source=dir.path().join("src");fs::create_dir(&source).unwrap();

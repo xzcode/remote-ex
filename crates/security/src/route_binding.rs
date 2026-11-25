@@ -22,7 +22,7 @@ impl RouteBinding {
             ||self.controller==self.host||self.controller_nonce==[0;32]||self.host_nonce==[0;32]
             ||self.controller_nonce==self.host_nonce||self.requested&VIEW==0||self.granted&VIEW==0
             ||self.requested&!(VIEW|INPUT)!=0||self.granted&!self.requested!=0
-            ||!matches!(self.profile,0..=19)||((self.profile==1||(3..=15).contains(&self.profile)||matches!(self.profile,17|19))&&self.granted!=VIEW)||(matches!(self.profile,2|16|18)&&self.granted!=(VIEW|INPUT)){
+            ||!matches!(self.profile,0..=20)||((self.profile==1||(3..=15).contains(&self.profile)||matches!(self.profile,17|19|20))&&self.granted!=VIEW)||(matches!(self.profile,2|16|18)&&self.granted!=(VIEW|INPUT)){
             return Err(ProofError::InvalidTranscript);
         }
         let mut b=b"Remote EX/routed-noise/v1\0".to_vec();
@@ -59,6 +59,15 @@ mod tests {
         binding.profile=18;assert!(binding.context().is_err());
         binding.requested=VIEW|INPUT;binding.granted=VIEW|INPUT;assert!(binding.context().is_ok());
         binding.profile=17;assert!(binding.context().is_err());
+    }
+    #[test]
+    fn batch_catalog_has_its_own_signed_read_only_profile(){
+        let c=DeviceIdentity::generate();let h=DeviceIdentity::generate();
+        let mut b=RouteBinding{session:[1;16],controller:c.public_key(),host:h.public_key(),controller_nonce:[2;32],host_nonce:[3;32],requested:VIEW,granted:VIEW,profile:20,relay_only:false};
+        let sig=b.sign(&c,Role::Controller,&[4;32]).unwrap();
+        assert!(b.verify(Role::Controller,&[4;32],&sig).is_ok());
+        b.profile=15;assert!(b.verify(Role::Controller,&[4;32],&sig).is_err());
+        b.profile=20;b.requested=VIEW|INPUT;b.granted=VIEW|INPUT;assert!(b.context().is_err());
     }
     #[test]
     fn proof_binds_handshake_role_permission_and_both_nonces(){

@@ -12,11 +12,11 @@ type Device={device_id:string;public_key:string;label:string};
 type Display={id:number;name:string;width:number;height:number;primary:boolean};
 const props=defineProps<{t:(key:TextKey)=>string;slot:number;visible:boolean}>();
 const emit=defineEmits<{active:[value:boolean]}>();
-const native=isTauri(),role=ref<"host"|"controller">("controller"),mode=ref<"test"|"view"|"control"|"file"|"text"|"png"|"audio"|"directory"|"clipboard_sync"|"catalog"|"av_view"|"av_control"|"manage">("test");
+const native=isTauri(),role=ref<"host"|"controller">("controller"),mode=ref<"test"|"view"|"control"|"file"|"text"|"png"|"audio"|"directory"|"clipboard_sync"|"catalog"|"catalog_batch"|"av_view"|"av_control"|"manage">("test");
 const sender=ref<"host"|"controller">("controller"),transferPath=ref(""),volume=ref(75);
 const extraDisplays=ref<number[]>([]),secondaryControl=ref(false);
 const canSecondary=computed(()=>role.value==="host"&&(mode.value==="control"||mode.value==="av_control"));
-const catalogQuery=ref(""),catalogChoice=ref<number|null>(null);
+const catalogQuery=ref(""),catalogChoice=ref<number|null>(null),batchChoice=ref<number[]>([]);
 const changes=ref<Change[]>([]),operation=ref<"create_folder"|"create_file"|"rename"|"recycle">("create_folder"),newName=ref(""),parentIndex=ref<number|null>(null),fileIndex=ref<number|null>(null),reviewConfirmed=ref(false),planConfirmed=ref(false);
 const managedEditable=computed(()=>mode.value==="manage"&&role.value==="controller"&&snapshot.value.catalog_ready&&snapshot.value.stage==="connected"&&!snapshot.value.manage_submitted);
 const manageFile=computed(()=>operation.value==="rename"||operation.value==="recycle");
@@ -56,7 +56,7 @@ let timer:number|undefined,disposed=false,polling=false,revision=0;
 const statuses:Record<Stage,TextKey>={idle:"lanIdle",starting:"lanStarting",awaiting_approval:"lanAwaiting",connecting:"lanConnecting",listening:"lanListening",connected:"routedConnected",stopping:"controlStopping",passed:"controlEnded",failed:"lanFailed",canceled:"lanCanceled"};
 const status=computed(()=>props.t(statuses[snapshot.value.stage]));
 const validHex=(s:string)=>/^[a-fA-F0-9]{64}$/.test(s.trim());
-const canPrepare=computed(()=>native&&!busy.value&&!snapshot.value.active&&url.value.trim().startsWith("wss://")&&validHex(serverId.value)&&(!isDisplay.value||role.value==="controller"||displayId.value!==null)&&(!(["file","directory","catalog"].includes(mode.value)||mode.value==="manage"&&role.value==="host")||!!transferPath.value.trim()));
+const canPrepare=computed(()=>native&&!busy.value&&!snapshot.value.active&&url.value.trim().startsWith("wss://")&&validHex(serverId.value)&&(!isDisplay.value||role.value==="controller"||displayId.value!==null)&&(!(["file","directory","catalog","catalog_batch"].includes(mode.value)||mode.value==="manage"&&role.value==="host")||!!transferPath.value.trim()));
 const canConfirm=computed(()=>!busy.value&&snapshot.value.stage==="awaiting_approval"&&!!snapshot.value.device_id&&validHex(peerId.value)&&validHex(peerKey.value)&&approved.value&&!submitted.value&&peerKey.value.trim().toLowerCase()!==snapshot.value.local_key);
 watch([role,mode],()=>{secondaryControl.value=false;displayId.value=null;extraDisplays.value=[];displays.value=[];approved.value=false;});
 watch(displayId,()=>{extraDisplays.value=[];});
@@ -82,9 +82,9 @@ async function prepareSlotIdentity(){
  catch(e){error.value=String(e);}finally{busy.value=false;}
 }
 async function chooseTransferFile(){
- if(!native||busy.value||snapshot.value.active||!["file","directory","catalog","manage"].includes(mode.value))return;
+ if(!native||busy.value||snapshot.value.active||!["file","directory","catalog","catalog_batch","manage"].includes(mode.value))return;
  busy.value=true;error.value="";
- try{const p=await invoke<string|null>("select_transfer_file",{receive:mode.value==="manage"?false:mode.value==="catalog"?role.value==="controller":role.value!==sender.value,directory:mode.value==="manage"?true:mode.value==="catalog"?role.value==="host":mode.value==="directory"&&role.value===sender.value});if(p)transferPath.value=p;}
+ try{const p=await invoke<string|null>("select_transfer_file",{receive:mode.value==="manage"?false:(mode.value==="catalog"||mode.value==="catalog_batch")?role.value==="controller":role.value!==sender.value,directory:mode.value==="manage"?true:(mode.value==="catalog"||mode.value==="catalog_batch")?role.value==="host":mode.value==="directory"&&role.value===sender.value});if(p)transferPath.value=p;}
  catch(e){error.value=String(e);}finally{busy.value=false;}
 }
 async function chooseCheckpoint(save:boolean){
@@ -115,9 +115,9 @@ async function makeInvitation(){
  try{invitation.value=await invoke<string>("invitation_create",{url:url.value.trim(),serverId:serverId.value.trim(),publicKey:snapshot.value.local_key,mode:mode.value});}catch(e){error.value=String(e);}finally{busy.value=false;}
 }
 function prepare(){
- approved.value=false;submitted.value=false;catalogChoice.value=null;catalogQuery.value="";changes.value=[];parentIndex.value=null;fileIndex.value=null;newName.value="";reviewConfirmed.value=false;planConfirmed.value=false;
+ approved.value=false;submitted.value=false;catalogChoice.value=null;batchChoice.value=[];catalogQuery.value="";changes.value=[];parentIndex.value=null;fileIndex.value=null;newName.value="";reviewConfirmed.value=false;planConfirmed.value=false;
  return command("routed_prepare",{role:role.value,mode:mode.value,url:url.value.trim(),serverId:serverId.value.trim(),
- displayId:role.value==="host"&&isDisplay.value?displayId.value:null,relayOnly:relay.value,persistent:persistent.value,storageConsent:persistent.value,caPath:ca.value.trim()||null,saveHistory:saveHistory.value,quality:quality.value,sender:isExchange.value?sender.value:null,transferPath:(["file","directory","catalog"].includes(mode.value)||mode.value==="manage"&&role.value==="host")?transferPath.value.trim():null,volume:volume.value,extraDisplays:role.value==="host"&&isView.value?extraDisplays.value:[],resumeFrom:fileReceiver.value?resumeFrom.value.trim()||null:null,checkpointPath:fileReceiver.value?checkpointPath.value.trim()||null:null,sharedIdentity:shareAvailable.value&&sharedIdentity.value,secondaryControl:canSecondary.value&&secondaryControl.value});
+ displayId:role.value==="host"&&isDisplay.value?displayId.value:null,relayOnly:relay.value,persistent:persistent.value,storageConsent:persistent.value,caPath:ca.value.trim()||null,saveHistory:saveHistory.value,quality:quality.value,sender:isExchange.value?sender.value:null,transferPath:(["file","directory","catalog","catalog_batch"].includes(mode.value)||mode.value==="manage"&&role.value==="host")?transferPath.value.trim():null,volume:volume.value,extraDisplays:role.value==="host"&&isView.value?extraDisplays.value:[],resumeFrom:fileReceiver.value?resumeFrom.value.trim()||null:null,checkpointPath:fileReceiver.value?checkpointPath.value.trim()||null:null,sharedIdentity:shareAvailable.value&&sharedIdentity.value,secondaryControl:canSecondary.value&&secondaryControl.value});
 }
 function confirm(){if(!canConfirm.value)return;submitted.value=true;return command("routed_confirm",{deviceId:peerId.value.trim(),peerKey:peerKey.value.trim(),approved:true});}
 let stopDrop:(()=>void)|undefined;
@@ -133,12 +133,12 @@ onBeforeUnmount(()=>{disposed=true;stopDrop?.();if(timer!==undefined)window.clea
  <header class="preview-head"><h2>{{ t("routedTitle") }}</h2><span class="status" role="status">{{ status }}</span></header>
  <p>{{ t("routedDescription") }}</p>
  <div v-if="snapshot.active&&isDisplay" class="view-notice">{{ t(role==="host"?"routedHostNotice":"controlControllerNotice") }}</div>
- <div class="field"><label>{{ t("invitationCode") }}</label><textarea v-model="invitation" maxlength="2048" :readonly="snapshot.active" rows="2"/><div class="actions"><button :disabled="busy||snapshot.active||!invitation.trim()" @click="readInvitation">{{ t("invitationImport") }}</button><button :disabled="busy||role!=='host'||!snapshot.device_id||isExchange||mode==='audio'||mode==='clipboard_sync'||mode==='catalog'||mode==='manage'" @click="makeInvitation">{{ t("invitationCreate") }}</button></div><p class="muted">{{ t("invitationNotice") }}</p></div>
+ <div class="field"><label>{{ t("invitationCode") }}</label><textarea v-model="invitation" maxlength="2048" :readonly="snapshot.active" rows="2"/><div class="actions"><button :disabled="busy||snapshot.active||!invitation.trim()" @click="readInvitation">{{ t("invitationImport") }}</button><button :disabled="busy||role!=='host'||!snapshot.device_id||isExchange||mode==='audio'||mode==='clipboard_sync'||mode==='catalog'||mode==='catalog_batch'||mode==='manage'" @click="makeInvitation">{{ t("invitationCreate") }}</button></div><p class="muted">{{ t("invitationNotice") }}</p></div>
  <div class="field">
   <label>{{ t("presenceUrl") }}</label><input v-model="url" placeholder="wss://…/v1/ws" maxlength="512" :disabled="busy||snapshot.active"/>
   <label>{{ t("presenceServerId") }}</label><input v-model="serverId" maxlength="64" class="key-input" :disabled="busy||snapshot.active"/>
   <label>{{ t("routedCa") }}</label><input v-model="ca" maxlength="1024" :disabled="busy||snapshot.active"/>
-  <label>{{ t("sessionProfile") }}</label><select v-model="mode" :disabled="busy||snapshot.active"><option value="test">{{ t("secureTest") }}</option><option value="view">{{ t("screenView") }}</option><option value="control">{{ t("controlMode") }}</option><option value="av_view">{{ t("avView") }}</option><option value="av_control">{{ t("avControl") }}</option><option value="file">{{ t("exchangeFile") }}</option><option value="directory">{{ t("exchangeDirectory") }}</option><option value="catalog">{{ t("catalogMode") }}</option><option value="manage">{{ t("manageMode") }}</option><option value="text">{{ t("exchangeText") }}</option><option value="clipboard_sync">{{ t("clipboardSync") }}</option><option value="png">{{ t("exchangeImage") }}</option><option value="audio">{{ t("audioMode") }}</option></select>
+  <label>{{ t("sessionProfile") }}</label><select v-model="mode" :disabled="busy||snapshot.active"><option value="test">{{ t("secureTest") }}</option><option value="view">{{ t("screenView") }}</option><option value="control">{{ t("controlMode") }}</option><option value="av_view">{{ t("avView") }}</option><option value="av_control">{{ t("avControl") }}</option><option value="file">{{ t("exchangeFile") }}</option><option value="directory">{{ t("exchangeDirectory") }}</option><option value="catalog">{{ t("catalogMode") }}</option><option value="catalog_batch">{{ t("catalogBatchMode") }}</option><option value="manage">{{ t("manageMode") }}</option><option value="text">{{ t("exchangeText") }}</option><option value="clipboard_sync">{{ t("clipboardSync") }}</option><option value="png">{{ t("exchangeImage") }}</option><option value="audio">{{ t("audioMode") }}</option></select>
   <label>{{ t("lanRole") }}</label><select v-model="role" :disabled="busy||snapshot.active"><option value="controller">{{ t("lanController") }}</option><option value="host">{{ t("lanHost") }}</option></select>
   <template v-if="role==='host'&&isDisplay">
    <label v-if="canSecondary" class="check-label"><input type="checkbox" v-model="secondaryControl" :disabled="busy||snapshot.active" @change="displayId=null;displays=[]"/>{{ t("secondaryControl") }}</label>
@@ -147,10 +147,10 @@ onBeforeUnmount(()=>{disposed=true;stopDrop?.();if(timer!==undefined)window.clea
    <template v-if="isView&&displayId!==null"><label>{{ t("extraDisplays") }}</label><label v-for="d in displays.filter(x=>x.id!==displayId)" :key="d.id" class="check-label"><input type="checkbox" v-model="extraDisplays" :value="d.id" :disabled="busy||snapshot.active||(extraDisplays.length>=3&&!extraDisplays.includes(d.id))"/>{{ d.name }} · {{ d.width }} × {{ d.height }}</label><p class="muted">{{ t("extraDisplaysNotice") }}</p></template>
   </template>
   <template v-if="isExchange"><label>{{ t("exchangeSender") }}</label><select v-model="sender" :disabled="busy||snapshot.active"><option value="controller">{{ t("lanController") }}</option><option value="host">{{ t("lanHost") }}</option></select><template v-if="mode==='file'||mode==='directory'"><label>{{ t(mode==="directory"?(role===sender?"directorySource":"directoryDestination"):(role===sender?"exchangeSource":"exchangeDestination")) }}</label><div class="actions"><input v-model="transferPath" maxlength="2048" :disabled="busy||snapshot.active"/><button :disabled="busy||snapshot.active||!native" @click="chooseTransferFile">{{ t(mode==="directory"&&role===sender?"directoryChoose":"exchangeChooseFile") }}</button></div><p v-if="role===sender" class="muted">{{ t("dropSingle") }}</p><p v-if="mode==='directory'" class="muted">{{ t("directoryNotice") }}</p></template><p class="muted">{{ t("exchangeNotice") }}</p></template>
-  <div v-if="mode==='catalog'" class="field">
-    <label>{{ t(role==="host"?"catalogRoot":"exchangeDestination") }}</label>
+  <div v-if="mode==='catalog'||mode==='catalog_batch'" class="field">
+    <label>{{ t(role==="host"?"catalogRoot":mode==="catalog_batch"?"directoryDestination":"exchangeDestination") }}</label>
     <div class="actions"><input v-model="transferPath" maxlength="2048" :disabled="busy||snapshot.active"/><button :disabled="busy||snapshot.active||!native" @click="chooseTransferFile">{{ t(role==="host"?"directoryChoose":"exchangeChooseFile") }}</button></div>
-    <p class="muted">{{ t("catalogNotice") }}</p>
+    <p class="muted">{{ t(mode==="catalog_batch"?"catalogBatchNotice":"catalogNotice") }}</p>
   </div>
   <div v-if="mode==='manage'" class="field">
     <template v-if="role==='host'"><label>{{ t("manageRoot") }}</label><div class="actions"><input v-model="transferPath" maxlength="2048" :disabled="busy||snapshot.active"/><button :disabled="busy||snapshot.active||!native" @click="chooseTransferFile">{{ t("directoryChoose") }}</button></div></template>
@@ -179,7 +179,7 @@ onBeforeUnmount(()=>{disposed=true;stopDrop?.();if(timer!==undefined)window.clea
   <label>{{ t("routedPeerId") }}</label><input v-model="peerId" maxlength="64" class="key-input" :disabled="busy||submitted||!!chosen"/>
   <label>{{ t("lanPeerKey") }}</label><input v-model="peerKey" maxlength="64" class="key-input" :disabled="busy||submitted||!!chosen"/>
   <p class="muted">{{ t("routedVerify") }}</p>
-  <label class="check-label"><input type="checkbox" v-model="approved" :disabled="busy||submitted"/>{{ t(mode==="manage"?(role==="host"?"manageHostConsent":"manageControllerConsent"):canSecondary&&secondaryControl?(isAv?"secondaryAvConsent":"secondaryConsent"):isAv?(isView?(role==="host"?"avViewHostConsent":"avViewControllerConsent"):(role==="host"?"avControlHostConsent":"avControlControllerConsent")):mode==="catalog"?(role==="host"?"catalogHostConsent":"catalogControllerConsent"):mode==="clipboard_sync"?"clipboardSyncConsent":mode==="audio"?(role==="host"?"audioSendConsent":"audioPlayConsent"):isExchange?(role===sender?"exchangeSendConsent":"exchangeReceiveConsent"):mode==="test"?"routedTestConsent":mode==="view"?(role==="host"?(extraDisplays.length?"multiDisplayConsent":"viewHostConsent"):"viewControllerConsent"):(role==="host"?"controlHostConsent":"controlControllerConsent")) }}</label>
+  <label class="check-label"><input type="checkbox" v-model="approved" :disabled="busy||submitted"/>{{ t(mode==="manage"?(role==="host"?"manageHostConsent":"manageControllerConsent"):canSecondary&&secondaryControl?(isAv?"secondaryAvConsent":"secondaryConsent"):isAv?(isView?(role==="host"?"avViewHostConsent":"avViewControllerConsent"):(role==="host"?"avControlHostConsent":"avControlControllerConsent")):mode==="catalog_batch"?(role==="host"?"catalogBatchHostConsent":"catalogBatchControllerConsent"):mode==="catalog"?(role==="host"?"catalogHostConsent":"catalogControllerConsent"):mode==="clipboard_sync"?"clipboardSyncConsent":mode==="audio"?(role==="host"?"audioSendConsent":"audioPlayConsent"):isExchange?(role===sender?"exchangeSendConsent":"exchangeReceiveConsent"):mode==="test"?"routedTestConsent":mode==="view"?(role==="host"?(extraDisplays.length?"multiDisplayConsent":"viewHostConsent"):"viewControllerConsent"):(role==="host"?"controlHostConsent":"controlControllerConsent")) }}</label>
   <button class="primary" :disabled="!canConfirm" @click="confirm">{{ t("lanApprove") }}</button>
  </div>
  <div v-if="snapshot.stage==='connected'&&isDisplay" class="field"><label>{{ t("networkStats") }}</label><p class="muted">{{ t("networkBitrate") }}: {{ snapshot.network_bps==null?"—":(snapshot.network_bps/1000000).toFixed(2)+" Mb/s" }} · RTT: {{ snapshot.rtt_ms==null?"—":snapshot.rtt_ms+" ms" }} · {{ t("networkLoss") }}: {{ snapshot.loss_pct==null?"—":snapshot.loss_pct.toFixed(2)+"%" }} · {{ t("networkRoute") }}: {{ snapshot.route_type==="relay"?"TURN":snapshot.route_type==="direct"?"P2P":"—" }}</p></div>
@@ -209,17 +209,19 @@ onBeforeUnmount(()=>{disposed=true;stopDrop?.();if(timer!==undefined)window.clea
   <button class="primary" :disabled="busy||!snapshot.active||snapshot.manage_approved||!reviewConfirmed" @click="command('routed_manage_approve',{token:snapshot.manage_token,confirmed:true})">{{ t("manageApprove") }}</button>
  </div>
  <p v-if="snapshot.manage_applied!=null" class="muted">{{ t("manageApplied") }}: {{ snapshot.manage_applied }}</p>
- <div v-if="mode==='catalog'&&role==='controller'&&snapshot.catalog_ready" class="field">
+ <div v-if="(mode==='catalog'||mode==='catalog_batch')&&role==='controller'&&snapshot.catalog_ready" class="field">
    <label>{{ t("catalogTitle") }} ({{ snapshot.catalog?.length??0 }})</label>
    <input v-model="catalogQuery" :placeholder="t('deviceSearch')"/>
    <div class="catalog-list" style="max-height:280px;overflow:auto;border:1px solid var(--border);border-radius:6px">
      <div v-for="{entry,index} in catalogRows" :key="index" class="actions" style="padding:6px 8px;overflow-wrap:anywhere">
-       <input v-if="!entry.directory" type="radio" name="catalog-file" :value="index" v-model="catalogChoice" :disabled="busy||snapshot.catalog_selected!=null||!snapshot.active"/>
+       <input v-if="!entry.directory&&mode==='catalog_batch'" type="checkbox" :value="index" v-model="batchChoice" :disabled="busy||snapshot.catalog_selected!=null||!snapshot.active||(batchChoice.length>=4&&!batchChoice.includes(index))"/>
+       <input v-else-if="!entry.directory" type="radio" name="catalog-file" :value="index" v-model="catalogChoice" :disabled="busy||snapshot.catalog_selected!=null||!snapshot.active"/>
        <span>{{ entry.directory?"▸":"·" }} {{ entry.parts.join("/") }}</span>
        <span v-if="!entry.directory" class="muted">{{ entry.size }} B</span>
      </div>
    </div>
-   <button class="primary" :disabled="busy||!snapshot.active||snapshot.stage!=='connected'||catalogChoice===null||snapshot.catalog_selected!=null" @click="command('routed_catalog_select',{index:catalogChoice,confirmed:true})">{{ t("catalogDownload") }}</button>
+   <button v-if="mode==='catalog_batch'" class="primary" :disabled="busy||!snapshot.active||snapshot.stage!=='connected'||batchChoice.length===0||snapshot.catalog_selected!=null" @click="command('routed_catalog_batch_select',{indexes:batchChoice,confirmed:true})">{{ t("catalogBatchDownload") }} ({{ batchChoice.length }}/4)</button>
+   <button v-else class="primary" :disabled="busy||!snapshot.active||snapshot.stage!=='connected'||catalogChoice===null||snapshot.catalog_selected!=null" @click="command('routed_catalog_select',{index:catalogChoice,confirmed:true})">{{ t("catalogDownload") }}</button>
  </div>
  <p v-if="snapshot.clipboard_sent!=null" class="muted">{{ t("clipboardSyncCounts") }}: {{ snapshot.clipboard_sent }} / {{ snapshot.clipboard_received??0 }}</p>
  <p v-if="snapshot.directory_entries!=null" class="muted">{{ t("directoryEntries") }}: {{ snapshot.directory_entries }}</p>

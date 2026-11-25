@@ -84,7 +84,7 @@ fn stage(shared: &Mutex<Snapshot>, next: Stage, detail: Option<String>) {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
-enum Profile { Diagnostic, SecureTest, Screen, Control, RoutedTest, RoutedView, RoutedControl, RoutedFileHost, RoutedFileController, RoutedTextHost, RoutedTextController, RoutedPngHost, RoutedPngController, RoutedAudio, RoutedDirectoryHost, RoutedDirectoryController, RoutedClipboardSync, RoutedCatalog, RoutedAvView, RoutedAvControl, RoutedManage }
+enum Profile { Diagnostic, SecureTest, Screen, Control, RoutedTest, RoutedView, RoutedControl, RoutedFileHost, RoutedFileController, RoutedTextHost, RoutedTextController, RoutedPngHost, RoutedPngController, RoutedAudio, RoutedDirectoryHost, RoutedDirectoryController, RoutedClipboardSync, RoutedCatalog, RoutedAvView, RoutedAvControl, RoutedManage, RoutedCatalogBatch }
 impl Profile {
     fn parse(value: &str) -> Result<Self, String> {
         match value {
@@ -95,9 +95,9 @@ impl Profile {
             _ => Err("Unknown session profile".into()),
         }
     }
-    fn routed(self)->bool{matches!(self,Self::RoutedTest|Self::RoutedView|Self::RoutedControl|Self::RoutedAvView|Self::RoutedAvControl)||self.exchange().is_some()||matches!(self,Self::RoutedAudio|Self::RoutedClipboardSync|Self::RoutedCatalog|Self::RoutedManage)}
+    fn routed(self)->bool{matches!(self,Self::RoutedTest|Self::RoutedView|Self::RoutedControl|Self::RoutedAvView|Self::RoutedAvControl)||self.exchange().is_some()||matches!(self,Self::RoutedAudio|Self::RoutedClipboardSync|Self::RoutedCatalog|Self::RoutedCatalogBatch|Self::RoutedManage)}
     fn exchange(self)->Option<(&'static str,bool)>{match self{Self::RoutedFileHost=>Some(("file",true)),Self::RoutedFileController=>Some(("file",false)),Self::RoutedTextHost=>Some(("text",true)),Self::RoutedTextController=>Some(("text",false)),Self::RoutedPngHost=>Some(("png",true)),Self::RoutedPngController=>Some(("png",false)),Self::RoutedDirectoryHost=>Some(("directory",true)),Self::RoutedDirectoryController=>Some(("directory",false)),_=>None}}
-    fn graceful(self)->bool{self.requires_release()||self.exchange().is_some()||matches!(self,Self::RoutedAudio|Self::RoutedClipboardSync|Self::RoutedCatalog|Self::RoutedManage)}
+    fn graceful(self)->bool{self.requires_release()||self.exchange().is_some()||matches!(self,Self::RoutedAudio|Self::RoutedClipboardSync|Self::RoutedCatalog|Self::RoutedCatalogBatch|Self::RoutedManage)}
     fn av(self)->bool{matches!(self,Self::RoutedAvView|Self::RoutedAvControl)}
     fn view(self)->bool{matches!(self,Self::RoutedView|Self::RoutedAvView)}
     fn audio(self)->bool{self==Self::RoutedAudio||self.av()}
@@ -126,6 +126,7 @@ impl Profile {
             Self::RoutedAudio=>if host{"ALLOW SEND SYSTEM AUDIO"}else{"ALLOW PLAY SYSTEM AUDIO"},
             Self::RoutedClipboardSync=>"ALLOW LIVE CLIPBOARD TEXT SYNC",
             Self::RoutedCatalog=>if host{"ALLOW LIST AND DOWNLOAD SELECTED ROOT"}else{"ALLOW BROWSE AND RECEIVE ONE FILE"},
+            Self::RoutedCatalogBatch=>if host{"ALLOW LIST AND DOWNLOAD FOUR FILES"}else{"ALLOW BROWSE AND RECEIVE FILE BATCH"},
             Self::RoutedManage=>if host{"ALLOW REVIEW FILE CHANGES"}else{"ALLOW PROPOSE FILE CHANGES"},
             Self::RoutedDirectoryHost|Self::RoutedDirectoryController=>if self.exchange().unwrap().1==host{"ALLOW SEND DIRECTORY"}else{"ALLOW RECEIVE DIRECTORY"},
         }
@@ -159,8 +160,8 @@ fn sidecar_path(profile: Profile) -> Result<PathBuf, String> {
         (Profile::RoutedTest,false)=>"routed_diagnostic",
         (p,true) if p.exchange().is_some()=>"routed_control.exe",
         (p,false) if p.exchange().is_some()=>"routed_control",
-        (Profile::RoutedView|Profile::RoutedControl|Profile::RoutedAvView|Profile::RoutedAvControl|Profile::RoutedAudio|Profile::RoutedClipboardSync|Profile::RoutedCatalog|Profile::RoutedManage,true)=>"routed_control.exe",
-        (Profile::RoutedView|Profile::RoutedControl|Profile::RoutedAvView|Profile::RoutedAvControl|Profile::RoutedAudio|Profile::RoutedClipboardSync|Profile::RoutedCatalog|Profile::RoutedManage,false)=>"routed_control",
+        (Profile::RoutedView|Profile::RoutedControl|Profile::RoutedAvView|Profile::RoutedAvControl|Profile::RoutedAudio|Profile::RoutedClipboardSync|Profile::RoutedCatalog|Profile::RoutedCatalogBatch|Profile::RoutedManage,true)=>"routed_control.exe",
+        (Profile::RoutedView|Profile::RoutedControl|Profile::RoutedAvView|Profile::RoutedAvControl|Profile::RoutedAudio|Profile::RoutedClipboardSync|Profile::RoutedCatalog|Profile::RoutedCatalogBatch|Profile::RoutedManage,false)=>"routed_control",
         (_, true) => "lan_view.exe",
         (_, false) => "lan_view",
     };
@@ -172,7 +173,7 @@ fn sidecar_path(profile: Profile) -> Result<PathBuf, String> {
     Ok(path)
 }
 
-enum WorkerCommand { Approve(String), Pause(bool), Volume(u8), CatalogSelect(usize), ManagePlan(String), ManageApprove(String) }
+enum WorkerCommand { Approve(String), Pause(bool), Volume(u8), CatalogSelect(usize), CatalogBatch(Vec<usize>), ManagePlan(String), ManageApprove(String) }
 enum Output { Stdout(String), Stderr(String), Invalid }
 struct Worker { tx: SyncSender<WorkerCommand>, stop: Arc<AtomicBool>, join: JoinHandle<()> }
 struct ChildGuard(Child);
@@ -259,7 +260,7 @@ fn handle_output(shared: &Mutex<Snapshot>, output: Output, pass: &mut bool, fail
             } else if let Some(progress)=text.strip_prefix("TRANSFER_PROGRESS ") {
                 let mut fields=progress.split_ascii_whitespace();
                 if let (Some(done),Some(total),None)=(fields.next().and_then(|s|s.parse::<u64>().ok()),fields.next().and_then(|s|s.parse::<u64>().ok()),fields.next()){
-                    let mut snap=locked(shared);if (snap.profile.exchange().is_some()||snap.profile==Profile::RoutedCatalog&&snap.catalog_selected.is_some())&&done<=total&&total<=64*1024*1024{snap.transfer_done=Some(done);snap.transfer_total=Some(total);}
+                    let mut snap=locked(shared);if (snap.profile.exchange().is_some()||matches!(snap.profile,Profile::RoutedCatalog|Profile::RoutedCatalogBatch)&&snap.catalog_selected.is_some())&&done<=total&&total<=64*1024*1024{snap.transfer_done=Some(done);snap.transfer_total=Some(total);}
                 }
             } else if let Some(v)=text.strip_prefix("AUDIO_VOLUME "){
                 let mut snap=locked(shared);if snap.profile.audio(){snap.audio_volume=v.parse::<u8>().ok().filter(|v|*v<=100);}
@@ -282,7 +283,7 @@ fn handle_output(shared: &Mutex<Snapshot>, output: Output, pass: &mut bool, fail
                 }
             } else if let Some(line)=text.strip_prefix("CATALOG_ENTRY "){
                 let mut snap=locked(shared);
-                if matches!(snap.profile,Profile::RoutedCatalog|Profile::RoutedManage)&&snap.stage==Stage::Connected&&!snap.catalog_ready{
+                if matches!(snap.profile,Profile::RoutedCatalog|Profile::RoutedCatalogBatch|Profile::RoutedManage)&&snap.stage==Stage::Connected&&!snap.catalog_ready{
                     let valid=line.split_once(' ').and_then(|(i,json)|{
                         if i.parse::<usize>().ok()!=Some(snap.catalog.len())||snap.catalog.len()>=256{return None;}
                         serde_json::from_str::<remote_ex_desktop_features::directory::Entry>(json).ok()
@@ -291,7 +292,7 @@ fn handle_output(shared: &Mutex<Snapshot>, output: Output, pass: &mut bool, fail
                 }
             } else if let Some(n)=text.strip_prefix("CATALOG_READY "){
                 let mut snap=locked(shared);
-                if matches!(snap.profile,Profile::RoutedCatalog|Profile::RoutedManage)&&snap.stage==Stage::Connected&&!snap.catalog_ready{
+                if matches!(snap.profile,Profile::RoutedCatalog|Profile::RoutedCatalogBatch|Profile::RoutedManage)&&snap.stage==Stage::Connected&&!snap.catalog_ready{
                     let valid=n.parse::<usize>().ok()==Some(snap.catalog.len())
                         &&serde_json::to_vec(&snap.catalog).ok().and_then(|b|remote_ex_desktop_features::directory::decode_catalog(&b).ok()).is_some();
                     if valid{snap.catalog_ready=true;}else{*failure=Some("Invalid catalog manifest output".into());}
@@ -315,7 +316,7 @@ fn handle_output(shared: &Mutex<Snapshot>, output: Output, pass: &mut bool, fail
             } else if text=="TRANSFER_PAUSED"||text=="TRANSFER_RESUMED"{
                 let mut snap=locked(shared);if snap.profile.exchange().is_some_and(|(kind,_)|kind=="file"){snap.transfer_paused=text=="TRANSFER_PAUSED";}
             } else if text=="TRANSFER_VERIFIED" {
-                let mut snap=locked(shared);if snap.profile.exchange().is_some()||snap.profile==Profile::RoutedCatalog{snap.transfer_verified=true;snap.transfer_paused=false;}
+                let mut snap=locked(shared);if snap.profile.exchange().is_some()||matches!(snap.profile,Profile::RoutedCatalog|Profile::RoutedCatalogBatch){snap.transfer_verified=true;snap.transfer_paused=false;}
             } else if text == "INPUT_RELEASED" {
                 let mut snapshot = locked(shared);
                 if snapshot.profile.requires_release() { snapshot.input_released = true; }
@@ -418,6 +419,13 @@ fn supervise(
                     if let Some(pipe)=stdin.as_mut(){if writeln!(pipe,"SELECT {index}").and_then(|_|pipe.flush()).is_err(){failure=Some("Could not deliver local file selection".into());}}
                 }
             }
+            Ok(WorkerCommand::CatalogBatch(indexes))=>{
+                let valid={let s=locked(&shared);s.stage==Stage::Connected&&s.catalog_ready&&s.catalog_selected==indexes.first().copied()&&remote_ex_desktop_features::directory::selected_entries(&s.catalog,&indexes).is_ok()};
+                if approved&&profile==Profile::RoutedCatalogBatch&&!host&&valid{
+                    let value=indexes.iter().map(|n|n.to_string()).collect::<Vec<_>>().join(",");
+                    if let Some(pipe)=stdin.as_mut(){if writeln!(pipe,"BATCH {value}").and_then(|_|pipe.flush()).is_err(){failure=Some("Could not deliver batch selection".into());}}
+                }
+            }
             Ok(WorkerCommand::ManagePlan(plan))=>{
                 if approved&&profile==Profile::RoutedManage&&!host&&locked(&shared).stage==Stage::Connected{
                     if let Some(pipe)=stdin.as_mut(){if writeln!(pipe,"PLAN {plan}").and_then(|_|pipe.flush()).is_err(){failure=Some("Could not deliver local change request".into());}}
@@ -494,7 +502,7 @@ impl SessionManager {
                 command.arg("--desktop-session");
             }
             p if p.routed()=>return Err("Use the routed connection entry point".into()),
-            Profile::RoutedTest|Profile::RoutedView|Profile::RoutedControl|Profile::RoutedFileHost|Profile::RoutedFileController|Profile::RoutedTextHost|Profile::RoutedTextController|Profile::RoutedPngHost|Profile::RoutedPngController|Profile::RoutedAudio|Profile::RoutedDirectoryHost|Profile::RoutedDirectoryController|Profile::RoutedClipboardSync|Profile::RoutedCatalog|Profile::RoutedAvView|Profile::RoutedAvControl|Profile::RoutedManage=>return Err("Use the routed connection entry point".into()),
+            Profile::RoutedTest|Profile::RoutedView|Profile::RoutedControl|Profile::RoutedFileHost|Profile::RoutedFileController|Profile::RoutedTextHost|Profile::RoutedTextController|Profile::RoutedPngHost|Profile::RoutedPngController|Profile::RoutedAudio|Profile::RoutedDirectoryHost|Profile::RoutedDirectoryController|Profile::RoutedClipboardSync|Profile::RoutedCatalog|Profile::RoutedCatalogBatch|Profile::RoutedAvView|Profile::RoutedAvControl|Profile::RoutedManage=>return Err("Use the routed connection entry point".into()),
             Profile::Screen => {
                 if host {
                     let display = display_id.ok_or("Choose the specific display to share")?;
@@ -537,14 +545,14 @@ impl SessionManager {
                     command.arg(root);
                 }
             },
-            Profile::RoutedCatalog=>{
+            Profile::RoutedCatalog|Profile::RoutedCatalogBatch=>{
                 let path=PathBuf::from(transfer_path.ok_or("Choose local catalog root or destination")?);
                 if !path.is_absolute()||path.file_name().is_none(){return Err("Choose an absolute local path".into());}
                 if host{
                     let m=std::fs::symlink_metadata(&path).map_err(|_|"Selected directory unavailable")?;
                     if !m.file_type().is_dir(){return Err("Select an ordinary local directory".into());}
                 }else if path.exists()||!path.parent().is_some_and(|p|p.is_dir()){return Err("Choose a new file destination".into());}
-                command.arg("--catalog").arg(path);
+                command.arg(if profile==Profile::RoutedCatalogBatch{"--catalog-batch"}else{"--catalog"}).arg(path);
             },
             Profile::RoutedClipboardSync=>{command.arg("--clipboard-sync");},
             Profile::RoutedAudio=>{
@@ -768,6 +776,19 @@ pub fn routed_catalog_select(window:WebviewWindow,managers:State<'_,RoutedManage
     Ok(snap.clone())
 }
 #[tauri::command]
+pub fn routed_catalog_batch_select(window:WebviewWindow,managers:State<'_,RoutedManagers>,slot:Option<u8>,indexes:Vec<usize>,confirmed:bool)->Result<Snapshot,String>{
+    require_main(&window)?;
+    if !confirmed{return Err("Confirm the selected batch download".into());}
+    let slots=locked(&managers.slots);let manager=&slots.sessions[slot_index(slot)?];
+    let mut snap=locked(&manager.shared);
+    if snap.stage!=Stage::Connected||snap.profile!=Profile::RoutedCatalogBatch||!snap.catalog_ready||snap.catalog_selected.is_some(){return Err("No active batch download".into());}
+    remote_ex_desktop_features::directory::selected_entries(&snap.catalog,&indexes)?;
+    let marker=indexes.first().copied();
+    let worker=locked(&manager.worker);
+    worker.as_ref().ok_or("No active catalog process")?.tx.try_send(WorkerCommand::CatalogBatch(indexes)).map_err(|_|"Batch selection unavailable".to_owned())?;
+    snap.catalog_selected=marker;Ok(snap.clone())
+}
+#[tauri::command]
 pub fn routed_audio_volume(window:WebviewWindow,managers:State<'_,RoutedManagers>,slot:Option<u8>,volume:u8)->Result<Snapshot,String>{
     require_main(&window)?;
     let slots=locked(&managers.slots);let manager=&slots.sessions[slot_index(slot)?];let snap=manager.snapshot();
@@ -790,7 +811,7 @@ pub async fn select_transfer_file(window:WebviewWindow,receive:bool,directory:Op
 pub fn routed_prepare(window:WebviewWindow,manager:State<'_,SessionManager>,managers:State<'_,RoutedManagers>,slot:Option<u8>,role:String,url:String,server_id:String,mode:String,display_id:Option<u32>,relay_only:bool,persistent:bool,storage_consent:bool,ca_path:Option<String>,save_history:Option<bool>,quality:Option<String>,sender:Option<String>,transfer_path:Option<String>,volume:Option<u8>,extra_displays:Option<Vec<u32>>,resume_from:Option<String>,checkpoint_path:Option<String>,shared_identity:Option<bool>,secondary_control:Option<bool>)->Result<Snapshot,String>{
     require_main(&window)?;
     let profile=match (mode.as_str(),sender.as_deref()){
-        ("test",_)=>Profile::RoutedTest,("view",_)=>Profile::RoutedView,("control",_)=>Profile::RoutedControl,("av_view",_)=>Profile::RoutedAvView,("av_control",_)=>Profile::RoutedAvControl,("audio",_)=>Profile::RoutedAudio,("clipboard_sync",_)=>Profile::RoutedClipboardSync,("catalog",_)=>Profile::RoutedCatalog,("manage",_)=>Profile::RoutedManage,
+        ("test",_)=>Profile::RoutedTest,("view",_)=>Profile::RoutedView,("control",_)=>Profile::RoutedControl,("av_view",_)=>Profile::RoutedAvView,("av_control",_)=>Profile::RoutedAvControl,("audio",_)=>Profile::RoutedAudio,("clipboard_sync",_)=>Profile::RoutedClipboardSync,("catalog",_)=>Profile::RoutedCatalog,("catalog_batch",_)=>Profile::RoutedCatalogBatch,("manage",_)=>Profile::RoutedManage,
         ("file",Some("host"))=>Profile::RoutedFileHost,("file",Some("controller"))=>Profile::RoutedFileController,
         ("text",Some("host"))=>Profile::RoutedTextHost,("text",Some("controller"))=>Profile::RoutedTextController,
         ("png",Some("host"))=>Profile::RoutedPngHost,("png",Some("controller"))=>Profile::RoutedPngController,
@@ -801,7 +822,7 @@ pub fn routed_prepare(window:WebviewWindow,manager:State<'_,SessionManager>,mana
     let i=slot_index(slot)?;
     let mut slots=locked(&managers.slots);
     if manager.busy(){return Err("Finish the LAN session first".into());}
-    let exclusive=role=="host"||profile.exchange().is_some()||matches!(profile,Profile::RoutedAudio|Profile::RoutedClipboardSync|Profile::RoutedCatalog|Profile::RoutedManage);
+    let exclusive=role=="host"||profile.exchange().is_some()||matches!(profile,Profile::RoutedAudio|Profile::RoutedClipboardSync|Profile::RoutedCatalog|Profile::RoutedCatalogBatch|Profile::RoutedManage);
     let shared=shared_identity.unwrap_or(false);
     if shared&&(!persistent||exclusive){return Err("Shared identity is only for persistent outgoing test/view/control sessions".into());}
     let identity=if shared{0}else{i as u8};

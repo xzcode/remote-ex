@@ -23,14 +23,14 @@ mod manage;
 static CANCEL:AtomicBool=AtomicBool::new(false);
 fn canceled()->bool{CANCEL.load(Ordering::Acquire)}
 #[derive(Clone,Copy,PartialEq,Eq)]
-enum Profile{Test,View,Control,Exchange(exchange::Mode),Audio(bool),ClipboardSync(bool),Catalog,AvTest,AvView,AvControl,Manage}
+enum Profile{Test,View,Control,Exchange(exchange::Mode),Audio(bool),ClipboardSync(bool),Catalog,AvTest,AvView,AvControl,Manage,CatalogBatch}
 impl Profile{
-    fn code(self)->u8{match self{Self::Test=>0,Self::View=>1,Self::Control=>2,Self::Exchange(mode)=>mode.code(),Self::Audio(test)=>if test{9}else{10},Self::ClipboardSync(test)=>if test{13}else{14},Self::Catalog=>15,Self::AvTest=>16,Self::AvView=>17,Self::AvControl=>18,Self::Manage=>19}}
+    fn code(self)->u8{match self{Self::Test=>0,Self::View=>1,Self::Control=>2,Self::Exchange(mode)=>mode.code(),Self::Audio(test)=>if test{9}else{10},Self::ClipboardSync(test)=>if test{13}else{14},Self::Catalog=>15,Self::AvTest=>16,Self::AvView=>17,Self::AvControl=>18,Self::Manage=>19,Self::CatalogBatch=>20}}
     fn av(self)->bool{matches!(self,Self::AvTest|Self::AvView|Self::AvControl)}
     fn native_view(self)->bool{matches!(self,Self::View|Self::AvView)}
     fn native_control(self)->bool{matches!(self,Self::Control|Self::AvControl)}
     fn synthetic(self)->bool{matches!(self,Self::Test|Self::AvTest)}
-    fn grant(self)->u8{if self.native_view()||matches!(self,Self::Exchange(_)|Self::Audio(_)|Self::ClipboardSync(_)|Self::Catalog|Self::Manage){VIEW}else{VIEW|INPUT}}
+    fn grant(self)->u8{if self.native_view()||matches!(self,Self::Exchange(_)|Self::Audio(_)|Self::ClipboardSync(_)|Self::Catalog|Self::CatalogBatch|Self::Manage){VIEW}else{VIEW|INPUT}}
     fn consent(self,host:bool)->&'static str{match(self,host){
         (Self::Test,_)=>"ALLOW ROUTED TEST",(Self::View,true)=>"ALLOW ROUTED SCREEN",
         (Self::View,false)=>"ALLOW ROUTED VIEW",(Self::Control,true)=>"ALLOW ROUTED SCREEN AND INPUT",
@@ -43,6 +43,8 @@ impl Profile{
         (Self::ClipboardSync(false),_)=>"ALLOW LIVE CLIPBOARD TEXT SYNC",
         (Self::Catalog,true)=>"ALLOW LIST AND DOWNLOAD SELECTED ROOT",
         (Self::Catalog,false)=>"ALLOW BROWSE AND RECEIVE ONE FILE",
+        (Self::CatalogBatch,true)=>"ALLOW LIST AND DOWNLOAD FOUR FILES",
+        (Self::CatalogBatch,false)=>"ALLOW BROWSE AND RECEIVE FILE BATCH",
         (Self::Manage,true)=>"ALLOW REVIEW FILE CHANGES",
         (Self::Manage,false)=>"ALLOW PROPOSE FILE CHANGES",
         (Self::AvTest,_)=>"ALLOW TEST AUDIO VIDEO",
@@ -244,9 +246,9 @@ async fn host(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey,relay_o
         channel.send(manage::HOST_DONE)?;finish(conn,&session).await?;
         return out("PASS ROUTED HOST: reviewed file changes complete");
     }
-    if profile==Profile::Catalog{
+    if matches!(profile,Profile::Catalog|Profile::CatalogBatch){
         wait_data(&peer,&channel,conn,READY).await?;channel.send(READY_ACK)?;
-        catalog::host(&peer,&channel,conn,exchange_path.ok_or("Select local directory")?).await?;
+        catalog::host(&peer,&channel,conn,exchange_path.ok_or("Select local directory")?,profile==Profile::CatalogBatch).await?;
         channel.send(catalog::HOST_DONE)?;finish(conn,&session).await?;
         return out("PASS ROUTED HOST: scoped file catalog complete");
     }
@@ -362,9 +364,9 @@ async fn controller(mut owned:Connection,id:&DeviceIdentity,expected:PublicKey,r
         conn.send(Client::Close{session:session.clone()}).await?;finish(conn,&session).await?;
         return out("PASS ROUTED CONTROLLER: reviewed file changes complete");
     }
-    if profile==Profile::Catalog{
+    if matches!(profile,Profile::Catalog|Profile::CatalogBatch){
         channel.send(READY)?;wait_data(&peer,&channel,conn,READY_ACK).await?;
-        catalog::controller(&peer,&channel,conn,exchange_path.ok_or("Choose local destination")?).await?;
+        catalog::controller(&peer,&channel,conn,exchange_path.ok_or("Choose local destination")?,profile==Profile::CatalogBatch).await?;
         wait_data(&peer,&channel,conn,catalog::HOST_DONE).await?;
         conn.send(Client::Close{session:session.clone()}).await?;finish(conn,&session).await?;
         return out("PASS ROUTED CONTROLLER: scoped file catalog complete");
@@ -471,6 +473,7 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
             remote_ex_security::identity_store::credential_name(n)?;identity_slot=Some(n);
         },
         "--manage" if profile==Profile::Test=>{profile=Profile::Manage;if host{exchange_path=Some(std::path::PathBuf::from(a.next().ok_or("Choose approved local directory")?));}},
+        "--catalog-batch" if profile==Profile::Test=>{profile=Profile::CatalogBatch;exchange_path=Some(std::path::PathBuf::from(a.next().ok_or("Choose local catalog root or new destination directory")?));},
         "--catalog" if profile==Profile::Test=>{profile=Profile::Catalog;exchange_path=Some(std::path::PathBuf::from(a.next().ok_or("Choose local catalog root or destination")?));},
         "--clipboard-sync" if native_allowed&&profile==Profile::Test=>profile=Profile::ClipboardSync(false),
         "--clipboard-sync-test" if !native_allowed&&profile==Profile::Test=>profile=Profile::ClipboardSync(true),
@@ -500,7 +503,7 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
     if identity_slot.is_some()&&!persistent{return Err("Identity slot requires explicit persistent storage opt-in".into());}
     if defer_test_registration&&(!supervised||persistent||profile!=Profile::Test){return Err("Test registration barrier requires synthetic temporary supervised mode".into());}
     if native_allowed&&profile==Profile::Test{return Err("Choose a separate view, control or exchange profile".into());}
-    if matches!(profile,Profile::Catalog|Profile::Manage){
+    if matches!(profile,Profile::Catalog|Profile::CatalogBatch|Profile::Manage){
         if !supervised{return Err("Catalog requires explicit visible desktop supervision".into());}
         quality="compat".into();
     }
@@ -568,14 +571,15 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
         let allow_pause=matches!(profile,Profile::Exchange(m) if m.kind==remote_ex_desktop_features::exchange::Kind::File&&m.sending(host));
         let allow_volume=(profile==Profile::Audio(false)||profile.av())&&!host;
         let allow_catalog=profile==Profile::Catalog&&!host;
+        let allow_batch=profile==Profile::CatalogBatch&&!host;
         let allow_manage=profile==Profile::Manage;
         std::thread::spawn(move||{
             use std::io::BufRead;
             let mut pipe=io::stdin().lock();
-            if allow_pause||allow_volume||allow_catalog||allow_manage{
+            if allow_pause||allow_volume||allow_catalog||allow_batch||allow_manage{
                 loop{
                     let mut line=Vec::new();
-                    match (&mut pipe).take(if allow_manage{1024}else{16}).read_until(b'\n',&mut line){
+                    match (&mut pipe).take(if allow_manage{1024}else if allow_batch{32}else{16}).read_until(b'\n',&mut line){
                         Ok(n) if n>0=>{
                             // Python/Windows text pipes emit CRLF. Require exactly
                             // one complete line; no whitespace or arbitrary command.
@@ -591,6 +595,9 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
                                 cmd if allow_catalog&&cmd.starts_with(b"SELECT ")=>{
                                     let value=std::str::from_utf8(&cmd[7..]).ok().filter(|s|!s.is_empty()&&s.len()<=3&&s.bytes().all(|b|b.is_ascii_digit())).and_then(|s|s.parse::<usize>().ok());
                                     if let Some(v)=value.filter(|v|*v<256){if catalog::SELECTED.compare_exchange(usize::MAX,v,Ordering::AcqRel,Ordering::Acquire).is_err(){break;}}else{break;}
+                                },
+                                cmd if allow_batch&&cmd.starts_with(b"BATCH ")=>{
+                                    if catalog::select_batch(&cmd[6..]).is_err(){break;}
                                 },
                                 cmd if allow_manage&&!host&&cmd.starts_with(b"PLAN ")=>{
                                     if manage::submit(&cmd[5..]).is_err(){break;}

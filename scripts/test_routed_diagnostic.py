@@ -39,7 +39,8 @@ def main():
     pause_test="--file-pause" in sys.argv[3:]
     if pause_test and not exchange_sender:raise RuntimeError("Pause test needs file transfer")
     manage_test="--manage-test" in sys.argv[3:]
-    catalog_test="--catalog-test" in sys.argv[3:]
+    batch_test="--catalog-batch-test" in sys.argv[3:]
+    catalog_test="--catalog-test" in sys.argv[3:] or batch_test
     if catalog_test and exchange_sender:raise RuntimeError("Choose a separate catalog test")
     directory_test="--directory-exchange" in sys.argv[3:]
     resume_test="--file-resume" in sys.argv[3:]
@@ -110,7 +111,11 @@ def main():
             if catalog_test:
                 os.mkdir(source);os.mkdir(os.path.join(source,"nested"))
                 with open(os.path.join(source,"nested","sample.bin"),"wb") as stream:stream.write(payload)
-                host_flags.extend(["--desktop-session","--catalog",source]);controller_flags.extend(["--desktop-session","--catalog",target])
+                if batch_test:
+                    with open(os.path.join(source,"nested","skip.bin"),"wb") as stream:stream.write(b"excluded")
+                    with open(os.path.join(source,"z.txt"),"wb") as stream:stream.write(b"second file")
+                flag="--catalog-batch" if batch_test else "--catalog"
+                host_flags.extend(["--desktop-session",flag,source]);controller_flags.extend(["--desktop-session",flag,target])
             if clipboard_test:
                 host_flags.extend(["--clipboard-sync-test","--desktop-session"]);controller_flags.extend(["--clipboard-sync-test","--desktop-session"])
             if av_test:
@@ -164,10 +169,10 @@ def main():
                 host[0].stdin.write("APPROVE "+token+"\n");host[0].stdin.flush()
                 if expect(controller,"MANAGE_APPLIED ",deadline)!="4":raise RuntimeError("Missing complete change receipt")
             elif catalog_test:
-                for pair,key,consent in ((host,ck,"ALLOW LIST AND DOWNLOAD SELECTED ROOT"),(controller,hk,"ALLOW BROWSE AND RECEIVE ONE FILE")):
+                for pair,key,consent in ((host,ck,"ALLOW LIST AND DOWNLOAD FOUR FILES" if batch_test else "ALLOW LIST AND DOWNLOAD SELECTED ROOT"),(controller,hk,"ALLOW BROWSE AND RECEIVE FILE BATCH" if batch_test else "ALLOW BROWSE AND RECEIVE ONE FILE")):
                     pair[0].stdin.write(key+"\n"+consent+"\n");pair[0].stdin.flush()
                 expect(controller,"CATALOG_READY ",deadline)
-                controller[0].stdin.write("SELECT 1\n");controller[0].stdin.flush()
+                controller[0].stdin.write("BATCH 1,3\n" if batch_test else "SELECT 1\n");controller[0].stdin.flush()
             elif clipboard_test:
                 for pair,key in ((host,ck),(controller,hk)):
                     pair[0].stdin.write(key+"\nALLOW TEST CLIPBOARD SYNC\n");pair[0].stdin.flush()
@@ -221,6 +226,14 @@ def main():
                     if stream.read()!=b"beta":raise RuntimeError("Recovery content mismatch")
                 if os.path.exists(os.path.join(source,"a.txt")) or os.path.exists(os.path.join(source,"b.txt")):raise RuntimeError("Original name remained")
                 print("PASS: host-reviewed four file changes, no mutation before approval, renamed and recovered bytes verified",flush=True)
+                return
+            if batch_test:
+                with open(os.path.join(target,"nested","sample.bin"),"rb") as stream:
+                    if stream.read()!=payload:raise RuntimeError("Batch first file mismatch")
+                with open(os.path.join(target,"z.txt"),"rb") as stream:
+                    if stream.read()!=b"second file":raise RuntimeError("Batch second file mismatch")
+                if os.path.exists(os.path.join(target,"nested","skip.bin")):raise RuntimeError("Unselected file downloaded")
+                print("PASS: two selected files, preserved relative paths, unselected file excluded",flush=True)
                 return
             if catalog_test:
                 with open(target,"rb") as stream:
