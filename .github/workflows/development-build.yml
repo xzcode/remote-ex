@@ -117,6 +117,7 @@ jobs:
           suffix=""
           if [ "$RUNNER_OS" = "Windows" ]; then suffix=".exe"; fi
           python3 scripts/test_routed_diagnostic.py "target/release/remote-ex-rendezvous${suffix}" "crates/media/target/release/routed_diagnostic${suffix}" --manage-test
+          python3 scripts/test_routed_diagnostic.py "target/release/remote-ex-rendezvous${suffix}" "crates/media/target/release/routed_diagnostic${suffix}" --manage-directory-test
           python3 scripts/test_routed_diagnostic.py "target/release/remote-ex-rendezvous${suffix}" "crates/media/target/release/routed_diagnostic${suffix}" --catalog-batch-test
       - name: Collect Windows development package
         if: runner.os == 'Windows'

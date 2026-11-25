@@ -76,3 +76,7 @@ Rust + Tauri 2 + Vue 3/TypeScript；WebRTC/ICE/STUN/TURN；Rust/Axum 信令服�
 ## M3 第六批开发包（临时 Actions artifacts）
 
 [Windows x64](https://github.com/xzcode/remote-ex/actions/runs/45629925477/artifacts/15031092570) · [macOS ARM64](https://github.com/xzcode/remote-ex/actions/runs/45629925477/artifacts/15032035181)。f0046c8，双平台已通过 native package / 审批式文件变更 fixture，2026-12-09 到期；需外部 GStreamer 1.26.11。尚不包含第七批批量下载候选，不代表真实设备验收或正式 Release。
+
+## M3 第七批开发包（临时 Actions artifacts）
+
+[Windows x64](https://github.com/xzcode/remote-ex/actions/runs/45648366767/artifacts/15039712891) · [macOS ARM64](https://github.com/xzcode/remote-ex/actions/runs/45648366767/artifacts/15038784382)。ab61411，完整 CI 成功，含批量下载；2026-12-09 到期，需官方 GStreamer 1.26.11 runtime。非正式发行，不含第八批目录操作。

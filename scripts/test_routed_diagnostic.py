@@ -38,7 +38,8 @@ def main():
     if exchange_sender not in (None,"host","controller"):raise RuntimeError("Invalid file sender role")
     pause_test="--file-pause" in sys.argv[3:]
     if pause_test and not exchange_sender:raise RuntimeError("Pause test needs file transfer")
-    manage_test="--manage-test" in sys.argv[3:]
+    manage_directory_test="--manage-directory-test" in sys.argv[3:]
+    manage_test="--manage-test" in sys.argv[3:] or manage_directory_test
     batch_test="--catalog-batch-test" in sys.argv[3:]
     catalog_test="--catalog-test" in sys.argv[3:] or batch_test
     if catalog_test and exchange_sender:raise RuntimeError("Choose a separate catalog test")
@@ -107,6 +108,14 @@ def main():
                 os.mkdir(source)
                 with open(os.path.join(source,"a.txt"),"wb") as stream:stream.write(b"alpha")
                 with open(os.path.join(source,"b.txt"),"wb") as stream:stream.write(b"beta")
+                if manage_directory_test:
+                    old_recovery="Remote-EX-Recovery-"+"a"*32
+                    os.makedirs(os.path.join(source,old_recovery,"0-saved","sub"))
+                    with open(os.path.join(source,old_recovery,"0-saved","sub","keep.txt"),"wb") as stream:stream.write(b"saved")
+                    os.makedirs(os.path.join(source,"folder","sub"))
+                    with open(os.path.join(source,"folder","sub","keep.txt"),"wb") as stream:stream.write(b"folder")
+                    os.makedirs(os.path.join(source,"remove","sub"))
+                    with open(os.path.join(source,"remove","sub","keep.txt"),"wb") as stream:stream.write(b"remove")
                 host_flags.extend(["--desktop-session","--manage",source]);controller_flags.extend(["--desktop-session","--manage"])
             if catalog_test:
                 os.mkdir(source);os.mkdir(os.path.join(source,"nested"))
@@ -160,14 +169,27 @@ def main():
                     pair[0].stdin.write(key+"\n"+consent+"\n");pair[0].stdin.flush()
                 expect(controller,"CATALOG_READY ",deadline)
                 plan={"changes":[{"op":"create_folder","parent":None,"name":"new-dir"},{"op":"create_file","parent":None,"name":"empty.txt"},{"op":"rename","index":0,"name":"renamed.txt"},{"op":"recycle","index":1}]}
+                if manage_directory_test:
+                    # Catalog traversal is lexical; derive indexes from its
+                    # emitted records rather than relying on platform ordering.
+                    # Use known fixture paths in sorted DFS (ASCII names).
+                    paths=[]
+                    def walk(p,parts=()):
+                        for name in sorted(os.listdir(p)):
+                            path=os.path.join(p,name); rel=parts+(name,)
+                            paths.append(rel)
+                            if os.path.isdir(path):walk(path,rel)
+                    walk(source)
+                    plan={"changes":[{"op":"rename","index":paths.index(("folder",)),"name":"renamed-folder"},{"op":"recycle","index":paths.index(("remove",))},{"op":"restore","index":paths.index((old_recovery,"0-saved")),"parent":None,"name":"restored"}]}
                 controller[0].stdin.write("PLAN "+json.dumps(plan,separators=(",",":"))+"\n");controller[0].stdin.flush()
                 review=expect(host,"MANAGE_REVIEW ",deadline)
                 token,review_json=review.split(" ",1)
                 reviewed=json.loads(review_json)
-                if len(token)!=64 or len(reviewed["items"])!=4:raise RuntimeError("Incorrect review")
-                if sorted(os.listdir(source))!=["a.txt","b.txt"]:raise RuntimeError("Directory changed before host approval")
+                if len(token)!=64 or len(reviewed["items"])!=len(plan["changes"]):raise RuntimeError("Incorrect review")
+                expected_names=sorted(["a.txt","b.txt",old_recovery,"folder","remove"]) if manage_directory_test else ["a.txt","b.txt"]
+                if sorted(os.listdir(source))!=expected_names:raise RuntimeError("Directory changed before host approval")
                 host[0].stdin.write("APPROVE "+token+"\n");host[0].stdin.flush()
-                if expect(controller,"MANAGE_APPLIED ",deadline)!="4":raise RuntimeError("Missing complete change receipt")
+                if expect(controller,"MANAGE_APPLIED ",deadline)!=str(len(plan["changes"])):raise RuntimeError("Missing complete change receipt")
             elif catalog_test:
                 for pair,key,consent in ((host,ck,"ALLOW LIST AND DOWNLOAD FOUR FILES" if batch_test else "ALLOW LIST AND DOWNLOAD SELECTED ROOT"),(controller,hk,"ALLOW BROWSE AND RECEIVE FILE BATCH" if batch_test else "ALLOW BROWSE AND RECEIVE ONE FILE")):
                     pair[0].stdin.write(key+"\n"+consent+"\n");pair[0].stdin.flush()
@@ -218,6 +240,14 @@ def main():
             expect(controller,"PASS ROUTED CONTROLLER:",deadline)
             for proc,_ in peers[-2:]:
                 if proc.wait(timeout=5)!=0:raise RuntimeError("peer exited unsuccessfully")
+            if manage_directory_test:
+                for path,expected in ((os.path.join("renamed-folder","sub","keep.txt"),b"folder"),(os.path.join(reviewed["recovery"],"1-remove","sub","keep.txt"),b"remove"),(os.path.join("restored","sub","keep.txt"),b"saved")):
+                    with open(os.path.join(source,path),"rb") as stream:
+                        if stream.read()!=expected:raise RuntimeError("Directory operation content mismatch")
+                for path in ("folder","remove",os.path.join(old_recovery,"0-saved")):
+                    if os.path.exists(os.path.join(source,path)):raise RuntimeError("Original directory still present")
+                print("PASS: reviewed directory rename, recovery and restore, nested content preserved",flush=True)
+                return
             if manage_test:
                 if not os.path.isdir(os.path.join(source,"new-dir")) or os.path.getsize(os.path.join(source,"empty.txt"))!=0:raise RuntimeError("New entries missing")
                 with open(os.path.join(source,"renamed.txt"),"rb") as stream:

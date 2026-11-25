@@ -5,8 +5,8 @@ import type {TextKey} from "./i18n";
 import {getCurrentWebview} from "@tauri-apps/api/webview";
 type Stage="idle"|"starting"|"awaiting_approval"|"connecting"|"listening"|"connected"|"stopping"|"passed"|"failed"|"canceled";
 type CatalogEntry={parts:string[];directory:boolean;size:number};
-type Change={op:'create_folder';parent:number|null;name:string}|{op:'create_file';parent:number|null;name:string}|{op:'rename';index:number;name:string}|{op:'recycle';index:number};
-type FileReview={items:{operation:string;source:string[]|null;destination:string[]}[];recovery:string|null};
+type Change={op:'create_folder';parent:number|null;name:string}|{op:'create_file';parent:number|null;name:string}|{op:'rename';index:number;name:string}|{op:'recycle';index:number}|{op:'restore';index:number;parent:number|null;name:string};
+type FileReview={items:{operation:string;source:string[]|null;destination:string[];subtree_entries?:number|null;subtree_bytes?:number|null}[];recovery:string|null};
 type Snapshot={stage:Stage;active:boolean;local_key:string|null;device_id:string|null;detail:string|null;profile:string;input_released:boolean;decoded_fps?:number|null;decoded_bps?:number|null;transfer_done?:number|null;transfer_total?:number|null;transfer_verified?:boolean;transfer_paused?:boolean;checkpoint_saved?:number|null;directory_entries?:number|null;clipboard_sent?:number|null;clipboard_received?:number|null;catalog?:CatalogEntry[];catalog_ready?:boolean;catalog_selected?:number|null;manage_review?:FileReview|null;manage_token?:string|null;manage_submitted?:boolean;manage_approved?:boolean;manage_applied?:number|null;resume_offset?:number|null;audio_volume?:number|null;network_bps?:number|null;rtt_ms?:number|null;loss_pct?:number|null;route_type?:string|null};
 type Device={device_id:string;public_key:string;label:string};
 type Display={id:number;name:string;width:number;height:number;primary:boolean};
@@ -17,19 +17,22 @@ const sender=ref<"host"|"controller">("controller"),transferPath=ref(""),volume=
 const extraDisplays=ref<number[]>([]),secondaryControl=ref(false);
 const canSecondary=computed(()=>role.value==="host"&&(mode.value==="control"||mode.value==="av_control"));
 const catalogQuery=ref(""),catalogChoice=ref<number|null>(null),batchChoice=ref<number[]>([]);
-const changes=ref<Change[]>([]),operation=ref<"create_folder"|"create_file"|"rename"|"recycle">("create_folder"),newName=ref(""),parentIndex=ref<number|null>(null),fileIndex=ref<number|null>(null),reviewConfirmed=ref(false),planConfirmed=ref(false);
+const changes=ref<Change[]>([]),operation=ref<"create_folder"|"create_file"|"rename"|"recycle"|"restore">("create_folder"),newName=ref(""),parentIndex=ref<number|null>(null),fileIndex=ref<number|null>(null),reviewConfirmed=ref(false),planConfirmed=ref(false);
 const managedEditable=computed(()=>mode.value==="manage"&&role.value==="controller"&&snapshot.value.catalog_ready&&snapshot.value.stage==="connected"&&!snapshot.value.manage_submitted);
-const manageFile=computed(()=>operation.value==="rename"||operation.value==="recycle");
-const actionNames:Record<string,TextKey>={create_folder:"manageCreateFolder",create_file:"manageCreateFile",rename:"manageRename",recycle:"manageRecycle"};
+const manageFile=computed(()=>operation.value==="rename"||operation.value==="recycle"||operation.value==="restore");
+const actionNames:Record<string,TextKey>={create_folder:"manageCreateFolder",create_file:"manageCreateFile",rename:"manageRename",recycle:"manageRecycle",restore:"manageRestore"};
+const recoveryRoot=(parts:string[])=>parts.some(s=>s.toLowerCase().startsWith("remote-ex-recovery-"));
+const recoverable=(parts:string[])=>parts.length===2&&/^Remote-EX-Recovery-[0-9a-f]{32}$/.test(parts[0]);
+watch(operation,()=>{fileIndex.value=null;parentIndex.value=null;newName.value="";});
 const actionName=(op:string):TextKey=>actionNames[op]??"manageUnknown";
 function appendChange(){
  if(!managedEditable.value||changes.value.length>=4)return;
- if(manageFile.value){if(fileIndex.value===null)return;changes.value.push(operation.value==="rename"?{op:"rename",index:fileIndex.value,name:newName.value.trim()}:{op:"recycle",index:fileIndex.value});}
+ if(manageFile.value){if(fileIndex.value===null)return;changes.value.push(operation.value==="restore"?{op:"restore",index:fileIndex.value,parent:parentIndex.value,name:newName.value.trim()}:operation.value==="rename"?{op:"rename",index:fileIndex.value,name:newName.value.trim()}:{op:"recycle",index:fileIndex.value});}
  else if(operation.value==="create_folder"){changes.value.push({op:"create_folder",parent:parentIndex.value,name:newName.value.trim()});}
  else if(operation.value==="create_file"){changes.value.push({op:"create_file",parent:parentIndex.value,name:newName.value.trim()});}
  newName.value="";planConfirmed.value=false;
 }
-function describeChange(c:Change){const row=snapshot.value.catalog??[];if(c.op==="rename"||c.op==="recycle"){const src=row[c.index]?.parts.join("/")??"?";return c.op==="rename"?`${src} → ${c.name}`:src;}return `${c.parent===null?"":(row[c.parent]?.parts.join("/")??"?")+"/"}${c.name}`;}
+function describeChange(c:Change){const row=snapshot.value.catalog??[];if(c.op==="restore"){const src=row[c.index]?.parts.join("/")??"?";return `${src} → ${c.parent===null?"":(row[c.parent]?.parts.join("/")??"?")+"/"}${c.name}`;}if(c.op==="rename"||c.op==="recycle"){const src=row[c.index]?.parts.join("/")??"?";return c.op==="rename"?`${src} → ${c.name}`:src;}return `${c.parent===null?"":(row[c.parent]?.parts.join("/")??"?")+"/"}${c.name}`;}
 
 const catalogRows=computed(()=> (snapshot.value.catalog??[]).map((entry,index)=>({entry,index})).filter(({entry})=>entry.parts.join("/").toLowerCase().includes(catalogQuery.value.toLowerCase())));
 const resumeFrom=ref(""),checkpointPath=ref("");
@@ -190,9 +193,9 @@ onBeforeUnmount(()=>{disposed=true;stopDrop?.();if(timer!==undefined)window.clea
   <input v-model="catalogQuery" :placeholder="t('deviceSearch')"/>
   <div style="max-height:200px;overflow:auto;border:1px solid var(--border);border-radius:6px"><div v-for="{entry,index} in catalogRows" :key="index" style="padding:6px 8px;overflow-wrap:anywhere">{{ entry.directory?"▸":"·" }} {{ entry.parts.join("/") }} <span v-if="!entry.directory" class="muted">{{ entry.size }} B</span></div></div>
   <label>{{ t("manageAction") }}</label>
-  <select v-model="operation" :disabled="busy||!managedEditable"><option value="create_folder">{{ t("manageCreateFolder") }}</option><option value="create_file">{{ t("manageCreateFile") }}</option><option value="rename">{{ t("manageRename") }}</option><option value="recycle">{{ t("manageRecycle") }}</option></select>
-  <select v-if="manageFile" v-model="fileIndex" :disabled="busy||!managedEditable"><option :value="null">{{ t("select") }}</option><option v-for="{entry,index} in catalogRows.filter(x=>!x.entry.directory)" :key="index" :value="index">{{ entry.parts.join("/") }}</option></select>
-  <select v-else v-model="parentIndex" :disabled="busy||!managedEditable"><option :value="null">{{ t("manageRootLevel") }}</option><option v-for="{entry,index} in catalogRows.filter(x=>x.entry.directory)" :key="index" :value="index">{{ entry.parts.join("/") }}</option></select>
+  <select v-model="operation" :disabled="busy||!managedEditable"><option value="create_folder">{{ t("manageCreateFolder") }}</option><option value="create_file">{{ t("manageCreateFile") }}</option><option value="rename">{{ t("manageRename") }}</option><option value="recycle">{{ t("manageRecycle") }}</option><option value="restore">{{ t("manageRestore") }}</option></select>
+  <select v-if="manageFile" v-model="fileIndex" :disabled="busy||!managedEditable"><option :value="null">{{ t("select") }}</option><option v-for="{entry,index} in catalogRows.filter(x=>operation==="restore"?recoverable(x.entry.parts):!recoveryRoot(x.entry.parts))" :key="index" :value="index">{{ entry.parts.join("/") }}</option></select>
+  <select v-if="!manageFile||operation==='restore'" v-model="parentIndex" :disabled="busy||!managedEditable"><option :value="null">{{ t("manageRootLevel") }}</option><option v-for="{entry,index} in catalogRows.filter(x=>x.entry.directory&&!recoveryRoot(x.entry.parts))" :key="index" :value="index">{{ entry.parts.join("/") }}</option></select>
   <input v-if="operation!=='recycle'" v-model="newName" maxlength="96" :placeholder="t('manageNewName')" :disabled="busy||!managedEditable"/>
   <button :disabled="busy||!managedEditable||changes.length>=4||(manageFile&&fileIndex===null)||(operation!=='recycle'&&!newName.trim())" @click="appendChange">{{ t("manageAdd") }}</button>
   <label>{{ t("manageProposed") }} ({{ changes.length }}/4)</label>
@@ -203,7 +206,7 @@ onBeforeUnmount(()=>{disposed=true;stopDrop?.();if(timer!==undefined)window.clea
  </div>
  <div v-if="mode==='manage'&&role==='host'&&snapshot.manage_review" class="field">
   <label>{{ t("manageReview") }}</label><p>{{ t("manageReviewNotice") }}</p>
-  <div v-for="(r,i) in snapshot.manage_review.items" :key="i" style="overflow-wrap:anywhere;padding:6px 0"><strong>{{ t(actionName(r.operation)) }}</strong><div v-if="r.source">{{ r.source.join("/") }} →</div><div>{{ r.destination.join("/") }}</div></div>
+  <div v-for="(r,i) in snapshot.manage_review.items" :key="i" style="overflow-wrap:anywhere;padding:6px 0"><strong>{{ t(actionName(r.operation)) }}</strong><div v-if="r.source">{{ r.source.join("/") }} →</div><div>{{ r.destination.join("/") }}</div><div v-if="r.subtree_entries!=null" class="muted">{{ t("directoryEntries") }}: {{ r.subtree_entries }} · {{ r.subtree_bytes??0 }} B</div></div>
   <p v-if="snapshot.manage_review.recovery" class="muted">{{ t("manageRecovery") }}: {{ snapshot.manage_review.recovery }}</p>
   <label class="check-label"><input type="checkbox" v-model="reviewConfirmed" :disabled="busy||snapshot.manage_approved||!snapshot.active"/>{{ t("manageExactConfirm") }}</label>
   <button class="primary" :disabled="busy||!snapshot.active||snapshot.manage_approved||!reviewConfirmed" @click="command('routed_manage_approve',{token:snapshot.manage_token,confirmed:true})">{{ t("manageApprove") }}</button>

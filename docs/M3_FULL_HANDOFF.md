@@ -128,3 +128,9 @@
 - 新增独立签名 profile20：双方明确同意一次最多4个列表内文件；主控选择不可变目录索引，保留相对路径和必要父目录，64 MiB 包含 manifest 的总大小限制。拒绝目录索引、重复/越界选择、与选定清单不匹配的包；目标必须为新目录，拒绝覆盖。接收端 SHA-256 校验后再展开。取消或 IO 故障可能留下新建的部分目录，不自动删除本机数据；继承目录树检查与本机并发突变限制。
 - 旧 profile15 单文件、profile19 审批变更不升级权限。新增核心负例、实际两端加密下载 fixture、双平台编译/运行构建步骤。新提交 CI 尚待结果，不宣布通过或发布。
 - 剩余 M3：目录改名/恢复审批、macOS 非主屏控制、动态分辨率、长期连接及真实物理设备验收。
+
+## 第八轮（目录级审批变更与恢复）
+- 第七批 ab61411：[Core #45648366742](https://github.com/xzcode/remote-ex/actions/runs/45648366742)、[Media #45648366724](https://github.com/xzcode/remote-ex/actions/runs/45648366724)、[Desktop #45648367023](https://github.com/xzcode/remote-ex/actions/runs/45648367023)、Native input #45648366812、[双平台开发包 #45648366767](https://github.com/xzcode/remote-ex/actions/runs/45648366767) 均成功，含批量下载 fixture。Windows 15039712891 / macOS 15038784382 到期 2026-12-09，需外部 runtime。
+- Profile19 仍为仅提议+本机核对并明确批准的独立一次会话。扩展非空目录改名、移入恢复目录，及从匹配恢复目录顶层选择项目恢复到批准根内明确的新名称/父目录；恢复仍需新审批。目录子树结构、字节数和逐文件 SHA-256 绑定审批，拒绝子树变化、重叠操作、越界路径、目录过深和覆盖，UI 展示子树项数和大小。恢复不自动猜测原位置，不删除空恢复目录或永久删除数据。
+- 使用 Linux renameat2 RENAME_NOREPLACE、macOS renameatx_np RENAME_EXCL、Windows MoveFileExW flags=0 同卷独占移动，不回退普通 rename 或跨卷 copy/delete。API 依据 https://www.man7.org/linux/man-pages/man2/renameat.2.html 、https://developer.apple.com/documentation/foundation/urlresourcekey/volumesupportsexclusiverenamingkey 、https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-movefileexw 。Unix 目录 FD 相对操作；Windows 为经检查的本机绝对路径，恶意本机并发路径变化仍非已验证边界。无新增第三方依赖。
+- 新增核心目录往返、内容变化/重叠、目标存在（包括空目录）拒绝测试与端到端目录改名、移入恢复、恢复旧目录 fixture。最新 CI 和真实设备验收待结果，部分批次失败仍可能保留已完成操作，不自动回滚。未部署服务器或发行。
