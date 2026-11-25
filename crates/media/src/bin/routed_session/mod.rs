@@ -15,17 +15,19 @@ use std::{io::{self, Read, Write, IsTerminal},sync::atomic::{AtomicBool,Ordering
 #[path="../control_window/mod.rs"] mod control_window;
 #[cfg(all(feature="native-control",any(target_os="windows",target_os="macos")))]
 mod native;
+mod exchange;
 static CANCEL:AtomicBool=AtomicBool::new(false);
 fn canceled()->bool{CANCEL.load(Ordering::Acquire)}
 #[derive(Clone,Copy,PartialEq,Eq)]
-enum Profile{Test,View,Control}
+enum Profile{Test,View,Control,Exchange(exchange::Mode)}
 impl Profile{
-    fn code(self)->u8{match self{Self::Test=>0,Self::View=>1,Self::Control=>2}}
-    fn grant(self)->u8{if self==Self::View{VIEW}else{VIEW|INPUT}}
+    fn code(self)->u8{match self{Self::Test=>0,Self::View=>1,Self::Control=>2,Self::Exchange(mode)=>mode.code()}}
+    fn grant(self)->u8{if self==Self::View||matches!(self,Self::Exchange(_)){VIEW}else{VIEW|INPUT}}
     fn consent(self,host:bool)->&'static str{match(self,host){
         (Self::Test,_)=>"ALLOW ROUTED TEST",(Self::View,true)=>"ALLOW ROUTED SCREEN",
         (Self::View,false)=>"ALLOW ROUTED VIEW",(Self::Control,true)=>"ALLOW ROUTED SCREEN AND INPUT",
         (Self::Control,false)=>"ALLOW ROUTED INPUT",
+        (Self::Exchange(mode),_)=>mode.consent(host),
     }}
 }
 const HEARTBEAT:&[u8]=b"remote-ex-routed/heartbeat/v1";
@@ -169,7 +171,7 @@ async fn finish(conn:&mut Connection,session:&str)->MediaResult<()>{
     }
 }
 
-async fn host(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey,relay_only:bool,profile:Profile,display:Option<u32>,quality:&str)->MediaResult<()>{
+async fn host(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey,relay_only:bool,profile:Profile,display:Option<u32>,quality:&str,exchange_path:Option<&std::path::Path>)->MediaResult<()>{
     let grant=profile.grant();
     let Server::Incoming{session,controller,controller_key,requested,controller_nonce}=recv(conn).await?
         else{return Err("Expected incoming device request".into());};
@@ -206,6 +208,11 @@ async fn host(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey,relay_o
     peer.set_description(false,&answer)?;
     ice(&peer,conn,&mut cipher,relay_only).await?;
     ready(&peer,&channel,&answer.sdp,true)?;
+    if let Profile::Exchange(mode)=profile{
+        wait_data(&peer,&channel,conn,READY).await?;channel.send(READY_ACK)?;
+        exchange::run(&peer,&channel,conn,&session,mode,true,exchange_path).await?;
+        finish(conn,&session).await?;return out("PASS ROUTED HOST: transfer verified");
+    }
     if profile!=Profile::Test{
         #[cfg(all(feature="native-control",any(target_os="windows",target_os="macos")))]
         {return native::host(&peer,&channel,conn,&mut cipher,&session,gate(&proof)?,profile,display.ok_or("Select a primary display")?).await;}
@@ -247,7 +254,7 @@ async fn host(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey,relay_o
     finish(conn,&session).await?;
     out(&format!("PASS ROUTED HOST: sent_frames={frames}, input_released=true"))
 }
-async fn controller(mut owned:Connection,id:&DeviceIdentity,expected:PublicKey,relay_only:bool,profile:Profile,quality:&str)->MediaResult<()>{
+async fn controller(mut owned:Connection,id:&DeviceIdentity,expected:PublicKey,relay_only:bool,profile:Profile,quality:&str,exchange_path:Option<&std::path::Path>)->MediaResult<()>{
     let conn=&mut owned;
     let grant=profile.grant();
     let target=hex(&fingerprint(&expected));
@@ -287,6 +294,12 @@ async fn controller(mut owned:Connection,id:&DeviceIdentity,expected:PublicKey,r
     cipher.send(conn,Signal::Proof{signature:hex(&local)}).await?;
     ice(&peer,conn,&mut cipher,relay_only).await?;
     ready(&peer,&channel,&offer.sdp,false)?;
+    if let Profile::Exchange(mode)=profile{
+        channel.send(READY)?;wait_data(&peer,&channel,conn,READY_ACK).await?;
+        exchange::run(&peer,&channel,conn,&session,mode,false,exchange_path).await?;
+        conn.send(Client::Close{session:session.clone()}).await?;finish(conn,&session).await?;
+        return out("PASS ROUTED CONTROLLER: transfer verified");
+    }
     if profile!=Profile::Test{
         #[cfg(all(feature="native-control",any(target_os="windows",target_os="macos")))]
         {
@@ -345,7 +358,7 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
     let url=a.next().ok_or("Missing WSS URL")?;
     let pin=decode_hex::<32>(&a.next().ok_or("Missing server ID")?).map_err(error)?;
     let endpoint=Endpoint::secure(&url,pin)?;
-    let mut ca=None;let mut relay_only=false;let mut profile=Profile::Test;let mut display=None;let mut supervised=false;let mut persistent=false;let mut defer_test_registration=false;let mut quality="compat".to_owned();
+    let mut ca=None;let mut relay_only=false;let mut profile=Profile::Test;let mut display=None;let mut supervised=false;let mut persistent=false;let mut defer_test_registration=false;let mut quality="compat".to_owned();let mut exchange_path=None;
     while let Some(arg)=a.next(){match arg.as_str(){
         "--ca" if ca.is_none()=>ca=Some(a.next().ok_or("Missing CA path")?),
         "--relay-only" if !relay_only=>relay_only=true,
@@ -353,13 +366,23 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
         "--desktop-session" if !supervised=>supervised=true,
         "--defer-test-registration" if !native_allowed&&!defer_test_registration=>defer_test_registration=true,
         "--persistent" if !persistent=>persistent=true,
+        "--exchange" if profile==Profile::Test=>{
+            let mode=exchange::Mode::parse(&a.next().ok_or("Missing exchange kind")?,&a.next().ok_or("Missing sender role")?)?;
+            profile=Profile::Exchange(mode);
+            if mode.kind==remote_ex_desktop_features::exchange::Kind::File{exchange_path=Some(std::path::PathBuf::from(a.next().ok_or("Select explicit local file path")?));}
+        },
         "--view" if native_allowed&&profile==Profile::Test=>{profile=Profile::View;if host{display=Some(a.next().ok_or("Select display ID")?.parse::<u32>().map_err(error)?);}},
         "--control" if native_allowed&&profile==Profile::Test=>{profile=Profile::Control;if host{display=Some(a.next().ok_or("Select display ID")?.parse::<u32>().map_err(error)?);}},
         _=>return Err("Unexpected argument".into()),
     }}
     if defer_test_registration&&(!supervised||persistent||profile!=Profile::Test){return Err("Test registration barrier requires synthetic temporary supervised mode".into());}
-    if native_allowed&&profile==Profile::Test{return Err("Choose a separate view or control profile".into());}
-    if profile!=Profile::Test&&!cfg!(all(feature="native-control",any(target_os="windows",target_os="macos"))){return Err("Native mode not compiled for this platform".into());}
+    if native_allowed&&profile==Profile::Test{return Err("Choose a separate view, control or exchange profile".into());}
+    if let Profile::Exchange(mode)=profile{
+        if mode.kind!=remote_ex_desktop_features::exchange::Kind::File&&!cfg!(all(feature="native-control",any(target_os="windows",target_os="macos"))){return Err("Native clipboard unavailable".into());}
+        if !native_allowed&&mode.kind!=remote_ex_desktop_features::exchange::Kind::File{return Err("Diagnostic cannot access clipboard".into());}
+        quality="compat".into();
+    }
+    if matches!(profile,Profile::View|Profile::Control)&&!cfg!(all(feature="native-control",any(target_os="windows",target_os="macos"))){return Err("Native mode not compiled for this platform".into());}
     if supervised&&(io::stdin().is_terminal()||io::stdout().is_terminal()){return Err("Desktop mode requires supervisor pipes".into());}
     if profile!=Profile::Test&&!supervised&&(!io::stdin().is_terminal()||!io::stdout().is_terminal()){return Err("Visible local consent required".into());}
     ctrlc::set_handler(||CANCEL.store(true,Ordering::Release)).map_err(error)?;
@@ -384,13 +407,14 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
     out("PEER_KEY (independently verify the peer's entire public key)")?;
     let expected=decode_hex::<32>(&input()?).map_err(error)?;
     if expected==[0;32]||expected==id.public_key(){return Err("Invalid peer key".into());}
-    out(&format!("CONSENT (type {}; one-shot, 30 seconds maximum for real mode)",profile.consent(host)))?;
+    if let Profile::Exchange(mode)=profile{out(&format!("TRANSFER {} {:?}; local path: {}",if mode.sending(host){"SEND"}else{"RECEIVE"},mode.kind,exchange_path.as_ref().map(|p|p.to_string_lossy().into_owned()).unwrap_or_else(||"clipboard".into())))?;}
+    out(&format!("CONSENT (type {}; one-shot)",profile.consent(host)))?;
     if input()? !=profile.consent(host)||canceled(){return Err("Local consent denied".into());}
     if supervised{
         std::thread::spawn(||{let mut b=[0u8;1];let _=io::stdin().lock().read(&mut b);CANCEL.store(true,Ordering::Release);});
     }
     if host{
-        let result=self::host(&mut conn,&id,expected,relay_only,profile,display,&quality).await;
+        let result=self::host(&mut conn,&id,expected,relay_only,profile,display,&quality,exchange_path.as_deref()).await;
         let close=conn.close().await;result?;close
-    }else{controller(conn,&id,expected,relay_only,profile,&quality).await}
+    }else{controller(conn,&id,expected,relay_only,profile,&quality,exchange_path.as_deref()).await}
 }
