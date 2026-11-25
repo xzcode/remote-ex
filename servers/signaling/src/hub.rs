@@ -22,6 +22,7 @@ struct Session {
     controller: String,
     host: String,
     requested: u8,
+    controller_nonce: String,
     grant: Option<u8>,
     deadline: Instant,
     offer: bool,
@@ -76,8 +77,10 @@ impl Hub {
         match message {
             Client::Ping => Some(Server::Pong),
             Client::Register { .. } => Some(error("already_registered")),
-            Client::Request { target, requested } => Some(self.request(id, target, requested, now)),
-            Client::Decision { session, grant } => self.decision(id, &session, grant, now),
+            Client::Request { target, requested, controller_nonce } =>
+                Some(self.request(id, target, requested, controller_nonce, now)),
+            Client::Decision { session, grant, host_nonce } =>
+                self.decision(id, &session, grant, host_nonce, now),
             Client::Signal { session, payload } => self.signal(id, &session, payload),
             Client::Close { session } => {
                 if self.devices[id].session.as_deref() != Some(session.as_str()) {
@@ -88,7 +91,7 @@ impl Hub {
             }
         }
     }
-    fn request(&mut self, id: &str, target: String, requested: u8, now: Instant) -> Server {
+    fn request(&mut self, id: &str, target: String, requested: u8, controller_nonce: String, now: Instant) -> Server {
         let d = self.devices.get_mut(id).expect("registered");
         if d.last_request.is_some_and(|last| now.saturating_duration_since(last) < REQUEST_COOLDOWN) {
             return error("request_limited");
@@ -106,21 +109,23 @@ impl Hub {
         while self.sessions.contains_key(&session) { session = hex(&new_session_id()); }
         if !self.deliver(&target, Server::Incoming {
             session: session.clone(), controller: id.into(), controller_key: hex(&key), requested,
+            controller_nonce: controller_nonce.clone(),
         }) {
             return error("request_unavailable");
         }
         self.devices.get_mut(id).unwrap().session = Some(session.clone());
         self.devices.get_mut(&target).unwrap().session = Some(session.clone());
         self.sessions.insert(session.clone(), Session {
-            controller: id.into(), host: target.clone(), requested, grant: None,
+            controller: id.into(), host: target.clone(), requested, controller_nonce, grant: None,
             deadline: now + PENDING_TTL, offer: false, answer: false, proofs: [false;2], ice_count: [0;2],
         });
         Server::Requested { session, target }
     }
-    fn decision(&mut self, id: &str, session: &str, grant: Option<u8>, now: Instant) -> Option<Server> {
+    fn decision(&mut self, id: &str, session: &str, grant: Option<u8>, host_nonce: Option<String>, now: Instant) -> Option<Server> {
         let Some(s) = self.sessions.get_mut(session) else { return Some(error("session_unavailable")); };
         if s.host != id || s.grant.is_some() { return Some(error("session_unavailable")); }
-        if grant.is_some_and(|g| !grant_valid(g) || g & !s.requested != 0) {
+        if grant.is_some_and(|g| !grant_valid(g) || g & !s.requested != 0)
+            || host_nonce.as_ref().is_some_and(|nonce| nonce == &s.controller_nonce) {
             return Some(error("invalid_grant"));
         }
         let controller = s.controller.clone();
@@ -129,7 +134,7 @@ impl Hub {
             s.grant = Some(g);
             s.deadline = now + ROUTING_TTL;
         }
-        if !self.deliver(&controller, Server::Decision { session: session.into(), grant, host_key }) {
+        if !self.deliver(&controller, Server::Decision { session: session.into(), grant, host_key, host_nonce }) {
             self.finish(session, "peer_unavailable");
             return Some(error("session_unavailable"));
         }
@@ -180,13 +185,14 @@ mod tests {
         let (a, mut arx) = device(&mut h, 1);
         let (b, mut brx) = device(&mut h, 2);
         let (c, _) = device(&mut h, 3);
-        let Some(Server::Requested { session, .. }) = h.handle(&a, 1, Client::Request { target:b.clone(), requested:VIEW }, now) else { panic!("request"); };
+        let Some(Server::Requested { session, .. }) = h.handle(&a, 1, Client::Request { target:b.clone(), requested:VIEW, controller_nonce:"01".repeat(32) }, now) else { panic!("request"); };
         assert!(matches!(brx.try_recv().unwrap(), Server::Incoming { requested:VIEW, .. }));
         let offer = Client::Signal { session:session.clone(), payload:Signal::Offer { sdp:"fixture".into() } };
         assert!(matches!(h.handle(&b,2,offer.clone(),now),Some(Server::Error{..})));
-        assert!(matches!(h.handle(&a,1,Client::Decision{session:session.clone(),grant:Some(VIEW)},now),Some(Server::Error{..})));
-        assert!(matches!(h.handle(&b,2,Client::Decision{session:session.clone(),grant:Some(VIEW|INPUT)},now),Some(Server::Error{..})));
-        assert!(h.handle(&b,2,Client::Decision{session:session.clone(),grant:Some(VIEW)},now).is_none());
+        assert!(matches!(h.handle(&a,1,Client::Decision{session:session.clone(),grant:Some(VIEW),host_nonce:Some("02".repeat(32))},now),Some(Server::Error{..})));
+        assert!(matches!(h.handle(&b,2,Client::Decision{session:session.clone(),grant:Some(VIEW|INPUT),host_nonce:Some("02".repeat(32))},now),Some(Server::Error{..})));
+        assert!(matches!(h.handle(&b,2,Client::Decision{session:session.clone(),grant:Some(VIEW),host_nonce:Some("01".repeat(32))},now),Some(Server::Error{..})));
+        assert!(h.handle(&b,2,Client::Decision{session:session.clone(),grant:Some(VIEW),host_nonce:Some("02".repeat(32))},now).is_none());
         assert!(matches!(arx.try_recv().unwrap(),Server::Decision{grant:Some(VIEW),..}));
         assert!(matches!(h.handle(&c,3,offer.clone(),now),Some(Server::Error{..})));
         assert!(h.handle(&b,2,offer.clone(),now).is_none());
@@ -200,7 +206,7 @@ mod tests {
     fn pending_expiry_and_rate_limit() {
         let mut h = Hub::default(); let now = Instant::now();
         let (a, mut arx) = device(&mut h,1); let (b, mut brx) = device(&mut h,2);
-        let request = Client::Request { target:b, requested:VIEW };
+        let request = Client::Request { target:b, requested:VIEW, controller_nonce:"01".repeat(32) };
         assert!(matches!(h.handle(&a,1,request.clone(),now),Some(Server::Requested{..})));
         assert!(matches!(h.handle(&a,1,request.clone(),now),Some(Server::Error{..})));
         brx.try_recv().unwrap();

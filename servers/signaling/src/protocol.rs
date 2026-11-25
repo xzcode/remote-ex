@@ -20,8 +20,8 @@ pub struct ServerFrame { pub version: u16, pub message: Server }
 pub enum Client {
     Register { public_key: String, signature: String },
     Ping,
-    Request { target: String, requested: u8 },
-    Decision { session: String, grant: Option<u8> },
+    Request { target: String, requested: u8, controller_nonce: String },
+    Decision { session: String, grant: Option<u8>, host_nonce: Option<String> },
     Signal { session: String, payload: Signal },
     Close { session: String },
 }
@@ -42,8 +42,8 @@ pub enum Server {
     Registered { device_id: String },
     Pong,
     Requested { session: String, target: String },
-    Incoming { session: String, controller: String, controller_key: String, requested: u8 },
-    Decision { session: String, grant: Option<u8>, host_key: String },
+    Incoming { session: String, controller: String, controller_key: String, requested: u8, controller_nonce: String },
+    Decision { session: String, grant: Option<u8>, host_key: String, host_nonce: Option<String> },
     Signal { session: String, payload: Signal },
     Closed { session: String, reason: String },
     Error { code: String },
@@ -61,10 +61,12 @@ impl Client {
             Self::Register { public_key, signature } if canonical::<32>(public_key)
                 && decode_hex::<64>(signature).is_ok() => Ok(()),
             Self::Ping => Ok(()),
-            Self::Request { target, requested } if canonical::<32>(target)
-                && grant_valid(*requested) => Ok(()),
-            Self::Decision { session, grant } if canonical::<16>(session)
-                && grant.is_none_or(grant_valid) => Ok(()),
+            Self::Request { target, requested, controller_nonce } if canonical::<32>(target)
+                && canonical::<32>(controller_nonce) && grant_valid(*requested) => Ok(()),
+            Self::Decision { session, grant, host_nonce } if canonical::<16>(session)
+                && grant.is_none_or(grant_valid)
+                && grant.is_some() == host_nonce.is_some()
+                && host_nonce.as_ref().is_none_or(|nonce| canonical::<32>(nonce)) => Ok(()),
             Self::Signal { session, payload } if canonical::<16>(session) => payload.validate(),
             Self::Close { session } if canonical::<16>(session) => Ok(()),
             _ => Err("invalid message"),
