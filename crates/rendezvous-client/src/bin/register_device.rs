@@ -1,10 +1,9 @@
 //! Visible, bounded registration diagnostic. No listener or screen/input access.
 //! Requests are refused until the actual end-to-end session owner is integrated.
-use remote_ex_rendezvous_client::{Connection,Endpoint,Result};
-use remote_ex_rendezvous_protocol::{Client,Server};
+use remote_ex_rendezvous_client::{Connection,Endpoint,Result,PresenceEvent,presence};
 use remote_ex_security::DeviceIdentity;
 use remote_ex_signaling::decode_hex;
-use std::{io::{self,IsTerminal,Write,Read},time::{Duration,Instant}};
+use std::{io::{self,IsTerminal,Write,Read},time::Duration};
 
 fn local_identity(persistent:bool)->Result<DeviceIdentity>{
     if !persistent{return Ok(DeviceIdentity::generate());}
@@ -55,27 +54,14 @@ async fn run()->Result<()>{
         else{Connection::register(endpoint,&id).await?};
     println!("ONLINE {}",conn.device_id());
     println!("Registration diagnostic only: refuses all connection requests. Ctrl-C stops. Ends after 30 seconds.");
-    let stop=Instant::now()+Duration::from_secs(30);
-    let mut tick=tokio::time::interval(Duration::from_secs(10));
-    loop{
-        if Instant::now()>=stop{break;}
-        tokio::select!{
-            _=tokio::signal::ctrl_c()=>break,
-            _=tick.tick()=>{conn.send(Client::Ping).await?;},
-            event=conn.receive(Duration::from_secs(20))=>{
-                match event?{
-                    Server::Pong=>println!("HEARTBEAT OK"),
-                    Server::Incoming{session,..}=>{
-                        // Do not display or retain peer identifiers in the diagnostic.
-                        conn.send(Client::Decision{session,grant:None,host_nonce:None}).await?;
-                        println!("REQUEST DECLINED: remote sessions are not enabled here");
-                    },
-                    Server::Closed{..}=>{},
-                    _=>return Err("Unexpected registration response".into()),
-                }
-            }
-        }
-    }
+    let(tx,rx)=tokio::sync::watch::channel(false);
+    let signal=tokio::spawn(async move{let _=tokio::signal::ctrl_c().await;let _=tx.send(true);});
+    let result=presence(&mut conn,rx,Duration::from_secs(30),|event|match event{
+        PresenceEvent::Heartbeat=>println!("HEARTBEAT OK"),
+        PresenceEvent::RequestDeclined=>println!("REQUEST DECLINED: remote sessions are not enabled here"),
+    }).await;
+    signal.abort();
+    result?;
     conn.close().await?;
     println!("OFFLINE");Ok(())
 }

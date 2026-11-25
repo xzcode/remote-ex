@@ -125,3 +125,51 @@ mod tests{
         assert!(Endpoint::secure("wss://example.com/v1/ws",[1;32]).is_ok());
     }
 }
+
+#[derive(Clone,Copy,Debug,PartialEq,Eq)]
+pub enum PresenceEvent { Heartbeat, RequestDeclined }
+
+/// Explicit presence only. No acceptance of routed sessions, no capture,
+/// no input or auto-reconnect. A single outstanding Ping must receive a Pong
+/// within five seconds; unrelated frames cannot extend this deadline.
+pub async fn presence(
+    conn: &mut Connection, mut stop: tokio::sync::watch::Receiver<bool>,
+    duration: Duration, mut event: impl FnMut(PresenceEvent),
+) -> Result<()> {
+    use tokio::time::{Instant, interval, MissedTickBehavior};
+    let deadline=Instant::now()+duration.min(Duration::from_secs(300));
+    let mut tick=interval(Duration::from_millis(250));
+    tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    let mut next_ping=Instant::now();
+    let mut awaiting:Option<Instant>=None;
+    loop{
+        if *stop.borrow()||Instant::now()>=deadline{return Ok(());}
+        tokio::select!{
+            biased;
+            changed=stop.changed()=>{
+                if changed.is_err()||*stop.borrow(){return Ok(());}
+            },
+            _=tick.tick()=>{
+                let now=Instant::now();
+                if now>=deadline{return Ok(());}
+                if awaiting.is_some_and(|due|now>=due){return Err("Presence heartbeat timed out".into());}
+                if awaiting.is_none()&&now>=next_ping{
+                    conn.send(Client::Ping).await?;
+                    awaiting=Some(Instant::now()+Duration::from_secs(5));
+                    next_ping=Instant::now()+Duration::from_secs(10);
+                }
+            },
+            response=conn.receive(Duration::from_secs(30))=>{
+                match response?{
+                    Server::Pong if awaiting.take().is_some()=>event(PresenceEvent::Heartbeat),
+                    Server::Incoming{session,..}=>{
+                        conn.send(Client::Decision{session,grant:None,host_nonce:None}).await?;
+                        event(PresenceEvent::RequestDeclined);
+                    }
+                    Server::Closed{..}=>{},
+                    _=>return Err("Unexpected presence response".into()),
+                }
+            }
+        }
+    }
+}

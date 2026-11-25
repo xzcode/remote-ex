@@ -14,3 +14,8 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 xcap = "=0.9.10"
+
+remote-ex-rendezvous-client = { path = "../../../crates/rendezvous-client" }
+remote-ex-signaling = { path = "../../../crates/signaling" }
+remote-ex-security = { path = "../../../crates/security", features = ["native-vault"] }
+tokio = { version = "1", features = ["sync", "time", "macros"] }
