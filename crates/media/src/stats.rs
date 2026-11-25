@@ -20,8 +20,8 @@ pub fn parse(report:&gst::StructureRef)->Counters{
         if let Ok(rtt)=s.get::<f64>("round-trip-time"){if rtt.is_finite()&&(0.0..=120.0).contains(&rtt){c.rtt=Some(c.rtt.unwrap_or(0.0).max(rtt));}}
         if let Ok(loss)=s.get::<f64>("fraction-lost"){if loss.is_finite()&&(0.0..=1.0).contains(&loss){c.fraction_lost=Some(c.fraction_lost.unwrap_or(0.0).max(loss));}}
         if let Ok(pair_id)=s.get::<String>("selected-candidate-pair-id"){
-            if let Ok(pair)=report.get::<gst::Structure>(&pair_id){
-                let candidate=|field:&str|pair.get::<String>(field).ok().and_then(|id|report.get::<gst::Structure>(&id).ok()).and_then(|s|s.get::<String>("candidate-type").ok());
+            if let Ok(pair)=report.get::<gst::Structure>(pair_id.as_str()){
+                let candidate=|field:&str|pair.get::<String>(field).ok().and_then(|id|report.get::<gst::Structure>(id.as_str()).ok()).and_then(|s|s.get::<String>("candidate-type").ok());
                 if let(Some(local),Some(remote))=(candidate("local-candidate-id"),candidate("remote-candidate-id")){
                     let r=if local=="relay"||remote=="relay"{"relay"}else if ["host","srflx","prflx"].contains(&local.as_str())&&["host","srflx","prflx"].contains(&remote.as_str()){"direct"}else{"unknown"};
                     c.route=Some(if c.route==Some("relay"){"relay"}else{r});

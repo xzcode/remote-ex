@@ -25,3 +25,6 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 remote-ex-desktop-features = { path = "../../../crates/desktop-features" }
 
 remote-ex-rendezvous-protocol = { path = "../../../crates/rendezvous-protocol" }
+
+[target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
+rfd = { version = "0.15", default-features = false }

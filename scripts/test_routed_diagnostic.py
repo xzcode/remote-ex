@@ -34,6 +34,8 @@ def main():
     relay_only="--relay-only" in sys.argv[3:]
     exchange_sender=next((arg.split("=",1)[1] for arg in sys.argv[3:] if arg.startswith("--file-exchange=")),None)
     if exchange_sender not in (None,"host","controller"):raise RuntimeError("Invalid file sender role")
+    pause_test="--file-pause" in sys.argv[3:]
+    if pause_test and not exchange_sender:raise RuntimeError("Pause test needs file transfer")
     audio_test="--audio-test" in sys.argv[3:]
     if audio_test and exchange_sender:raise RuntimeError("Choose one test profile")
     peers=[]
@@ -109,6 +111,13 @@ def main():
             else:
                 approve(host,ck)
                 approve(controller,hk)
+            if pause_test:
+                pair=host if exchange_sender=="host" else controller
+                pair[0].stdin.write("PAUSE\n");pair[0].stdin.flush()
+                expect(pair,"TRANSFER_PAUSED",deadline)
+                time.sleep(2.2)
+                pair[0].stdin.write("RESUME\n");pair[0].stdin.flush()
+                expect(pair,"TRANSFER_RESUMED",deadline)
             expect(host,"PASS ROUTED HOST:",deadline)
             expect(controller,"PASS ROUTED CONTROLLER:",deadline)
             for proc,_ in peers[-2:]:

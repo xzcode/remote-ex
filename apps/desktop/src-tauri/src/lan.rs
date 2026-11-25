@@ -44,6 +44,7 @@ pub struct Snapshot {
     transfer_done: Option<u64>,
     transfer_total: Option<u64>,
     transfer_verified: bool,
+    transfer_paused: bool,
     network_bps: Option<u64>,
     rtt_ms: Option<u32>,
     loss_pct: Option<f64>,
@@ -51,7 +52,7 @@ pub struct Snapshot {
 }
 impl Default for Snapshot {
     fn default() -> Self {
-        Self { stage: Stage::Idle, active: false, local_key: None, detail: None, profile: Profile::Diagnostic, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None }
+        Self { stage: Stage::Idle, active: false, local_key: None, detail: None, profile: Profile::Diagnostic, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, transfer_paused:false, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None }
     }
 }
 
@@ -145,7 +146,7 @@ fn sidecar_path(profile: Profile) -> Result<PathBuf, String> {
     Ok(path)
 }
 
-enum WorkerCommand { Approve(String) }
+enum WorkerCommand { Approve(String), Pause(bool) }
 enum Output { Stdout(String), Stderr(String), Invalid }
 struct Worker { tx: SyncSender<WorkerCommand>, stop: Arc<AtomicBool>, join: JoinHandle<()> }
 struct ChildGuard(Child);
@@ -234,8 +235,10 @@ fn handle_output(shared: &Mutex<Snapshot>, output: Output, pass: &mut bool, fail
                 if let (Some(done),Some(total),None)=(fields.next().and_then(|s|s.parse::<u64>().ok()),fields.next().and_then(|s|s.parse::<u64>().ok()),fields.next()){
                     let mut snap=locked(shared);if snap.profile.exchange().is_some()&&done<=total&&total<=64*1024*1024{snap.transfer_done=Some(done);snap.transfer_total=Some(total);}
                 }
+            } else if text=="TRANSFER_PAUSED"||text=="TRANSFER_RESUMED"{
+                let mut snap=locked(shared);if snap.profile.exchange().is_some_and(|(kind,_)|kind=="file"){snap.transfer_paused=text=="TRANSFER_PAUSED";}
             } else if text=="TRANSFER_VERIFIED" {
-                let mut snap=locked(shared);if snap.profile.exchange().is_some(){snap.transfer_verified=true;}
+                let mut snap=locked(shared);if snap.profile.exchange().is_some(){snap.transfer_verified=true;snap.transfer_paused=false;}
             } else if text == "INPUT_RELEASED" {
                 let mut snapshot = locked(shared);
                 if snapshot.profile.requires_release() { snapshot.input_released = true; }
@@ -318,6 +321,13 @@ fn supervise(
                 // it open until the supervisor exits; the diagnostic does not.
                 if profile == Profile::Diagnostic { stdin.take(); }
                 stage(&shared, Stage::Connecting, None);
+            }
+            Ok(WorkerCommand::Pause(paused)) => {
+                if approved&&profile.exchange().is_some_and(|(kind,host_sends)|kind=="file"&&host_sends==host)&&locked(&shared).stage==Stage::Connected {
+                    if let Some(pipe)=stdin.as_mut(){
+                        if pipe.write_all(if paused{b"PAUSE\n".as_slice()}else{b"RESUME\n".as_slice()}).and_then(|_|pipe.flush()).is_err(){failure=Some("Could not deliver transfer control".into());}
+                    }
+                }
             }
             Err(TryRecvError::Empty) => {}
         }}
@@ -453,7 +463,7 @@ impl SessionManager {
         }
         let child = command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped())
             .spawn().map_err(|e| format!("Cannot start native media diagnostic: {e}"))?;
-        *locked(&self.shared) = Snapshot { stage: Stage::Starting, active: true, local_key: None, detail: None, profile, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None };
+        *locked(&self.shared) = Snapshot { stage: Stage::Starting, active: true, local_key: None, detail: None, profile, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, transfer_paused:false, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None };
         let (tx, rx) = mpsc::sync_channel(4);
         let shared = self.shared.clone();
         let stop = Arc::new(AtomicBool::new(false));
@@ -549,6 +559,29 @@ pub fn routed_disconnect(window:WebviewWindow,managers:State<'_,RoutedManagers>,
     require_main(&window)?;let slots=locked(&managers.slots);let manager=&slots.sessions[slot_index(slot)?];manager.request_stop();Ok(manager.snapshot())
 }
 #[tauri::command]
+pub fn routed_transfer_pause(window:WebviewWindow,managers:State<'_,RoutedManagers>,slot:Option<u8>,paused:bool)->Result<Snapshot,String>{
+    require_main(&window)?;
+    let slots=locked(&managers.slots);let manager=&slots.sessions[slot_index(slot)?];
+    let snap=manager.snapshot();
+    if snap.stage!=Stage::Connected||!snap.profile.exchange().is_some_and(|(kind,_)|kind=="file")||snap.transfer_verified{return Err("No active file transfer".into());}
+    let worker=locked(&manager.worker);
+    worker.as_ref().ok_or("No active transfer")?.tx.try_send(WorkerCommand::Pause(paused)).map_err(|_|"Transfer control unavailable".to_owned())?;
+    Ok(snap)
+}
+
+#[tauri::command]
+pub async fn select_transfer_file(window:WebviewWindow,receive:bool)->Result<Option<String>,String>{
+    require_main(&window)?;
+    #[cfg(any(target_os="windows",target_os="macos"))]
+    {
+        let dialog=rfd::AsyncFileDialog::new();
+        let file=if receive{dialog.save_file().await}else{dialog.pick_file().await};
+        file.map(|f|f.path().to_str().map(str::to_owned).ok_or("Unsupported local path".to_owned())).transpose()
+    }
+    #[cfg(not(any(target_os="windows",target_os="macos")))]
+    {let _=receive;Err("Native file selection unavailable".into())}
+}
+#[tauri::command]
 pub fn routed_prepare(window:WebviewWindow,manager:State<'_,SessionManager>,managers:State<'_,RoutedManagers>,slot:Option<u8>,role:String,url:String,server_id:String,mode:String,display_id:Option<u32>,relay_only:bool,persistent:bool,storage_consent:bool,ca_path:Option<String>,save_history:Option<bool>,quality:Option<String>,sender:Option<String>,transfer_path:Option<String>,volume:Option<u8>)->Result<Snapshot,String>{
     require_main(&window)?;
     let profile=match (mode.as_str(),sender.as_deref()){
@@ -614,7 +647,7 @@ mod tests {
     fn control_requires_distinct_consent_and_release_marker() {
         assert_eq!(Profile::Control.consent(true), "ALLOW SCREEN AND INPUT");
         assert_eq!(Profile::Control.consent(false), "ALLOW REMOTE INPUT");
-        let shared = Mutex::new(Snapshot { stage: Stage::Connected, active: true, local_key: None, detail: None, profile: Profile::Control, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None });
+        let shared = Mutex::new(Snapshot { stage: Stage::Connected, active: true, local_key: None, detail: None, profile: Profile::Control, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, transfer_paused:false, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None });
         let (mut pass, mut failure) = (false, None);
         stage(&shared, Stage::Stopping, None);
         assert!(locked(&shared).active);
@@ -624,7 +657,7 @@ mod tests {
     }
     #[test]
     fn status_requires_valid_local_key_and_terminal_state() {
-        let shared = Mutex::new(Snapshot { stage: Stage::Starting, active: true, local_key: None, detail: None, profile: Profile::Diagnostic, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None });
+        let shared = Mutex::new(Snapshot { stage: Stage::Starting, active: true, local_key: None, detail: None, profile: Profile::Diagnostic, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, transfer_paused:false, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None });
         let (mut pass, mut fail) = (false, None);
         handle_output(&shared, Output::Stdout(format!("KEY {}", "ab".repeat(32))), &mut pass, &mut fail);
         assert_eq!(locked(&shared).stage, Stage::AwaitingApproval);

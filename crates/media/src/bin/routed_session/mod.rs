@@ -436,7 +436,25 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
     out(&format!("CONSENT (type {}; one-shot)",profile.consent(host)))?;
     if input()? !=profile.consent(host)||canceled(){return Err("Local consent denied".into());}
     if supervised{
-        std::thread::spawn(||{let mut b=[0u8;1];let _=io::stdin().lock().read(&mut b);CANCEL.store(true,Ordering::Release);});
+        let allow_pause=matches!(profile,Profile::Exchange(m) if m.kind==remote_ex_desktop_features::exchange::Kind::File&&m.sending(host));
+        std::thread::spawn(move||{
+            use std::io::BufRead;
+            let mut pipe=io::stdin().lock();
+            if allow_pause{
+                loop{
+                    let mut line=Vec::new();
+                    match (&mut pipe).take(16).read_until(b'\n',&mut line){
+                        Ok(n) if n>0=>match line.as_slice(){
+                            b"PAUSE\n"=>exchange::PAUSED.store(true,Ordering::Release),
+                            b"RESUME\n"=>exchange::PAUSED.store(false,Ordering::Release),
+                            _=>break,
+                        },
+                        _=>break,
+                    }
+                }
+            }else{let mut b=[0u8;1];let _=pipe.read(&mut b);}
+            CANCEL.store(true,Ordering::Release);
+        });
     }
     if host{
         let result=self::host(&mut conn,&id,expected,relay_only,profile,display,&quality,exchange_path.as_deref(),volume).await;

@@ -21,6 +21,8 @@ fn main() {
             lan::routed_confirm,
             lan::routed_status,
             lan::routed_disconnect,
+            lan::routed_transfer_pause,
+            lan::select_transfer_file,
             lan::lan_status,
             lan::lan_confirm,
             lan::lan_disconnect,

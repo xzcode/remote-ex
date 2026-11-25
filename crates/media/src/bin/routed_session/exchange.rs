@@ -2,8 +2,9 @@
 //! paths or arbitrary file management; receiver chooses the exact local target.
 use super::*;
 use remote_ex_desktop_features::exchange::{self,Kind,Offer,Receiver,CHUNK};
-use std::{fs::{File,OpenOptions},io::{Cursor,Seek,SeekFrom},path::Path};
-const OFFER:u8=1;const ACCEPT:u8=2;const DATA:u8=3;const CREDIT:u8=4;const END:u8=5;const DONE:u8=6;
+use std::{fs::OpenOptions,io::{Cursor,Seek,SeekFrom},path::Path};
+const OFFER:u8=1;const ACCEPT:u8=2;const DATA:u8=3;const CREDIT:u8=4;const END:u8=5;const DONE:u8=6;const PAUSE:u8=7;const RESUME:u8=8;const WAIT:u8=9;
+pub(super) static PAUSED:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
 pub(super) const HOST_DONE:&[u8]=b"remote-ex-transfer/host-done/v1";
 const WINDOW:usize=16;
 const LIMIT:Duration=Duration::from_secs(75);
@@ -46,6 +47,18 @@ async fn send_source<R:Read>(source:&mut R,offer:&Offer,peer:&Peer,channel:&Cont
     let mut sent=0u64;let mut next_report=Instant::now();
     let mut buffer=[0u8;CHUNK];
     while sent<offer.size{
+        if offer.kind==Kind::File&&PAUSED.load(Ordering::Acquire){
+            channel.send(&[PAUSE])?;out("TRANSFER_PAUSED")?;
+            let mut keepalive=Instant::now();
+            while PAUSED.load(Ordering::Acquire){
+                if canceled()||Instant::now()>=deadline{return Err("Transfer canceled or timed out while paused".into());}
+                connected(peer,channel)?;
+                if keepalive.elapsed()>=Duration::from_secs(2){channel.send(&[WAIT])?;keepalive=Instant::now();}
+                tick(conn).await?;
+            }
+            if canceled(){return Err("Local grant revoked".into());}
+            channel.send(&[RESUME])?;out("TRANSFER_RESUMED")?;
+        }
         for _ in 0..WINDOW{
             if canceled()||Instant::now()>=deadline{return Err("Transfer canceled".into());}
             if sent==offer.size{break;}
@@ -66,13 +79,16 @@ async fn send_source<R:Read>(source:&mut R,offer:&Offer,peer:&Peer,channel:&Cont
     Ok(())
 }
 async fn receive_to<W:Write>(writer:W,offer:Offer,peer:&Peer,channel:&ControlChannel,conn:&mut Connection,deadline:Instant)->MediaResult<W>{
-    let size=offer.size;let mut r=Receiver::new(writer,offer,true)?;
+    let size=offer.size;let file=offer.kind==Kind::File;let mut paused=false;let mut r=Receiver::new(writer,offer,true)?;
     channel.send(&[ACCEPT])?;
     let mut count=0usize;let mut next_report=Instant::now();
     loop{
         let bytes=receive(peer,channel,conn,deadline).await?;
         match bytes.first(){
-            Some(&DATA) if bytes.len()>9=>{
+            Some(&PAUSE) if file&&!paused&&count==0&&bytes.len()==1=>{paused=true;out("TRANSFER_PAUSED")?;}
+            Some(&WAIT) if file&&paused&&bytes.len()==1=>{}
+            Some(&RESUME) if file&&paused&&bytes.len()==1=>{paused=false;out("TRANSFER_RESUMED")?;}
+            Some(&DATA) if !paused&&bytes.len()>9=>{
                 let offset=u64::from_be_bytes(bytes[1..9].try_into().map_err(error)?);
                 r.push(offset,&bytes[9..])?;count+=1;
                 if count==WINDOW||r.offset()==size{channel.send(&credit(r.offset()))?;count=0;}
@@ -80,7 +96,7 @@ async fn receive_to<W:Write>(writer:W,offer:Offer,peer:&Peer,channel:&ControlCha
                     out(&format!("TRANSFER_PROGRESS {} {size}",r.offset()))?;next_report=Instant::now()+Duration::from_millis(300);
                 }
             },
-            Some(&END) if bytes.len()==1=>return r.finish(),
+            Some(&END) if !paused&&bytes.len()==1=>return r.finish(),
             _=>return Err("Unexpected transfer packet".into()),
         }
     }
