@@ -22,10 +22,14 @@ mod catalog;
 static CANCEL:AtomicBool=AtomicBool::new(false);
 fn canceled()->bool{CANCEL.load(Ordering::Acquire)}
 #[derive(Clone,Copy,PartialEq,Eq)]
-enum Profile{Test,View,Control,Exchange(exchange::Mode),Audio(bool),ClipboardSync(bool),Catalog}
+enum Profile{Test,View,Control,Exchange(exchange::Mode),Audio(bool),ClipboardSync(bool),Catalog,AvTest,AvView,AvControl}
 impl Profile{
-    fn code(self)->u8{match self{Self::Test=>0,Self::View=>1,Self::Control=>2,Self::Exchange(mode)=>mode.code(),Self::Audio(test)=>if test{9}else{10},Self::ClipboardSync(test)=>if test{13}else{14},Self::Catalog=>15}}
-    fn grant(self)->u8{if self==Self::View||matches!(self,Self::Exchange(_)|Self::Audio(_)|Self::ClipboardSync(_)|Self::Catalog){VIEW}else{VIEW|INPUT}}
+    fn code(self)->u8{match self{Self::Test=>0,Self::View=>1,Self::Control=>2,Self::Exchange(mode)=>mode.code(),Self::Audio(test)=>if test{9}else{10},Self::ClipboardSync(test)=>if test{13}else{14},Self::Catalog=>15,Self::AvTest=>16,Self::AvView=>17,Self::AvControl=>18}}
+    fn av(self)->bool{matches!(self,Self::AvTest|Self::AvView|Self::AvControl)}
+    fn native_view(self)->bool{matches!(self,Self::View|Self::AvView)}
+    fn native_control(self)->bool{matches!(self,Self::Control|Self::AvControl)}
+    fn synthetic(self)->bool{matches!(self,Self::Test|Self::AvTest)}
+    fn grant(self)->u8{if self.native_view()||matches!(self,Self::Exchange(_)|Self::Audio(_)|Self::ClipboardSync(_)|Self::Catalog){VIEW}else{VIEW|INPUT}}
     fn consent(self,host:bool)->&'static str{match(self,host){
         (Self::Test,_)=>"ALLOW ROUTED TEST",(Self::View,true)=>"ALLOW ROUTED SCREEN",
         (Self::View,false)=>"ALLOW ROUTED VIEW",(Self::Control,true)=>"ALLOW ROUTED SCREEN AND INPUT",
@@ -38,6 +42,11 @@ impl Profile{
         (Self::ClipboardSync(false),_)=>"ALLOW LIVE CLIPBOARD TEXT SYNC",
         (Self::Catalog,true)=>"ALLOW LIST AND DOWNLOAD SELECTED ROOT",
         (Self::Catalog,false)=>"ALLOW BROWSE AND RECEIVE ONE FILE",
+        (Self::AvTest,_)=>"ALLOW TEST AUDIO VIDEO",
+        (Self::AvView,true)=>"ALLOW ROUTED SCREEN AND AUDIO",
+        (Self::AvView,false)=>"ALLOW ROUTED VIEW AND PLAY AUDIO",
+        (Self::AvControl,true)=>"ALLOW ROUTED SCREEN AUDIO AND INPUT",
+        (Self::AvControl,false)=>"ALLOW ROUTED INPUT AND PLAY AUDIO",
     }}
 }
 const HEARTBEAT:&[u8]=b"remote-ex-routed/heartbeat/v1";
@@ -67,10 +76,13 @@ const ACK:&[u8]=b"remote-ex-routed-test/released/v1";
 fn error<T:std::fmt::Debug>(e:T)->String{format!("{e:?}")}
 fn out(s:&str)->MediaResult<()>{println!("{s}");io::stdout().flush().map_err(error)}
 fn input()->MediaResult<String>{let mut s=String::new();io::stdin().read_line(&mut s).map_err(error)?;Ok(s.trim().into())}
-fn valid_sdp(s:&str)->bool{s.lines().filter(|l|l.starts_with("m=")).count()==2&&s.lines().any(|l|l.starts_with("m=video "))&&s.lines().any(|l|l.starts_with("m=application "))}
-fn offer(peer:&Peer)->MediaResult<Description>{
+fn valid_sdp(s:&str,av:bool)->bool{
+    let kinds:Vec<_>=s.lines().filter_map(|l|l.strip_prefix("m=")).filter_map(|l|l.split_ascii_whitespace().next()).collect();
+    if av{kinds==["video","audio","application"]}else{kinds==["video","application"]}
+}
+fn offer(peer:&Peer,av:bool)->MediaResult<Description>{
     let deadline=Instant::now()+Duration::from_secs(8);
-    loop{let d=peer.create_description(DescriptionKind::Offer)?;if valid_sdp(&d.sdp){return Ok(d);}
+    loop{let d=peer.create_description(DescriptionKind::Offer)?;if valid_sdp(&d.sdp,av){return Ok(d);}
         if Instant::now()>=deadline{return Err("Missing video/data SDP".into());}
         std::thread::sleep(Duration::from_millis(40));}
 }
@@ -203,17 +215,18 @@ async fn host(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey,relay_o
 
     let config=negotiate_quality(conn,&mut cipher,quality).await?;
     let ice_config=conn.request_ice(&session).await?;
-    let mut peer=Peer::sender(config,Source::NativeRgba)?;
+    let mut peer=if profile.av(){Peer::sender_av(config,Source::NativeRgba)?}else{Peer::sender(config,Source::NativeRgba)?};
     peer.configure_ice(&ice_config,relay_only)?;drop(ice_config);
     peer.start()?;
     // Never show a synthetic desktop pattern as the initial native frame.
-    if matches!(profile,Profile::View|Profile::Control){let mut black=vec![0;config.rgba_bytes()];for p in black.chunks_exact_mut(4){p[3]=255;}peer.push_rgba(black)?;}else{peer.push_rgba(frame(0,config))?;}
+    if profile.native_view()||profile.native_control(){let mut black=vec![0;config.rgba_bytes()];for p in black.chunks_exact_mut(4){p[3]=255;}peer.push_rgba(black)?;}else{peer.push_rgba(frame(0,config))?;}
+    if profile.av(){peer.push_pcm(vec![0;640])?;} // inert negotiation seed only
     let channel=peer.create_control_channel()?;
-    let offer=offer(&peer)?;
+    let offer=offer(&peer,profile.av())?;
     peer.set_description(true,&offer)?;
     cipher.send(conn,Signal::Offer{sdp:offer.sdp.clone()}).await?;
     let Signal::Answer{sdp}=cipher.receive(conn).await? else{return Err("Expected answer".into());};
-    if !valid_sdp(&sdp){return Err("Unexpected answer profile".into());}
+    if !valid_sdp(&sdp,profile.av()){return Err("Unexpected answer profile".into());}
     let answer=Description{kind:DescriptionKind::Answer,sdp};
     let signed=approved.sign(id,nonce,offer.sdp.as_bytes(),answer.sdp.as_bytes()).map_err(error)?;
     cipher.send(conn,Signal::Proof{signature:hex(&signed.signature())}).await?;
@@ -246,7 +259,7 @@ async fn host(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey,relay_o
         channel.send(exchange::HOST_DONE)?;
         finish(conn,&session).await?;return out("PASS ROUTED HOST: transfer verified");
     }
-    if profile!=Profile::Test{
+    if !profile.synthetic(){
         #[cfg(all(feature="native-control",any(target_os="windows",target_os="macos")))]
         {return native::host(&peer,&channel,conn,&mut cipher,&session,gate(&proof)?,profile,display.ok_or("Select a display")?,extra_displays).await;}
         #[cfg(not(all(feature="native-control",any(target_os="windows",target_os="macos"))))]
@@ -256,6 +269,8 @@ async fn host(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey,relay_o
     let mut dispatcher=Dispatcher::new(gate(&proof)?,backend,DisplayArea{x:0,y:0,width:config.width,height:config.height})?;
     wait_data(&peer,&channel,conn,READY).await?;
     channel.send(READY_ACK)?;
+    let mut audio_capture=if profile.av(){Some(audio::Capture::new(true)?)}else{None};
+    let mut audio_count=0u32;
     out("CONNECTED ROUTED TEST")?;
     let result:MediaResult<u32>=async{
         let deadline=Instant::now()+Duration::from_secs(12);
@@ -266,12 +281,14 @@ async fn host(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey,relay_o
                 let Some(bytes)=channel.receive()? else{break;};
                 if bytes==STOP{
                     if events!=2{return Err("Expected exactly two simulated input events".into());}
+                    if profile.av()&&audio_count<50{return Err("Insufficient A/V test audio samples".into());}
                     return Ok(frames);
                 }
                 if events>=2{return Err("Unexpected extra simulated input".into());}
                 dispatcher.dispatch(&bytes)?;
                 events+=1;
             }
+            if let Some(capture)=audio_capture.as_mut(){for _ in 0..3{if let Some(pcm)=capture.poll()?{peer.push_pcm(pcm)?;audio_count+=1;}else{break;}}}
             if Instant::now()>=next{
                 peer.push_rgba(frame(frames,config))?;frames+=1;
                 next=Instant::now()+Duration::from_millis(1000/u64::from(config.fps));
@@ -280,8 +297,10 @@ async fn host(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey,relay_o
         }
         Err("Routed test deadline".into())
     }.await;
+    drop(audio_capture);
     dispatcher.close()?;
     let frames=result?;
+    if profile.av(){out(&format!("AV_AUDIO_SENT {audio_count}"))?;}
     if log.borrow().as_slice()!=["move","key:4:true","key:4:false"]{return Err("Inert release verification failed".into());}
     channel.send(ACK)?;
     finish(conn,&session).await?;
@@ -308,11 +327,11 @@ async fn controller(mut owned:Connection,id:&DeviceIdentity,expected:PublicKey,r
     let mut cipher=RouteCipher::establish(conn,&binding,id,Role::Controller).await?;
     let config=negotiate_quality(conn,&mut cipher,quality).await?;
     let ice_config=conn.request_ice(&session).await?;
-    let mut peer=Peer::receiver(config)?;
+    let mut peer=if profile.av(){Peer::receiver_av(config,profile==Profile::AvTest)?}else{Peer::receiver(config)?};
     peer.configure_ice(&ice_config,relay_only)?;drop(ice_config);peer.start()?;
     let channel=peer.create_control_channel()?;
     let Signal::Offer{sdp}=cipher.receive(conn).await? else{return Err("Expected offer".into());};
-    if !valid_sdp(&sdp){return Err("Unexpected offer profile".into());}
+    if !valid_sdp(&sdp,profile.av()){return Err("Unexpected offer profile".into());}
     let offer=Description{kind:DescriptionKind::Offer,sdp};
     // Needed to create the answer; only synthetic video and no privileged
     // operations are possible in this executable.
@@ -356,17 +375,18 @@ async fn controller(mut owned:Connection,id:&DeviceIdentity,expected:PublicKey,r
         conn.send(Client::Close{session:session.clone()}).await?;finish(conn,&session).await?;
         return out("PASS ROUTED CONTROLLER: transfer verified");
     }
-    if profile!=Profile::Test{
+    if !profile.synthetic(){
         #[cfg(all(feature="native-control",any(target_os="windows",target_os="macos")))]
         {
             let Signal::Geometry{x,y,width,height}=cipher.receive(conn).await? else{return Err("Missing authorized display geometry".into());};
             let geometry=Geometry{x,y,width,height};
             if x.checked_add(width).is_none_or(|n|n>config.width)||y.checked_add(height).is_none_or(|n|n>config.height){return Err("Geometry exceeds negotiated canvas".into());}
-            let screens=if profile==Profile::View{
+            let screens=if profile.native_view(){
                 match cipher.receive(conn).await?{Signal::ViewLayout{count} if (1..=4).contains(&count)=>count,_=>return Err("Missing approved display list".into())}
             }else{1};
             channel.send(READY)?;
             wait_data(&peer,&channel,conn,READY_ACK).await?;
+            if profile.av(){peer.authorize_audio_playback(volume)?;}
             return native::controller(&peer,&channel,owned,session,sid,geometry,profile,screens).await;
         }
         #[cfg(not(all(feature="native-control",any(target_os="windows",target_os="macos"))))]
@@ -374,12 +394,13 @@ async fn controller(mut owned:Connection,id:&DeviceIdentity,expected:PublicKey,r
     }
     channel.send(READY)?;
     wait_data(&peer,&channel,conn,READY_ACK).await?;
+    if profile.av(){peer.authorize_audio_playback(volume)?;}
     out("CONNECTED ROUTED TEST")?;
     for(sequence,event)in [(1,InputEvent::PointerMove(PointerMove{x:100,y:200})),(2,InputEvent::Key(Key{usage:4,down:true}))]{
         channel.send(&InputEnvelope{version:VERSION,session_id:sid.to_vec(),sequence,event:Some(event)}.encode_to_vec())?;
     }
-    let deadline=Instant::now()+Duration::from_secs(10);let mut frames=0;
-    while frames<30{
+    let deadline=Instant::now()+Duration::from_secs(12);let mut frames=0;let mut audio_frames=0u32;let mut audio_nonzero=false;
+    while frames<30||(profile.av()&&(audio_frames<50||!audio_nonzero)){
         connected(&peer,&channel)?;
         if Instant::now()>=deadline{return Err("Routed decode timeout".into());}
         if let Some(sample)=peer.pull_frame(Duration::from_millis(25))?{
@@ -387,8 +408,10 @@ async fn controller(mut owned:Connection,id:&DeviceIdentity,expected:PublicKey,r
             if info.width!=config.width||info.height!=config.height{return Err("Unexpected frame dimensions".into());}
             frames+=1;
         }
+        if profile.av(){for _ in 0..8{let Some(sample)=peer.pull_audio()?else{break;};let b=sample.buffer().ok_or("Missing decoded Opus buffer")?;let map=b.map_readable().map_err(error)?;if map.size()==0||map.size()>16384{return Err("Invalid decoded Opus buffer".into());}audio_nonzero|=map.as_slice().iter().any(|&v|v!=0);audio_frames+=1;}}
         tick(conn).await?;
     }
+    if profile.av(){peer.mute_audio();out(&format!("AV_AUDIO_RECEIVED {audio_frames}"))?;}
     channel.send(STOP)?;
     wait_data(&peer,&channel,conn,ACK).await?;
     conn.send(Client::Close{session:session.clone()}).await?;
@@ -435,6 +458,7 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
         "--clipboard-sync-test" if !native_allowed&&profile==Profile::Test=>profile=Profile::ClipboardSync(true),
         "--audio" if native_allowed&&profile==Profile::Test=>profile=Profile::Audio(false),
         "--audio-test" if !native_allowed&&profile==Profile::Test=>profile=Profile::Audio(true),
+        "--av-test" if !native_allowed&&profile==Profile::Test=>profile=Profile::AvTest,
         "--volume"=>{volume=a.next().ok_or("Missing volume")?.parse().map_err(error)?;if volume>100{return Err("Volume out of range".into());}},
         "--exchange" if profile==Profile::Test=>{
             let mode=exchange::Mode::parse(&a.next().ok_or("Missing exchange kind")?,&a.next().ok_or("Missing sender role")?)?;
@@ -444,14 +468,16 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
         "--resume-from" if resume.from.is_none()=>resume.from=Some(std::path::PathBuf::from(a.next().ok_or("Select existing local checkpoint")?)),
         "--save-checkpoint" if resume.save_to.is_none()=>resume.save_to=Some(std::path::PathBuf::from(a.next().ok_or("Select unused local checkpoint path")?)),
         "--view" if native_allowed&&profile==Profile::Test=>{profile=Profile::View;if host{display=Some(a.next().ok_or("Select display ID")?.parse::<u32>().map_err(error)?);}},
-        "--view-extra" if native_allowed&&host&&profile==Profile::View=>{
+        "--av-view" if native_allowed&&profile==Profile::Test=>{profile=Profile::AvView;if host{display=Some(a.next().ok_or("Select display ID")?.parse::<u32>().map_err(error)?);}},
+        "--av-control" if native_allowed&&profile==Profile::Test=>{profile=Profile::AvControl;if host{display=Some(a.next().ok_or("Select display ID")?.parse::<u32>().map_err(error)?);}},
+        "--view-extra" if native_allowed&&host&&profile.native_view()=>{
             let d=a.next().ok_or("Missing additional display ID")?.parse::<u32>().map_err(error)?;
             if extra_displays.len()>=3||display==Some(d)||extra_displays.contains(&d){return Err("Select up to four distinct displays".into());}extra_displays.push(d);
         },
         "--control" if native_allowed&&profile==Profile::Test=>{profile=Profile::Control;if host{display=Some(a.next().ok_or("Select display ID")?.parse::<u32>().map_err(error)?);}},
         _=>return Err("Unexpected argument".into()),
     }}
-    if shared_controller&&(host||!matches!(profile,Profile::Test|Profile::View|Profile::Control)||persistent&&identity_slot.unwrap_or(0)!=0){return Err("Shared identity is only for outgoing view/control/test using slot one identity".into());}
+    if shared_controller&&(host||!(profile.synthetic()||profile.native_view()||profile.native_control())||persistent&&identity_slot.unwrap_or(0)!=0){return Err("Shared identity is only for outgoing view/control/test using slot one identity".into());}
     if identity_slot.is_some()&&!persistent{return Err("Identity slot requires explicit persistent storage opt-in".into());}
     if defer_test_registration&&(!supervised||persistent||profile!=Profile::Test){return Err("Test registration barrier requires synthetic temporary supervised mode".into());}
     if native_allowed&&profile==Profile::Test{return Err("Choose a separate view, control or exchange profile".into());}
@@ -484,7 +510,7 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
         if !native_allowed&&!matches!(mode.kind,remote_ex_desktop_features::exchange::Kind::File|remote_ex_desktop_features::exchange::Kind::Directory){return Err("Diagnostic cannot access clipboard".into());}
         quality="compat".into();
     }
-    if matches!(profile,Profile::View|Profile::Control)&&!cfg!(all(feature="native-control",any(target_os="windows",target_os="macos"))){return Err("Native mode not compiled for this platform".into());}
+    if (profile.native_view()||profile.native_control())&&!cfg!(all(feature="native-control",any(target_os="windows",target_os="macos"))){return Err("Native mode not compiled for this platform".into());}
     if supervised&&(io::stdin().is_terminal()||io::stdout().is_terminal()){return Err("Desktop mode requires supervisor pipes".into());}
     if profile!=Profile::Test&&!supervised&&(!io::stdin().is_terminal()||!io::stdout().is_terminal()){return Err("Visible local consent required".into());}
     ctrlc::set_handler(||CANCEL.store(true,Ordering::Release)).map_err(error)?;
@@ -520,7 +546,7 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
     audio::VOLUME.store(volume,Ordering::Release);
     if supervised{
         let allow_pause=matches!(profile,Profile::Exchange(m) if m.kind==remote_ex_desktop_features::exchange::Kind::File&&m.sending(host));
-        let allow_volume=profile==Profile::Audio(false)&&!host;
+        let allow_volume=(profile==Profile::Audio(false)||profile.av())&&!host;
         let allow_catalog=profile==Profile::Catalog&&!host;
         std::thread::spawn(move||{
             use std::io::BufRead;

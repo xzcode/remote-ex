@@ -65,7 +65,7 @@ fn capture(displays:Vec<(u32,DisplayArea)>,input:bool,config:VideoConfig)->Captu
     Capture{rx,stop,layout,count}
 }
 async fn serve<B:Backend>(peer:&Peer,channel:&ControlChannel,conn:&mut Connection,session:&str,
-    mut dispatcher:Dispatcher<B>,capture:Capture,input:bool)->MediaResult<()>{
+    mut dispatcher:Dispatcher<B>,capture:Capture,input:bool,av:bool)->MediaResult<()>{
     // The native capture worker is already authorized and independent. Do not
     // acknowledge readiness or accept input before its first successful frame.
     let first_deadline=Instant::now()+Duration::from_secs(3);
@@ -79,11 +79,13 @@ async fn serve<B:Backend>(peer:&Peer,channel:&ControlChannel,conn:&mut Connectio
         }
     };
     peer.push_rgba(initial.pixels)?;
+    let mut audio_capture=if av{Some(audio::Capture::new(false)?)}else{None};
     channel.send(READY_ACK)?;
     out(if input{"CONNECTED ROUTED CONTROL"}else{"CONNECTED ROUTED VIEW"})?;
     if !input{channel.send(&[VIEW_LAYOUT_ACK,initial.layout as u8,capture.count as u8])?;}
     let started=Instant::now();let mut last=started;let mut last_frame=started;
     let mut stats=remote_ex_media::stats::Sampler::default();
+    let mut last_audio=Instant::now();
     let mut published=Some(initial.layout);let mut last_switch=Instant::now()-Duration::from_secs(1);
     let mut bitrate=peer.config().bitrate;let ceiling=bitrate;let floor=(ceiling/4).max(100_000);let mut good=0u8;
     let result:MediaResult<()> = async{
@@ -121,6 +123,10 @@ async fn serve<B:Backend>(peer:&Peer,channel:&ControlChannel,conn:&mut Connectio
                 Err(TryRecvError::Empty)=>{},
                 Err(TryRecvError::Disconnected)=>return Err("Capture worker stopped".into()),
             }
+            if let Some(source)=audio_capture.as_mut(){
+                for _ in 0..3{if let Some(pcm)=source.poll()?{peer.push_pcm(pcm)?;last_audio=Instant::now();}else{break;}}
+                if last_audio.elapsed()>Duration::from_secs(5){return Err("Authorized audio capture stalled".into());}
+            }
             if let Some(sample)=stats.poll(peer){
                 out(&sample.line())?;
                 if let Some(loss)=sample.loss_pct{
@@ -133,7 +139,7 @@ async fn serve<B:Backend>(peer:&Peer,channel:&ControlChannel,conn:&mut Connectio
             tick(conn).await?;
         }
     }.await;
-    drop(capture);
+    drop(audio_capture);drop(capture);
     dispatcher.close()?;
     out("INPUT_RELEASED")?;
     result?;
@@ -144,7 +150,7 @@ async fn serve<B:Backend>(peer:&Peer,channel:&ControlChannel,conn:&mut Connectio
 pub(super) async fn host(peer:&Peer,channel:&ControlChannel,conn:&mut Connection,cipher:&mut RouteCipher,
     session:&str,gate:SessionGate,profile:Profile,display:u32,extra_displays:Vec<u32>)->MediaResult<()>{
     if canceled(){return Err("Authorization revoked".into());}
-    let input=profile==Profile::Control;
+    let input=profile.native_control();
     permissions(input)?;
     let config=peer.config();
     if input&&!extra_displays.is_empty(){return Err("Control is limited to the primary display".into());}
@@ -162,11 +168,11 @@ pub(super) async fn host(peer:&Peer,channel:&ControlChannel,conn:&mut Connection
         let backend=NativeBackend::new()?;
         if backend.primary_area()?!=area{return Err("Primary display DPI/geometry mismatch".into());}
         let d=Dispatcher::new(gate,backend,area)?;
-        serve(peer,channel,conn,session,d,capture(displays,true,config),true).await
+        serve(peer,channel,conn,session,d,capture(displays,true,config),true,profile.av()).await
     }else{
         // Never instantiate a native input backend in the view-only profile.
         let d=Dispatcher::new(gate,Inert::default(),area)?;
-        serve(peer,channel,conn,session,d,capture(displays,false,config),false).await
+        serve(peer,channel,conn,session,d,capture(displays,false,config),false,profile.av()).await
     }
 }
 pub(super) async fn controller(peer:&Peer,channel:&ControlChannel,mut conn:Connection,session:String,sid:[u8;16],geometry:Geometry,profile:Profile,screens:u8)->MediaResult<()>{
@@ -181,8 +187,9 @@ pub(super) async fn controller(peer:&Peer,channel:&ControlChannel,mut conn:Conne
         if result.is_err(){CANCEL.store(true,Ordering::Release);}
         let close=conn.close().await;result?;close
     });
-    out(if profile==Profile::Control{"CONNECTED ROUTED CONTROL"}else{"CONNECTED ROUTED VIEW"})?;
-    let result=viewer::run(peer,channel,sid,geometry,profile==Profile::Control,screens);
+    out(if profile.native_control(){"CONNECTED ROUTED CONTROL"}else{"CONNECTED ROUTED VIEW"})?;
+    let result=viewer::run(peer,channel,sid,geometry,profile.native_control(),screens,profile.av());
+    if profile.av(){peer.mute_audio();}
     let (frames,released)=match result{
         Ok(v)=>v,
         Err(e)=>{let _=done.send(());let _=monitor.await;return Err(e);}
@@ -194,7 +201,7 @@ pub(super) async fn controller(peer:&Peer,channel:&ControlChannel,mut conn:Conne
             peer.check_health()?;
             match channel.receive()?{
                 Some(b) if b==ACK=>break,
-                Some(b) if profile==Profile::View&&b.len()==3&&b[0]==VIEW_LAYOUT_ACK&&b[2]==screens&&b[1]<=screens=>{},
+                Some(b) if profile.native_view()&&b.len()==3&&b[0]==VIEW_LAYOUT_ACK&&b[2]==screens&&b[1]<=screens=>{},
                 Some(_)=>return Err("Unexpected control response while closing".into()),
                 None=>{},
             }

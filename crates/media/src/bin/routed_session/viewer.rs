@@ -22,7 +22,7 @@ fn hid(k:K)->Option<u16>{
 }
 struct Viewer<'a>{
     peer:&'a Peer,channel:&'a ControlChannel,session:[u8;16],geometry:Rect,
-    allow_input:bool,input_enabled:bool,screens:u8,view_index:Option<u8>,switch_pending:bool,
+    allow_input:bool,input_enabled:bool,av:bool,volume:u8,screens:u8,view_index:Option<u8>,switch_pending:bool,
     window:Option<Rc<Window>>,surface:Option<Surface<Rc<Window>,Rc<Window>>>,
     size:PhysicalSize<u32>,toolbar:u32,scale:u32,fit:Option<Rect>,last_cursor:Option<(f64,f64)>,
     focused:bool,armed:bool,physical_keys:BTreeSet<u16>,physical_buttons:BTreeSet<u8>,
@@ -99,6 +99,7 @@ impl Viewer<'_>{
             }
         }
         connected(self.peer,self.channel)?;
+        if self.av{let volume=audio::VOLUME.load(Ordering::Acquire);if volume!=self.volume{self.peer.set_audio_volume(volume)?;self.volume=volume;out(&format!("AUDIO_VOLUME {volume}"))?;}}
         if self.heartbeat.elapsed()>=Duration::from_millis(300){self.channel.send(HEARTBEAT)?;self.heartbeat=Instant::now();}
         if let Some(sample)=self.peer.pull_frame(Duration::ZERO)?{
             let info=Peer::frame_info(&sample)?;let config=self.peer.config();
@@ -236,11 +237,11 @@ impl ApplicationHandler for Viewer<'_>{
         el.set_control_flow(ControlFlow::WaitUntil(self.next_frame));
     }
 }
-pub(super) fn run(peer:&Peer,channel:&ControlChannel,session:[u8;16],geometry:Geometry,allow_input:bool,screens:u8)->MediaResult<(u32,bool)>{
+pub(super) fn run(peer:&Peer,channel:&ControlChannel,session:[u8;16],geometry:Geometry,allow_input:bool,screens:u8,av:bool)->MediaResult<(u32,bool)>{
     let c=peer.config();let now=Instant::now();
     let event_loop:EventLoop<()>=EventLoop::new().map_err(error)?;
     let mut v=Viewer{peer,channel,session,geometry:Rect{x:geometry.x,y:geometry.y,width:geometry.width,height:geometry.height},
-        allow_input,input_enabled:allow_input,screens,view_index:None,switch_pending:false,window:None,surface:None,size:PhysicalSize::new(0,0),
+        allow_input,input_enabled:allow_input,av,volume:audio::VOLUME.load(Ordering::Acquire),screens,view_index:None,switch_pending:false,window:None,surface:None,size:PhysicalSize::new(0,0),
         toolbar:0,scale:1,fit:None,last_cursor:None,focused:false,armed:false,physical_keys:BTreeSet::new(),physical_buttons:BTreeSet::new(),
         sent_keys:BTreeSet::new(),sent_buttons:BTreeSet::new(),previous:None,seq:0,pixels:vec![0;(c.width*c.height)as usize],
         frames:0,metric_frames:0,metric_bytes:0,last_metric:now,last_frame:now,stats:Default::default(),started:now,

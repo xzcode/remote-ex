@@ -69,3 +69,5 @@ jobs:
         run: |
           timeout 100s python3 scripts/test_routed_diagnostic.py target/debug/remote-ex-rendezvous crates/media/target/debug/routed_diagnostic --shared-controller
           timeout 100s python3 scripts/test_routed_diagnostic.py target/debug/remote-ex-rendezvous crates/media/target/debug/routed_diagnostic --catalog-test
+      - name: Simultaneous VP8 video and Opus RTP audio with inert input
+        run: timeout 110s python3 scripts/test_routed_diagnostic.py target/debug/remote-ex-rendezvous crates/media/target/debug/routed_diagnostic --av-test

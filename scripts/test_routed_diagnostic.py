@@ -48,6 +48,7 @@ def main():
     if directory_test and (not exchange_sender or resume_test or pause_test):raise RuntimeError("Choose a separate directory transfer test")
     clipboard_test="--clipboard-sync-test" in sys.argv[3:]
     if clipboard_test and exchange_sender:raise RuntimeError("Choose one test profile")
+    av_test="--av-test" in sys.argv[3:]
     audio_test="--audio-test" in sys.argv[3:]
     if audio_test and exchange_sender:raise RuntimeError("Choose one test profile")
     peers=[]
@@ -106,6 +107,8 @@ def main():
                 host_flags.extend(["--desktop-session","--catalog",source]);controller_flags.extend(["--desktop-session","--catalog",target])
             if clipboard_test:
                 host_flags.extend(["--clipboard-sync-test","--desktop-session"]);controller_flags.extend(["--clipboard-sync-test","--desktop-session"])
+            if av_test:
+                host_flags.extend(["--av-test","--desktop-session"]);controller_flags.extend(["--av-test","--desktop-session"])
             if audio_test:
                 host_flags.extend(["--audio-test","--desktop-session"]);controller_flags.extend(["--audio-test","--desktop-session"])
             if exchange_sender:
@@ -149,6 +152,9 @@ def main():
             elif clipboard_test:
                 for pair,key in ((host,ck),(controller,hk)):
                     pair[0].stdin.write(key+"\nALLOW TEST CLIPBOARD SYNC\n");pair[0].stdin.flush()
+            elif av_test:
+                for pair,key in ((host,ck),(controller,hk)):
+                    pair[0].stdin.write(key+"\nALLOW TEST AUDIO VIDEO\n");pair[0].stdin.flush()
             elif audio_test:
                 for pair,key in ((host,ck),(controller,hk)):
                     pair[0].stdin.write(key+"\nALLOW TEST AUDIO\n");pair[0].stdin.flush()
@@ -195,6 +201,9 @@ def main():
                 return
             if clipboard_test:
                 print("PASS: synthetic bidirectional text clipboard sync, baseline and echo suppression",flush=True)
+                return
+            if av_test:
+                print("PASS: authenticated VP8 and Opus RTP with inert input and release",flush=True)
                 return
             if audio_test:
                 print("PASS: synthetic audio transport and verified sample count",flush=True)
