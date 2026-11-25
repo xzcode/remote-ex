@@ -464,7 +464,7 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
         quality="compat".into();
     }
     if let Profile::Audio(test)=profile{
-        if !test&&host&&!cfg!(target_os="windows"){return Err("System audio capture currently requires Windows WASAPI loopback; microphone fallback is disabled".into());}
+        if !test&&host&&!cfg!(any(target_os="windows",target_os="macos")){return Err("System output audio requires Windows or macOS; microphone fallback is disabled".into());}
         quality="compat".into();
     }
     if resume.from.is_some()||resume.save_to.is_some(){

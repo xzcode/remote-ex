@@ -495,7 +495,7 @@ impl SessionManager {
             },
             Profile::RoutedClipboardSync=>{command.arg("--clipboard-sync");},
             Profile::RoutedAudio=>{
-                if host&&!cfg!(windows){return Err("System audio source requires Windows WASAPI loopback".into());}
+                if host&&!cfg!(any(target_os="windows",target_os="macos")){return Err("System audio source requires Windows or macOS".into());}
                 if volume>100{return Err("Volume out of range".into());}
                 command.arg("--audio").arg("--volume").arg(volume.to_string());
             },
