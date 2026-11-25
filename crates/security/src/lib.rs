@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
-//! Device identity primitives only. No production pairing or network handshake.
+//! Device identity and session transcript primitives. No production pairing or network handshake.
+pub mod session;
+pub use session::{SessionTranscript, Role, VerifiedSession, ProofError, hash_sdp, verify_session};
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use rand_core::OsRng;
 use sha2::{Digest, Sha256};
