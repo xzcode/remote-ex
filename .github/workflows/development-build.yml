@@ -58,7 +58,7 @@ jobs:
         run: |
           root=/Library/Frameworks/GStreamer.framework/Versions/1.0/lib
           test -e "$root/libgstapp-1.0.0.dylib"
-          for name in lan_view lan_diagnostic lan_control; do
+          for name in lan_view lan_diagnostic lan_control routed_diagnostic routed_control; do
             bin="crates/media/target/release/$name"
             otool -L "$bin"
             otool -l "$bin" | grep -F "path $root "
@@ -76,13 +76,20 @@ jobs:
           suffix=""
           if [ "$RUNNER_OS" = "Windows" ]; then suffix=".exe"; fi
           python3 scripts/test_secure_control.py "crates/media/target/release/lan_control${suffix}"
+      - name: Routed WSS integration without OS input
+        shell: bash
+        run: |
+          cargo build --release -p remote-ex-rendezvous
+          suffix=""
+          if [ "$RUNNER_OS" = "Windows" ]; then suffix=".exe"; fi
+          python3 scripts/test_routed_diagnostic.py "target/release/remote-ex-rendezvous${suffix}" "crates/media/target/release/routed_diagnostic${suffix}"
       - name: Collect Windows development package
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force stage, artifacts | Out-Null
           Copy-Item apps/desktop/src-tauri/target/release/remote-ex-desktop.exe stage/
-          foreach ($name in @('lan_view','lan_diagnostic','lan_control')) {
+          foreach ($name in @('lan_view','lan_diagnostic','lan_control','routed_diagnostic','routed_control')) {
             Copy-Item "crates/media/target/release/$name.exe" stage/
           }
           Copy-Item docs/DEV_BUILD.md stage/README.md
@@ -97,7 +104,7 @@ jobs:
           cp scripts/ci/macos-development-info.plist "$app/Contents/Info.plist"
           plutil -lint "$app/Contents/Info.plist"
           cp apps/desktop/src-tauri/target/release/remote-ex-desktop "$app/Contents/MacOS/"
-          for name in lan_view lan_diagnostic lan_control; do
+          for name in lan_view lan_diagnostic lan_control routed_diagnostic routed_control; do
             cp "crates/media/target/release/$name" "$app/Contents/MacOS/"
             codesign --force --sign - "$app/Contents/MacOS/$name"
           done

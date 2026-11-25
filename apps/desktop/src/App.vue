@@ -4,10 +4,11 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import { en, zh, type TextKey } from "./i18n";
 import LanPanel from "./LanPanel.vue";
 import PresencePanel from "./PresencePanel.vue";
+import RoutedPanel from "./RoutedPanel.vue";
 
 type Language = "system" | "en" | "zh";
 type Theme = "system" | "light" | "dark" | "black";
-type Page = "remote" | "server" | "diagnostics" | "preferences";
+type Page = "remote" | "routed" | "server" | "diagnostics" | "preferences";
 type Permission = "granted" | "required" | "system_managed";
 type Display = { id: number; name: string; width: number; height: number; primary: boolean };
 
@@ -95,7 +96,7 @@ function navigate(page: Page) {
   active.value = page;
 }
 const pages: { key: Page; symbol: string }[] = [
-  { key: "remote", symbol: "▣" }, { key: "server", symbol: "◎" }, { key: "diagnostics", symbol: "◫" }, { key: "preferences", symbol: "⚙" }
+  { key: "remote", symbol: "▣" }, { key: "routed", symbol: "↔" }, { key: "server", symbol: "◎" }, { key: "diagnostics", symbol: "◫" }, { key: "preferences", symbol: "⚙" }
 ];
 </script>
 
@@ -116,6 +117,9 @@ const pages: { key: Page; symbol: string }[] = [
       <div class="body">
         <template v-if="active === 'remote'">
           <LanPanel :t="t" @active="lanActive = $event" />
+        </template>
+        <template v-else-if="active === 'routed'">
+          <RoutedPanel :t="t" @active="lanActive = $event" />
         </template>
         <template v-else-if="active === 'server'">
           <PresencePanel :t="t" @active="presenceActive = $event" />

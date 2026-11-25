@@ -113,10 +113,10 @@ pub(super) async fn controller(peer:&Peer,channel:&ControlChannel,mut conn:Conne
     // authenticated WSS connection on a runtime worker, not the GUI thread.
     let (done,wait)=tokio::sync::oneshot::channel::<()>();
     let monitor=tokio::spawn(async move{
-        let result=tokio::select!{
+        let result:MediaResult<()>=async{tokio::select!{
             _=wait=>{conn.send(Client::Close{session:session.clone()}).await?;finish(&mut conn,&session).await},
             event=conn.receive(Duration::from_secs(40))=>{let _=event?;Err("Routed session interrupted".into())}
-        };
+        }}.await;
         if result.is_err(){CANCEL.store(true,Ordering::Release);}
         let close=conn.close().await;result?;close
     });

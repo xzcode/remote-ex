@@ -16,6 +16,7 @@ fn main() {
             capture::list_displays,
             capture::capture_preview,
             lan::lan_prepare,
+            lan::routed_prepare,
             lan::lan_status,
             lan::lan_confirm,
             lan::lan_disconnect,

@@ -37,10 +37,11 @@ pub struct Snapshot {
     detail: Option<String>,
     profile: Profile,
     input_released: bool,
+    device_id: Option<String>,
 }
 impl Default for Snapshot {
     fn default() -> Self {
-        Self { stage: Stage::Idle, active: false, local_key: None, detail: None, profile: Profile::Diagnostic, input_released: false }
+        Self { stage: Stage::Idle, active: false, local_key: None, detail: None, profile: Profile::Diagnostic, input_released: false, device_id: None }
     }
 }
 
@@ -57,7 +58,7 @@ fn stage(shared: &Mutex<Snapshot>, next: Stage, detail: Option<String>) {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
-enum Profile { Diagnostic, SecureTest, Screen, Control }
+enum Profile { Diagnostic, SecureTest, Screen, Control, RoutedTest, RoutedView, RoutedControl }
 impl Profile {
     fn parse(value: &str) -> Result<Self, String> {
         match value {
@@ -68,7 +69,9 @@ impl Profile {
             _ => Err("Unknown session profile".into()),
         }
     }
-    fn key_len(self) -> usize { if self == Self::Diagnostic { 64 } else { 128 } }
+    fn routed(self)->bool{matches!(self,Self::RoutedTest|Self::RoutedView|Self::RoutedControl)}
+    fn requires_release(self)->bool{matches!(self,Self::Control|Self::RoutedControl|Self::RoutedView)}
+    fn key_len(self) -> usize { if self == Self::Diagnostic || self.routed() { 64 } else { 128 } }
     fn consent(self, host: bool) -> &'static str {
         match self {
             Self::Diagnostic => "ALLOW DIAGNOSTIC",
@@ -77,6 +80,11 @@ impl Profile {
             Self::Screen => "ALLOW SCREEN VIEW",
             Self::Control if host => "ALLOW SCREEN AND INPUT",
             Self::Control => "ALLOW REMOTE INPUT",
+            Self::RoutedTest => "ALLOW ROUTED TEST",
+            Self::RoutedView if host=>"ALLOW ROUTED SCREEN",
+            Self::RoutedView=>"ALLOW ROUTED VIEW",
+            Self::RoutedControl if host=>"ALLOW ROUTED SCREEN AND INPUT",
+            Self::RoutedControl=>"ALLOW ROUTED INPUT",
         }
     }
 }
@@ -104,6 +112,10 @@ fn sidecar_path(profile: Profile) -> Result<PathBuf, String> {
         (Profile::Diagnostic, false) => "lan_diagnostic",
         (Profile::Control, true) => "lan_control.exe",
         (Profile::Control, false) => "lan_control",
+        (Profile::RoutedTest,true)=>"routed_diagnostic.exe",
+        (Profile::RoutedTest,false)=>"routed_diagnostic",
+        (Profile::RoutedView|Profile::RoutedControl,true)=>"routed_control.exe",
+        (Profile::RoutedView|Profile::RoutedControl,false)=>"routed_control",
         (_, true) => "lan_view.exe",
         (_, false) => "lan_view",
     };
@@ -171,21 +183,26 @@ fn handle_output(shared: &Mutex<Snapshot>, output: Output, pass: &mut bool, fail
                 } else {
                     *failure = Some("Unexpected diagnostic identity".into());
                 }
+            } else if let Some(id)=text.strip_prefix("ONLINE ") {
+                let mut snapshot=locked(shared);
+                let expected=snapshot.local_key.as_ref().and_then(|k|remote_ex_signaling::decode_hex::<32>(k).ok()).map(|k|remote_ex_signaling::hex(&remote_ex_security::fingerprint(&k)));
+                if snapshot.profile.routed()&&expected.as_deref()==Some(id){snapshot.device_id=Some(id.into());}
+                else{*failure=Some("Unexpected routed registration identity".into());}
             } else if text.starts_with("LISTENING ") {
                 let current = locked(shared).stage;
                 if current == Stage::Connecting { stage(shared, Stage::Listening, None); }
             } else if matches!(text.as_str(), "CONNECTED" | "CONNECTED TEST VIEW")
-                || text.starts_with("CONNECTED SCREEN VIEW") || text.starts_with("CONNECTED CONTROL") {
+                || text.starts_with("CONNECTED SCREEN VIEW") || text.starts_with("CONNECTED CONTROL") || text.starts_with("CONNECTED ROUTED ") {
                 let current = locked(shared).stage;
                 if matches!(current, Stage::Connecting | Stage::Listening) {
                     stage(shared, Stage::Connected, None);
                 }
             } else if text == "INPUT_RELEASED" {
                 let mut snapshot = locked(shared);
-                if snapshot.profile == Profile::Control { snapshot.input_released = true; }
+                if snapshot.profile.requires_release() { snapshot.input_released = true; }
             } else if text.starts_with("PASS HOST:") || text.starts_with("PASS CONTROLLER:")
                 || text.starts_with("PASS HOST VIEW:") || text.starts_with("PASS CONTROLLER VIEW:")
-                || text.starts_with("PASS HOST CONTROL:") || text.starts_with("PASS CONTROLLER CONTROL:") {
+                || text.starts_with("PASS HOST CONTROL:") || text.starts_with("PASS CONTROLLER CONTROL:") || text.starts_with("PASS ROUTED HOST:") || text.starts_with("PASS ROUTED CONTROLLER:") {
                 *pass = true;
             }
         }
@@ -220,7 +237,7 @@ fn supervise(
             else if started.elapsed() >= SESSION_LIMIT { Some("Session expired".into()) }
             else { failure.clone() };
         if stopping.is_none() && (stop.load(Ordering::Acquire) || reason.is_some()) {
-            if profile != Profile::Control {
+            if !profile.requires_release() {
                 stage(&shared, if reason.is_some() { Stage::Failed } else { Stage::Canceled }, reason);
                 return;
             }
@@ -274,7 +291,7 @@ fn supervise(
                     }
                 }
                 let released = locked(&shared).input_released;
-                let unconfirmed = profile == Profile::Control && approved && !released;
+                let unconfirmed = profile.requires_release() && approved && !released;
                 if unconfirmed {
                     let reason = failure.or(stop_error).unwrap_or_else(|| "Control session ended".into());
                     stage(&shared, Stage::Failed, Some(format!("{reason}; input release not confirmed.")));
@@ -289,7 +306,7 @@ fn supervise(
             }
             Ok(None) => {}
             Err(e) => {
-                let reason = if profile == Profile::Control {
+                let reason = if profile.requires_release() {
                     format!("Process status unavailable: {e}; input release not confirmed.")
                 } else { e.to_string() };
                 stage(&shared, Stage::Failed, Some(reason));
@@ -310,11 +327,6 @@ impl SessionManager {
     fn prepare(&self, role: &str, address: &str, preview: bool, profile: Profile, display_id: Option<u32>) -> Result<Snapshot, String> {
         let addr = local_endpoint(address)?;
         let flag = match role { "host" => "--listen", "controller" => "--connect", _ => return Err("Unknown diagnostic role".into()) };
-        let mut worker = locked(&self.worker);
-        if worker.as_ref().is_some_and(|w| !w.join.is_finished()) {
-            return Err("A diagnostic session is already running".into());
-        }
-        if let Some(old) = worker.take() { let _ = old.join.join(); }
         let host = role == "host";
         let mut command = Command::new(sidecar_path(profile)?);
         command.arg(flag).arg(addr.to_string());
@@ -328,6 +340,7 @@ impl SessionManager {
                 if host { command.arg(display_id.ok_or("Choose the primary display to control")?.to_string()); }
                 command.arg("--desktop-session");
             }
+            Profile::RoutedTest|Profile::RoutedView|Profile::RoutedControl=>return Err("Use the routed connection entry point".into()),
             Profile::Screen => {
                 if host {
                     let display = display_id.ok_or("Choose the specific display to share")?;
@@ -336,6 +349,38 @@ impl SessionManager {
                 command.arg("--desktop-session");
             }
         }
+        self.spawn(command,profile,host)
+    }
+    fn prepare_routed(&self,role:&str,url:&str,server_id:&str,profile:Profile,display_id:Option<u32>,relay_only:bool,persistent:bool,storage_consent:bool,ca_path:Option<String>)->Result<Snapshot,String>{
+        if !profile.routed()||url.len()>512{return Err("Invalid routed session configuration".into());}
+        if persistent&&(!storage_consent||profile==Profile::RoutedTest){return Err("Persistent routed identity requires explicit native storage consent".into());}
+        let pin=remote_ex_signaling::decode_hex::<32>(server_id).map_err(|_|"Invalid expected server ID")?;
+        let _=remote_ex_rendezvous_client::Endpoint::secure(url,pin)?;
+        let host=match role{"host"=>true,"controller"=>false,_=>return Err("Unknown routed role".into())};
+        let mut command=Command::new(sidecar_path(profile)?);
+        command.arg(if host{"--host"}else{"--controller"}).arg(url).arg(remote_ex_signaling::hex(&pin));
+        match profile{
+            Profile::RoutedTest=>{},
+            Profile::RoutedView|Profile::RoutedControl=>{
+                command.arg(if profile==Profile::RoutedView{"--view"}else{"--control"});
+                if host{command.arg(display_id.ok_or("Choose primary display")?.to_string());}
+            },
+            _=>return Err("Invalid routed session profile".into()),
+        }
+        if relay_only{command.arg("--relay-only");}
+        if persistent{command.arg("--persistent");}
+        if let Some(ca)=ca_path.filter(|s|!s.is_empty()){
+            let path=std::path::Path::new(&ca);
+            if ca.len()>1024||!path.is_absolute()||!path.is_file(){return Err("Choose a valid absolute local CA certificate path".into());}
+            command.arg("--ca").arg(path);
+        }
+        command.arg("--desktop-session");
+        self.spawn(command,profile,host)
+    }
+    fn spawn(&self,mut command:Command,profile:Profile,host:bool)->Result<Snapshot,String>{
+        let mut worker=locked(&self.worker);
+        if worker.as_ref().is_some_and(|w|!w.join.is_finished()){return Err("A remote session is already running".into());}
+        if let Some(old)=worker.take(){let _=old.join.join();}
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
@@ -343,7 +388,7 @@ impl SessionManager {
         }
         let child = command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped())
             .spawn().map_err(|e| format!("Cannot start native media diagnostic: {e}"))?;
-        *locked(&self.shared) = Snapshot { stage: Stage::Starting, active: true, local_key: None, detail: None, profile, input_released: false };
+        *locked(&self.shared) = Snapshot { stage: Stage::Starting, active: true, local_key: None, detail: None, profile, input_released: false, device_id: None };
         let (tx, rx) = mpsc::sync_channel(4);
         let shared = self.shared.clone();
         let stop = Arc::new(AtomicBool::new(false));
@@ -356,6 +401,7 @@ impl SessionManager {
         let peer = peer_key.trim().to_ascii_lowercase();
         let snapshot = self.snapshot();
         if !approved || snapshot.stage != Stage::AwaitingApproval || !key_valid(&peer, snapshot.profile)
+            || (snapshot.profile.routed()&&snapshot.device_id.is_none())
             || snapshot.local_key.as_deref() == Some(peer.as_str()) {
             return Err("Verify the other device's full public key and explicitly approve this diagnostic".into());
         }
@@ -393,6 +439,12 @@ pub fn lan_prepare(window: WebviewWindow, manager: State<'_, SessionManager>, ro
     require_main(&window)?; manager.prepare(&role, &address, preview, Profile::parse(&profile)?, display_id)
 }
 #[tauri::command]
+pub fn routed_prepare(window:WebviewWindow,manager:State<'_,SessionManager>,role:String,url:String,server_id:String,mode:String,display_id:Option<u32>,relay_only:bool,persistent:bool,storage_consent:bool,ca_path:Option<String>)->Result<Snapshot,String>{
+    require_main(&window)?;
+    let profile=match mode.as_str(){"test"=>Profile::RoutedTest,"view"=>Profile::RoutedView,"control"=>Profile::RoutedControl,_=>return Err("Invalid routed mode".into())};
+    manager.prepare_routed(&role,url.trim(),server_id.trim(),profile,display_id,relay_only,persistent,storage_consent,ca_path)
+}
+#[tauri::command]
 pub fn lan_confirm(window: WebviewWindow, manager: State<'_, SessionManager>, peer_key: String, approved: bool) -> Result<Snapshot, String> {
     require_main(&window)?; manager.confirm(&peer_key, approved)
 }
@@ -423,7 +475,7 @@ mod tests {
     fn control_requires_distinct_consent_and_release_marker() {
         assert_eq!(Profile::Control.consent(true), "ALLOW SCREEN AND INPUT");
         assert_eq!(Profile::Control.consent(false), "ALLOW REMOTE INPUT");
-        let shared = Mutex::new(Snapshot { stage: Stage::Connected, active: true, local_key: None, detail: None, profile: Profile::Control, input_released: false });
+        let shared = Mutex::new(Snapshot { stage: Stage::Connected, active: true, local_key: None, detail: None, profile: Profile::Control, input_released: false, device_id: None });
         let (mut pass, mut failure) = (false, None);
         stage(&shared, Stage::Stopping, None);
         assert!(locked(&shared).active);
@@ -433,7 +485,7 @@ mod tests {
     }
     #[test]
     fn status_requires_valid_local_key_and_terminal_state() {
-        let shared = Mutex::new(Snapshot { stage: Stage::Starting, active: true, local_key: None, detail: None, profile: Profile::Diagnostic, input_released: false });
+        let shared = Mutex::new(Snapshot { stage: Stage::Starting, active: true, local_key: None, detail: None, profile: Profile::Diagnostic, input_released: false, device_id: None });
         let (mut pass, mut fail) = (false, None);
         handle_output(&shared, Output::Stdout(format!("KEY {}", "ab".repeat(32))), &mut pass, &mut fail);
         assert_eq!(locked(&shared).stage, Stage::AwaitingApproval);
