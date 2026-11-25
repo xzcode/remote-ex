@@ -1,8 +1,8 @@
 # Native media engine (M1 development)
 
-Independent Rust crate using GStreamer 1.20+ / gstreamer-rs 0.23. VP8/RTP, WebRTC DTLS-SRTP/ICE, sender and receiver, bounded ICE event queues, SDP offer/answer primitives, native RGBA appsrc input, native decoded sample output. No application-level identity, permission integration, STUN/TURN configuration, screen streaming, OS input, renderer, or external listener yet. Do not expose this prototype as a remote control service.
+Independent Rust crate using GStreamer 1.22+ / gstreamer-rs 0.23. VP8/RTP, WebRTC DTLS-SRTP/ICE, sender and receiver, bounded ICE event queues, SDP offer/answer primitives, native RGBA appsrc input, native decoded sample output. The library primitives have no production identity or permission owner. The separate LAN diagnostic integrates test-only pairing, a single explicit private/loopback TCP endpoint, and a reliable data channel. No production signaling, STUN/TURN configuration, screen streaming or OS input. Do not expose this prototype as a remote control service.
 
-The only executable uses two real WebRTC endpoints in a single process and an internally generated moving pattern. It checks successful peer states and at least 30 decoded frames. It does not measure real screen-to-screen latency. The media pipeline consumes native GStreamer buffers; no frame-by-frame Tauri IPC.
+The loopback executable uses two real WebRTC endpoints in a single process and an internally generated moving pattern. It checks successful peer states and at least 30 decoded frames. It does not measure real screen-to-screen latency. The media pipeline consumes native GStreamer buffers; no frame-by-frame Tauri IPC.
 
 ## Ubuntu
 ```sh
@@ -26,3 +26,16 @@ References: https://gstreamer.freedesktop.org/documentation/webrtc/ and https://
 - `cargo run --manifest-path crates/media/Cargo.toml --bin loopback -- --native-pattern` feeds moving native RGBA data through appsrc, RTP/ICE/DTLS, decoding, and appsink. This is synthetic data.
 - `cargo run --manifest-path crates/media/Cargo.toml --bin loopback -- --preview` opens a native video sink on a graphical desktop, not a webview. It runs at most 30 seconds after negotiation. Closing the terminal stops the diagnostic.
 - Optional `local-screen` feature uses XCap for an interactive local-only real screen diagnostic. Requires the platform's normal screen capture permission, XCap development dependencies, GStreamer native libraries, and a display ID from Remote EX diagnostics. Run `cargo run --manifest-path crates/media/Cargo.toml --features local-screen --bin loopback -- --screen DISPLAY_ID` and type CAPTURE at the interactive confirmation. Real capture starts only after the two internally linked peers report Connected. No external signaling or screen recording, no remote input. Native sink and actual capture are pending physical-machine verification. This intentionally slow one-frame-at-a-time prototype is not the production capture engine.
+
+## Independent-process LAN diagnostic (synthetic video only)
+
+Requires GStreamer 1.22+, including SCTP/data-channel support. Build the CLI:
+```sh
+cargo build --manifest-path crates/media/Cargo.toml --bin lan_diagnostic
+python3 scripts/test_lan_diagnostic.py crates/media/target/debug/lan_diagnostic
+```
+The Python harness starts two processes on IPv4 loopback and checks both exit successfully. On Windows use the .exe path. The host sends a synthetic video pattern; the controller receives decoded frames and transmits exactly three fixed Protobuf input messages; the host validates them with SessionGate and returns a diagnostic acknowledgement. No real input is injected.
+
+For manual testing on two owned machines on a trusted private LAN, use the host's actual RFC1918 IP address and an available port, not a wildcard or public address. Run the same CLI with `--listen IP:PORT` on the host and `--connect IP:PORT` on the controller. Both processes print their ephemeral public keys; exchange/verify the full public keys independently and enter the corresponding peer key, then enter ALLOW DIAGNOSTIC on each side. Approve the listener first. The host binds only after local confirmation and accepts exactly one connection; both processes exit at the end or on error. This diagnostic is not a secure production listener (TCP signaling is unencrypted). It does not send real desktop content, permit arbitrary remote input, retain keys, or launch services. Never port-forward it to the Internet.
+
+The input data channel is reliable ordered SCTP with a fixed negotiated ID, bounded binary payload and queue. See upstream https://gstreamer.freedesktop.org/documentation/webrtc/ and https://gstreamer.freedesktop.org/documentation/webrtclib/gstwebrtc-datachannel.html. Actual LAN and platform testing still required.

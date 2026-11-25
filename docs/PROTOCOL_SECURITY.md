@@ -38,3 +38,7 @@ crates/security/src/session.rs 实现单次 offer/answer 的签名 transcript �
 ## M1 第四批增量
 
 pairing.rs 增加单次 PendingPairing → ApprovedPairing → SignedPairing → VerifiedSession 状态。每个 attempt 由 OsRng 生成新 nonce，120 秒过期，批准、签名、完成消耗前一状态；固定预期 peer 公钥（必须通过独立可信全指纹校验或既有可信记录获得），拒绝扩大权限，双端签署相同 session/nonce/SDP/grant。core SessionGate::on_verified_transport 要求匹配 session ID、请求及授予权限的 VerifiedSession。此机制尚无 UI、网络信令、信任库或实际 DTLS channel binding；会话 owner 必须确认真实 DTLS 对端与已批准公钥/SDP 一致，并禁止重复 session、控制未授权输入、关闭时释放资源。底层签名验证函数不代替一次性状态机。
+
+## M1 第五批 LAN 信令诊断
+
+crates/signaling 定义 4 字节 big-endian 长度、版本 1、256 KiB frame、64 KiB SDP、候选数量与长度限制、会话标识、严格类型、超时。请求/接受/offer/answer/proof/candidates/finished 顺序由诊断 owner 执行。显式 private/loopback 绑定不等于信任；未加密 TCP 不发送秘密或生产会话数据。实际媒体采用 WebRTC 自有 DTLS/SRTP/SCTP。先比较独立获知的完整设备公钥，再本地确认测试授权；使用双签名证明绑定双方身份、nonce、grant、SDP 原文。仅在该证明通过、两端 WebRTC 连接成功且可靠数据通道 open 后处理固定模拟输入。签名不替代真实 DTLS 身份绑定审计；此版本不允许远程系统输入、真实屏幕、剪贴板、文件或无人值守。未实现持久配对、撤销界面、加密生产信令或长期监听。CI 的父进程在 loopback 显式提供两个受控子进程的临时公钥和测试许可，不是生产自动批准逻辑。

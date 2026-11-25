@@ -41,3 +41,10 @@ Rust 核心 CI 通过：[45564676252](https://github.com/xzcode/remote-ex/action
 - Desktop checks #45569412142：Windows 与 macOS 均成功（编译/单元测试，非实机采集）。
 - Native media engine #45569853979：GStreamer 1.28.2 + gstreamer-rs 0.23 编译及 config_bounds 通过；loopback 运行失败，日志 `Invalid ICE candidate or peer state`。上游 1.24 release notes 明确空字符串候选表示 ICE 结束，修复该兼容性并增加边界测试及原生 RGBA 输入验证。新 run #45570342512 未结束，不能宣称已解决运行失败。
 - local-screen 与 autovideosink 是待平台验证的诊断实现，不等同跨设备屏幕分享或持续 GPU 采集。S01–S07 退出门槛不变。
+
+## M1 第五批实际记录
+
+- Native media engine #45570342512 成功：修复 ICE 完成标记后，两种同进程 WebRTC 测试均通过（原生 VP8 测试图和 RGBA appsrc 测试输入，各至少 30 解码帧）。这是同一 CI 主机验证，不是跨设备或公网。
+- Core CI #45570749829 成功：新增信令序列化/边界/真实 loopback TCP framing 测试通过。
+- c21fda1：新增可靠 SCTP 数据通道和两独立进程诊断，运行 #45570886138 及 Core CI #45570886109 待最终结果；未宣称新集成通过。
+- GStreamer webrtc binding 启用 v1_22，以获得 send_data_full；实际依赖锁定、Windows/macOS 原生媒体包及 GPU 渲染仍待验证。
