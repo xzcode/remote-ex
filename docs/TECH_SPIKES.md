@@ -28,3 +28,10 @@
 ## 2026-11-25 增量记录
 
 Rust 核心 CI 通过：[45564676252](https://github.com/xzcode/remote-ex/actions/runs/45564676252)。这不是媒体测试。桌面候选使用 XCap 0.9.10 的 Monitor API 与 Tauri 原生命令做单帧诊断；暂不宣称连续采集、真实桌面权限或 GPU 渲染完成。XCap 上游声明 Apache-2.0，实际传递依赖与媒体分发义务仍需审查。Windows/macOS Desktop checks 与 Ubuntu Synthetic media probe 已触发，结果见 Actions。S01–S07 退出条件不变。
+
+## M1 第三批实际记录
+
+- [Synthetic media probe #45569412163](https://github.com/xzcode/remote-ex/actions/runs/45569412163)：成功，合成 VP8 编解码及所需 WebRTC 元素检测通过；不是双端 WebRTC 结果。
+- [Desktop checks #45569412142](https://github.com/xzcode/remote-ex/actions/runs/45569412142)：macOS job 成功，Windows 前端和 Rust check 成功，Windows 最后测试尚未完成（记录时）。无真实桌面权限/采集证据。
+- [Native media engine #45569853979](https://github.com/xzcode/remote-ex/actions/runs/45569853979)：运行中；本批 Rust GStreamer WebRTC 引擎的编译和双端解码结果仍待确认。S01 尚未通过完整退出门槛。
+- 新增 GStreamer Rust binding 版本范围 0.23，原生 GStreamer 最低 1.20；锁文件、插件许可证与三平台分发仍待审查。

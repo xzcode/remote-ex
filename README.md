@@ -2,7 +2,7 @@
 
 跨平台、可私有化部署的远程桌面工具。Remote EX 自主研发客户端、服务端和业务协议，使用成熟底层库，不基于 RustDesk 等完整产品进行 fork。
 
-**当前状态：M0 技术验证待完成；M1 Rust 协议、身份及授权核心 CI 通过；Tauri 桌面与本地单帧采集已编写，待桌面构建及实机验证；无完整远程控制或发行包。**
+**当前状态：M0 技术验证待完成；M1 核心 CI、基础媒体诊断和 macOS 桌面检查通过；Windows 原生编译通过；实际 WebRTC 媒体引擎与会话签名已编写，新增 CI 待结果；无完整远程控制或发行包。**
 
 ## 目标
 
@@ -23,6 +23,8 @@
 - [开发代理约定](AGENTS.md)
 - [M0/M1 第一批交接](docs/M0_M1_HANDOFF.md)
 - [M1 第二批交接](docs/M1_DESKTOP_HANDOFF.md)
+- [M1 第三批交接](docs/M1_MEDIA_HANDOFF.md)
+- [原生媒体模块说明](crates/media/README.md)
 - [桌面开发说明](apps/desktop/README.md)
 
 ## 选型
