@@ -25,3 +25,5 @@ jobs:
         run: cargo test --manifest-path crates/media/Cargo.toml
       - name: WebRTC video loopback
         run: timeout 75s cargo run --manifest-path crates/media/Cargo.toml --bin loopback
+      - name: Native RGBA input loopback
+        run: timeout 75s cargo run --manifest-path crates/media/Cargo.toml --bin loopback -- --native-pattern

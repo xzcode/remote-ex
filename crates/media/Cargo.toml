@@ -7,8 +7,14 @@ publish = false
 # Native GStreamer dependency isolation: portable core CI does not build this crate.
 [workspace]
 
+[features]
+default = []
+local-screen = ["dep:xcap"]
+
 [dependencies]
 gstreamer = { version = "0.23", features = ["v1_20"] }
 gstreamer-app = { version = "0.23", features = ["v1_20"] }
 gstreamer-sdp = { version = "0.23", features = ["v1_20"] }
 gstreamer-webrtc = { version = "0.23", features = ["v1_20"] }
+
+xcap = { version = "=0.9.10", optional = true }

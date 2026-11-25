@@ -65,6 +65,7 @@ pub struct Description {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IceCandidate {
     pub mline: u32,
+    /// Empty string means end-of-candidates (GStreamer 1.24+).
     pub candidate: String,
 }
 
@@ -147,14 +148,25 @@ impl Peer {
     /// Receives VP8 RTP over WebRTC. Decoded frames remain in native GstSample
     /// buffers. Native rendering can consume the sample without serializing it.
     pub fn receiver(config: VideoConfig) -> MediaResult<Self> {
+        Self::receiver_with_preview(config, false)
+    }
+
+    /// Optional native GStreamer video window; never uses Webview IPC.
+    /// The local caller must explicitly request the preview.
+    pub fn receiver_with_preview(config: VideoConfig, preview: bool) -> MediaResult<Self> {
         gst::init().map_err(|e| e.to_string())?;
         let config = config.validate()?;
+        let output_branch = if preview {
+            "tee name=frames frames. ! queue max-size-buffers=2 max-size-bytes=0 max-size-time=0 leaky=downstream ! appsink name=decoded sync=false max-buffers=2 drop=true frames. ! queue max-size-buffers=2 max-size-bytes=0 max-size-time=0 leaky=downstream ! videoconvert ! autovideosink sync=false"
+        } else {
+            "appsink name=decoded sync=false max-buffers=2 drop=true"
+        };
         let pipeline = make_pipeline(&format!(
             "webrtcbin name=rtc bundle-policy=max-bundle latency=100 \
              queue name=rx max-size-buffers=12 max-size-bytes=0 max-size-time=0 \
              ! rtpvp8depay ! vp8dec ! videoconvert ! videoscale \
              ! video/x-raw,format=RGBA,width={w},height={h} \
-             ! appsink name=decoded sync=false max-buffers=2 drop=true",
+             ! {output_branch}",
             w=config.width, h=config.height
         ))?;
         let out = named(&pipeline, "decoded")?.downcast::<app::AppSink>()
@@ -192,7 +204,7 @@ impl Peer {
             let overflow = overflow.clone();
             webrtc.connect("on-ice-candidate", false, move |args| {
                 let parsed = args.get(1).and_then(|v| v.get::<u32>().ok())
-                    .zip(args.get(2).and_then(|v| v.get::<String>().ok()));
+                    .zip(args.get(2).and_then(|v| v.get::<Option<String>>().ok()).map(|v| v.unwrap_or_default()));
                 if let Some((mline, candidate)) = parsed {
                     if candidate.len() <= ICE_LIMIT {
                         queue_event(&tx, &overflow, Event::Ice(IceCandidate { mline, candidate }));
@@ -292,9 +304,8 @@ impl Peer {
     }
 
     pub fn add_ice(&self, ice: &IceCandidate) -> MediaResult<()> {
-        if !self.running || ice.mline != 0 || ice.candidate.len() > ICE_LIMIT || ice.candidate.is_empty() {
-            return Err("Invalid ICE candidate or peer state".into());
-        }
+        if !self.running { return Err("Peer is not running".into()); }
+        validate_ice(ice)?;
         self.webrtc.emit_by_name::<()>("add-ice-candidate", &[&ice.mline, &ice.candidate]);
         Ok(())
     }
@@ -333,6 +344,17 @@ impl Peer {
     }
 }
 
+fn validate_ice(ice: &IceCandidate) -> MediaResult<()> {
+    if ice.mline != 0 || ice.candidate.len() > ICE_LIMIT {
+        return Err(format!("Invalid ICE bounds: mline={}, bytes={}", ice.mline, ice.candidate.len()));
+    }
+    // Empty (or NULL normalized to empty) explicitly marks gathering complete.
+    if ice.candidate.contains(['\r', '\n', '\0']) {
+        return Err("Invalid ICE candidate characters".into());
+    }
+    Ok(())
+}
+
 impl Drop for Peer {
     fn drop(&mut self) {
         let _ = self.pipeline.set_state(gst::State::Null);
@@ -342,6 +364,13 @@ impl Drop for Peer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn ice_completion_and_bounds() {
+        assert!(validate_ice(&IceCandidate { mline: 0, candidate: String::new() }).is_ok());
+        assert!(validate_ice(&IceCandidate { mline: 1, candidate: String::new() }).is_err());
+        assert!(validate_ice(&IceCandidate { mline: 0, candidate: "x".repeat(ICE_LIMIT + 1) }).is_err());
+        assert!(validate_ice(&IceCandidate { mline: 0, candidate: "bad\nline".into() }).is_err());
+    }
     #[test]
     fn config_bounds() {
         assert!(VideoConfig::default().validate().is_ok());
