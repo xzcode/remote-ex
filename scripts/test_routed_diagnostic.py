@@ -31,7 +31,9 @@ def approve(pair,key):
 
 def main():
     server_exe, peer_exe=sys.argv[1:3]
-    relay_only=len(sys.argv)==4 and sys.argv[3]=="--relay-only"
+    relay_only="--relay-only" in sys.argv[3:]
+    exchange_sender=next((arg.split("=",1)[1] for arg in sys.argv[3:] if arg.startswith("--file-exchange=")),None)
+    if exchange_sender not in (None,"host","controller"):raise RuntimeError("Invalid file sender role")
     peers=[]
     with tempfile.TemporaryDirectory() as directory:
         cert=os.path.join(directory,"cert.pem")
@@ -78,20 +80,37 @@ def main():
             port=addr.rsplit(":",1)[1]
             url=f"wss://localhost:{port}/v1/ws"
             flags=["--ca",cert]+(["--relay-only"] if relay_only else [])
-            host=start([peer_exe,"--host",url,pin,*flags])
+            source=os.path.join(directory,"source.bin");target=os.path.join(directory,"received.bin")
+            payload=bytes(range(256))*257
+            host_flags=list(flags);controller_flags=list(flags)
+            if exchange_sender:
+                with open(source,"wb") as stream:stream.write(payload)
+                for role,args in (("host",host_flags),("controller",controller_flags)):
+                    args.extend(["--desktop-session","--exchange","file",exchange_sender,source if role==exchange_sender else target])
+            host=start([peer_exe,"--host",url,pin,*host_flags])
             peers.append(host)
             hk=expect(host,"KEY ",deadline)
             expect(host,"ONLINE ",deadline)
-            controller=start([peer_exe,"--controller",url,pin,*flags])
+            controller=start([peer_exe,"--controller",url,pin,*controller_flags])
             peers.append(controller)
             ck=expect(controller,"KEY ",deadline)
             expect(controller,"ONLINE ",deadline)
-            approve(host,ck)
-            approve(controller,hk)
+            if exchange_sender:
+                for role,pair,key in (("host",host,ck),("controller",controller,hk)):
+                    consent="ALLOW SEND FILE" if role==exchange_sender else "ALLOW RECEIVE FILE"
+                    pair[0].stdin.write(key+"\n"+consent+"\n");pair[0].stdin.flush()
+            else:
+                approve(host,ck)
+                approve(controller,hk)
             expect(host,"PASS ROUTED HOST:",deadline)
             expect(controller,"PASS ROUTED CONTROLLER:",deadline)
             for proc,_ in peers[-2:]:
                 if proc.wait(timeout=5)!=0:raise RuntimeError("peer exited unsuccessfully")
+            if exchange_sender:
+                with open(target,"rb") as stream:
+                    if stream.read()!=payload:raise RuntimeError("Transferred payload mismatch")
+                print("PASS: authenticated file exchange "+exchange_sender+"; bytes verified",flush=True)
+                return
             print("PASS: "+("forced TURN relay; " if relay_only else "direct ICE; ")+"WSS device-ID routing, encrypted signed SDP, DTLS/SCTP, decoded video and inert input release",flush=True)
         finally:
             for proc,_ in reversed(peers):

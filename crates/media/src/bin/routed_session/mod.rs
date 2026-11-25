@@ -211,6 +211,7 @@ async fn host(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey,relay_o
     if let Profile::Exchange(mode)=profile{
         wait_data(&peer,&channel,conn,READY).await?;channel.send(READY_ACK)?;
         exchange::run(&peer,&channel,conn,&session,mode,true,exchange_path).await?;
+        channel.send(exchange::HOST_DONE)?;
         finish(conn,&session).await?;return out("PASS ROUTED HOST: transfer verified");
     }
     if profile!=Profile::Test{
@@ -297,6 +298,7 @@ async fn controller(mut owned:Connection,id:&DeviceIdentity,expected:PublicKey,r
     if let Profile::Exchange(mode)=profile{
         channel.send(READY)?;wait_data(&peer,&channel,conn,READY_ACK).await?;
         exchange::run(&peer,&channel,conn,&session,mode,false,exchange_path).await?;
+        wait_data(&peer,&channel,conn,exchange::HOST_DONE).await?;
         conn.send(Client::Close{session:session.clone()}).await?;finish(conn,&session).await?;
         return out("PASS ROUTED CONTROLLER: transfer verified");
     }
@@ -407,7 +409,7 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
     out("PEER_KEY (independently verify the peer's entire public key)")?;
     let expected=decode_hex::<32>(&input()?).map_err(error)?;
     if expected==[0;32]||expected==id.public_key(){return Err("Invalid peer key".into());}
-    if let Profile::Exchange(mode)=profile{out(&format!("TRANSFER {} {:?}; local path: {}",if mode.sending(host){"SEND"}else{"RECEIVE"},mode.kind,exchange_path.as_ref().map(|p|p.to_string_lossy().into_owned()).unwrap_or_else(||"clipboard".into())))?;}
+    if let Profile::Exchange(mode)=profile{out(&format!("TRANSFER {} {:?}",if mode.sending(host){"SEND"}else{"RECEIVE"},mode.kind))?;}
     out(&format!("CONSENT (type {}; one-shot)",profile.consent(host)))?;
     if input()? !=profile.consent(host)||canceled(){return Err("Local consent denied".into());}
     if supervised{

@@ -4,6 +4,7 @@ use super::*;
 use remote_ex_desktop_features::exchange::{self,Kind,Offer,Receiver,CHUNK};
 use std::{fs::{File,OpenOptions},io::{Cursor,Seek,SeekFrom},path::Path};
 const OFFER:u8=1;const ACCEPT:u8=2;const DATA:u8=3;const CREDIT:u8=4;const END:u8=5;const DONE:u8=6;
+pub(super) const HOST_DONE:&[u8]=b"remote-ex-transfer/host-done/v1";
 const WINDOW:usize=16;
 const LIMIT:Duration=Duration::from_secs(75);
 #[derive(Clone,Copy,PartialEq,Eq)]

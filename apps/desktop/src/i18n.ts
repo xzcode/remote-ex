@@ -1,4 +1,8 @@
 export const en = {
+  exchangeFile:"File transfer",exchangeText:"Clipboard text",exchangeImage:"Clipboard image",exchangeSender:"Sender role",exchangeSource:"Selected local source file (absolute path)",exchangeDestination:"New local destination file (absolute path)",
+  exchangeNotice:"One explicit transfer only. File limit 64 MiB; no overwrite. Clipboard access requires separate approval. Both peers select the same type and sender role.",
+  exchangeSendConsent:"I explicitly allow sending the selected file or current clipboard content to this verified peer.",exchangeReceiveConsent:"I explicitly allow receiving this type of content from the verified peer into the selected new file or clipboard.",
+  exchangeProgress:"Transfer progress",exchangeVerified:"Content integrity and completion confirmed.",
   qualityPreset:"Video quality",qualityNotice:"Both peers select the same preset. These are requested settings, not measured performance.",decodedFps:"Decoded FPS",decodedThroughput:"Decoded pixel throughput",
   deviceSearch:"Search trusted devices",deviceAllGroups:"All groups",deviceFavorites:"Favorites",deviceGroup:"Group",deviceNote:"Note",deviceSaveMetadata:"Save details",deviceHistory:"Connection history",deviceClearHistory:"Confirm clearing this server's local history",deviceSaveHistory:"Save local connection history (optional)",
   invitationCode:"Connection invitation (5 minutes)",invitationCreate:"Generate invitation",invitationImport:"Read invitation",invitationNotice:"Invitations are connection hints only. Independently verify the device key and explicitly approve each session.",
@@ -61,6 +65,10 @@ export const en = {
 } as const;
 export type TextKey = keyof typeof en;
 export const zh: Record<TextKey, string> = {
+  exchangeFile:"文件传输",exchangeText:"剪贴板文本",exchangeImage:"剪贴板图片",exchangeSender:"发送方角色",exchangeSource:"本机选定的源文件（绝对路径）",exchangeDestination:"本机新文件目标（绝对路径）",
+  exchangeNotice:"单次明确授权传输，文件上限64 MiB，不覆盖已有文件。剪贴板需单独授权。两端请选择相同类型与发送方角色。",
+  exchangeSendConsent:"我明确授权向已核对的对端发送选定文件或当前剪贴板内容。",exchangeReceiveConsent:"我明确授权接收已核对对端的该类型内容到选定的新文件或剪贴板。",
+  exchangeProgress:"传输进度",exchangeVerified:"内容完整性及传输完成已确认。",
   qualityPreset:"画质预设",qualityNotice:"双方选择相同预设；此处为目标配置，并非实际性能。",decodedFps:"实际解码帧率",decodedThroughput:"解码像素吞吐量",
   deviceSearch:"搜索可信设备",deviceAllGroups:"全部分组",deviceFavorites:"收藏",deviceGroup:"分组",deviceNote:"备注",deviceSaveMetadata:"保存资料",deviceHistory:"连接历史",deviceClearHistory:"确认清除该服务器的本地连接历史",deviceSaveHistory:"保存本地连接历史（可选）",
   invitationCode:"连接邀请码（5分钟）",invitationCreate:"生成邀请码",invitationImport:"读取邀请码",invitationNotice:"邀请码只用于填写连接资料，仍须独立核对设备公钥并明确授权本次连接。",
