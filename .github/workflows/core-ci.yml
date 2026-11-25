@@ -6,12 +6,14 @@ on:
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'crates/**'
+      - 'servers/**'
       - '.github/workflows/core-ci.yml'
   pull_request:
     paths:
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'crates/**'
+      - 'servers/**'
       - '.github/workflows/core-ci.yml'
   workflow_dispatch:
 permissions:
