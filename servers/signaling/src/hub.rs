@@ -17,6 +17,7 @@ struct Device {
     tx: mpsc::Sender<Server>,
     session: Option<String>,
     last_request: Option<Instant>,
+    last_lookup:Option<Instant>,
 }
 struct Session {
     controller: String,
@@ -45,7 +46,7 @@ impl Hub {
     pub fn with_issuer(issuer:crate::turn::IceIssuer)->Self{Self{issuer:Some(issuer),..Self::default()}}
     pub fn register(&mut self, id: String, connection: u64, key: PublicKey, tx: mpsc::Sender<Server>) -> bool {
         if self.devices.len() >= 128 || self.devices.contains_key(&id) { return false; }
-        self.devices.insert(id, Device { connection, key, tx, session: None, last_request: None });
+        self.devices.insert(id, Device { connection, key, tx, session: None, last_request: None,last_lookup:None });
         true
     }
     fn deliver(&self, id: &str, event: Server) -> bool {
@@ -81,6 +82,16 @@ impl Hub {
         if message.validate().is_err() { return Some(error("invalid_message")); }
         match message {
             Client::Ping => Some(Server::Pong),
+            Client::Lookup{targets}=>{
+                let d=self.devices.get_mut(id).expect("registered");
+                if d.last_lookup.is_some_and(|last|now.saturating_duration_since(last)<Duration::from_secs(2)){return Some(error("lookup_limited"));}
+                d.last_lookup=Some(now);
+                // No directory or public-key disclosure: only exact requested IDs.
+                Some(Server::Presence{items:targets.into_iter().map(|device_id|{
+                    let device=self.devices.get(&device_id);
+                    crate::protocol::DeviceStatus{device_id,online:device.is_some(),busy:device.is_some_and(|d|d.session.is_some())}
+                }).collect()})
+            },
             Client::Register { .. } => Some(error("already_registered")),
             Client::Request { target, requested, controller_nonce } =>
                 Some(self.request(id, target, requested, controller_nonce, now)),
@@ -223,6 +234,15 @@ mod tests {
         h.disconnect(&b,2);
         assert!(matches!(arx.try_recv().unwrap(),Server::Closed{..}));
         assert!(h.sessions.is_empty());
+    }
+    #[test]
+    fn presence_lookup_requires_exact_ids_and_is_rate_limited(){
+        let mut h=Hub::default();let now=Instant::now();
+        let(a,_)=device(&mut h,1);let(b,_)=device(&mut h,2);
+        let targets=vec![b.clone(),"aa".repeat(32)];
+        let Some(Server::Presence{items})=h.handle(&a,1,Client::Lookup{targets:targets.clone()},now)else{panic!("lookup")};
+        assert!(items[0].online);assert!(!items[1].online);
+        assert!(matches!(h.handle(&a,1,Client::Lookup{targets},now),Some(Server::Error{..})));
     }
     #[test]
     fn pending_expiry_and_rate_limit() {

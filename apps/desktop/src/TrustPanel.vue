@@ -4,13 +4,21 @@ import {invoke,isTauri} from "@tauri-apps/api/core";
 import type {TextKey} from "./i18n";
 type Device={device_id:string;public_key:string;label:string;group_name:string;note:string;favorite:boolean};
 type History={device_id:string;mode:string;ended_at:number;outcome:string;duration_sec:number};
-const props=defineProps<{t:(key:TextKey)=>string;serverId:string;disabled:boolean}>();
+const props=defineProps<{t:(key:TextKey)=>string;serverId:string;disabled:boolean;online?:boolean;statuses?:{device_id:string;online:boolean;busy:boolean}[];checkedAt?:number|null}>();
 const records=ref<Device[]>([]);const label=ref("");const id=ref("");const key=ref("");
 const verified=ref(false);const removeId=ref("");const busy=ref(false);const error=ref("");
 const query=ref(""),group=ref(""),favorites=ref(false),history=ref<History[]>([]),confirmClear=ref(false);
 const filtered=computed(()=>records.value.filter(d=>(!favorites.value||d.favorite)&&(!group.value||d.group_name===group.value)&&[d.label,d.device_id,d.group_name,d.note].some(s=>s.toLowerCase().includes(query.value.toLowerCase()))));
 const groups=computed(()=>[...new Set(records.value.map(d=>d.group_name).filter(Boolean))].sort());
 let revision=0;
+function statusFor(id:string):TextKey{
+ const d=props.online&&props.checkedAt&&Date.now()/1000-props.checkedAt<30?props.statuses?.find(d=>d.device_id===id):undefined;
+ return !d?"deviceUnknown":!d.online?"presenceOffline":d.busy?"deviceBusy":"presenceOnline";
+}
+async function refreshStatus(){
+ if(!props.online||!filtered.value.length)return;error.value="";
+ try{await invoke("presence_lookup",{serverId:props.serverId,deviceIds:filtered.value.slice(0,32).map(d=>d.device_id)});}catch(e){error.value=String(e);}
+}
 async function loadHistory(){
  const scope=props.serverId;
  try{const result=await invoke<History[]>("connection_history",{serverId:scope});if(scope===props.serverId)history.value=result;}catch(e){error.value=String(e);}
@@ -45,8 +53,9 @@ async function remove(){
 <section class="panel lan-panel">
  <h2>{{ t("trustTitle") }}</h2><p>{{ t("trustDescription") }}</p>
  <div class="field"><input v-model="query" :placeholder="t('deviceSearch')"/><select v-model="group"><option value="">{{ t("deviceAllGroups") }}</option><option v-for="g in groups" :key="g">{{ g }}</option></select><label class="check-label"><input type="checkbox" v-model="favorites"/>{{ t("deviceFavorites") }}</label></div>
+ <button :disabled="!online||!filtered.length" @click="refreshStatus">{{ t("deviceRefreshStatus") }}</button>
  <div v-for="d in filtered" :key="d.device_id" class="field">
-  <div class="preview-head"><strong>{{ d.label }}</strong><button :disabled="disabled||busy" @click="removeId=d.device_id">{{ t("trustRemove") }}</button></div>
+  <div class="preview-head"><strong>{{ d.label }}</strong><span class="muted">{{ t(statusFor(d.device_id)) }}</span><button :disabled="disabled||busy" @click="removeId=d.device_id">{{ t("trustRemove") }}</button></div>
   <input readonly :value="d.device_id" class="key-input"/><input readonly :value="d.public_key" class="key-input"/>
   <label>{{ t("deviceGroup") }}</label><input v-model="d.group_name" maxlength="64" :disabled="disabled||busy"/><label>{{ t("deviceNote") }}</label><input v-model="d.note" maxlength="256" :disabled="disabled||busy"/><label class="check-label"><input type="checkbox" v-model="d.favorite" :disabled="disabled||busy"/>{{ t("deviceFavorites") }}</label><button :disabled="disabled||busy" @click="saveMetadata(d)">{{ t("deviceSaveMetadata") }}</button>
   <div v-if="removeId===d.device_id" class="actions"><button :disabled="disabled||busy" @click="remove">{{ t("trustConfirmRemove") }}</button><button @click="removeId=''">{{ t("trustCancel") }}</button></div>

@@ -152,22 +152,27 @@ mod tests{
     }
 }
 
-#[derive(Clone,Copy,Debug,PartialEq,Eq)]
-pub enum PresenceEvent { Heartbeat, RequestDeclined }
+#[derive(Clone,Debug,PartialEq,Eq)]
+pub enum PresenceEvent { Heartbeat, RequestDeclined, Devices(Vec<remote_ex_rendezvous_protocol::DeviceStatus>) }
 
 /// Explicit presence only. No acceptance of routed sessions, no capture,
 /// no input or auto-reconnect. A single outstanding Ping must receive a Pong
 /// within five seconds; unrelated frames cannot extend this deadline.
 pub async fn presence(
-    conn: &mut Connection, mut stop: tokio::sync::watch::Receiver<bool>,
-    duration: Duration, mut event: impl FnMut(PresenceEvent),
-) -> Result<()> {
+    conn:&mut Connection,stop:tokio::sync::watch::Receiver<bool>,duration:Duration,event:impl FnMut(PresenceEvent),
+)->Result<()>{presence_queries(conn,stop,duration,None,event).await}
+async fn presence_queries(
+    conn:&mut Connection,mut stop:tokio::sync::watch::Receiver<bool>,duration:Duration,
+    mut queries:Option<&mut tokio::sync::mpsc::Receiver<Vec<String>>>,mut event:impl FnMut(PresenceEvent),
+)->Result<()>{
     use tokio::time::{Instant, interval, MissedTickBehavior};
     let deadline=Instant::now()+duration.min(Duration::from_secs(300));
     let mut tick=interval(Duration::from_millis(250));
     tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
     let mut next_ping=Instant::now();
     let mut awaiting:Option<Instant>=None;
+    let mut lookup:Option<(Instant,Vec<String>)>=None;
+    let mut next_lookup=Instant::now();
     loop{
         if *stop.borrow()||Instant::now()>=deadline{return Ok(());}
         tokio::select!{
@@ -179,15 +184,29 @@ pub async fn presence(
                 let now=Instant::now();
                 if now>=deadline{return Ok(());}
                 if awaiting.is_some_and(|due|now>=due){return Err("Presence heartbeat timed out".into());}
+                if lookup.as_ref().is_some_and(|(due,_)|now>=*due){return Err("Presence lookup timed out".into());}
                 if awaiting.is_none()&&now>=next_ping{
                     conn.send(Client::Ping).await?;
                     awaiting=Some(Instant::now()+Duration::from_secs(5));
                     next_ping=Instant::now()+Duration::from_secs(10);
                 }
             },
+            query=async{match queries.as_deref_mut(){Some(q)=>q.recv().await,None=>std::future::pending().await}},
+                if lookup.is_none()&&Instant::now()>=next_lookup=>{
+                if let Some(targets)=query{
+                    conn.send(Client::Lookup{targets:targets.clone()}).await?;
+                    lookup=Some((Instant::now()+Duration::from_secs(5),targets));
+                    next_lookup=Instant::now()+Duration::from_secs(2);
+                }else{queries=None;}
+            },
             response=conn.receive(Duration::from_secs(30))=>{
                 match response?{
                     Server::Pong if awaiting.take().is_some()=>event(PresenceEvent::Heartbeat),
+                    Server::Presence{items}=>{
+                        let Some((_,targets))=lookup.take()else{return Err("Unexpected presence lookup result".into());};
+                        if !items.iter().map(|d|d.device_id.as_str()).eq(targets.iter().map(String::as_str)){return Err("Mismatched presence lookup".into());}
+                        event(PresenceEvent::Devices(items));
+                    },
                     Server::Incoming{session,..}=>{
                         conn.send(Client::Decision{session,grant:None,host_nonce:None}).await?;
                         event(PresenceEvent::RequestDeclined);
@@ -201,14 +220,17 @@ pub async fn presence(
 }
 
 #[derive(Clone,Debug,PartialEq,Eq)]
-pub enum PresenceLifecycle { Online(String), Heartbeat, RequestDeclined, Reconnecting(u8) }
+pub enum PresenceLifecycle { Online(String), Heartbeat, RequestDeclined, Reconnecting(u8), Devices(Vec<remote_ex_rendezvous_protocol::DeviceStatus>) }
 
 /// Retry presence only after an established connection fails. Authentication,
 /// TLS, protocol or pin mismatches are terminal. Re-registration uses the same
 /// locally owned identity but never resumes a session or prior input grant.
 pub async fn online_with_retry(
+    endpoint:Endpoint,identity:&DeviceIdentity,stop:tokio::sync::watch::Receiver<bool>,duration:Duration,retry:bool,event:impl FnMut(PresenceLifecycle),
+)->Result<()>{online_with_queries(endpoint,identity,stop,duration,retry,None,event).await}
+pub async fn online_with_queries(
     endpoint:Endpoint,identity:&DeviceIdentity,mut stop:tokio::sync::watch::Receiver<bool>,
-    duration:Duration,retry:bool,mut event:impl FnMut(PresenceLifecycle),
+    duration:Duration,retry:bool,mut queries:Option<&mut tokio::sync::mpsc::Receiver<Vec<String>>>,mut event:impl FnMut(PresenceLifecycle),
 )->Result<()>{
     use tokio::time::Instant;
     let deadline=Instant::now()+duration.min(Duration::from_secs(300));
@@ -223,9 +245,10 @@ pub async fn online_with_retry(
         };
         event(PresenceLifecycle::Online(conn.device_id().to_owned()));
         let remaining=deadline.saturating_duration_since(Instant::now());
-        let result=presence(&mut conn,stop.clone(),remaining,|e|event(match e{
+        let result=presence_queries(&mut conn,stop.clone(),remaining,queries.as_deref_mut(),|e|event(match e{
             PresenceEvent::Heartbeat=>PresenceLifecycle::Heartbeat,
             PresenceEvent::RequestDeclined=>PresenceLifecycle::RequestDeclined,
+            PresenceEvent::Devices(items)=>PresenceLifecycle::Devices(items),
         })).await;
         let close=conn.close().await;
         match result{

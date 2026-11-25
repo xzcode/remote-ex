@@ -1,11 +1,12 @@
 //! Explicit server registration preview. Does not accept remote requests.
-use remote_ex_rendezvous_client::{Endpoint,PresenceLifecycle,online_with_retry};
+use remote_ex_rendezvous_client::{Endpoint,PresenceLifecycle,online_with_queries};
 use remote_ex_security::DeviceIdentity;
 use remote_ex_signaling::{decode_hex,hex};
 use serde::Serialize;
 use std::{sync::{Arc,Mutex,MutexGuard},time::Duration};
 use tauri::{State,WebviewWindow};
-use tokio::sync::watch;
+use tokio::sync::{watch,mpsc};
+use remote_ex_rendezvous_protocol::DeviceStatus;
 
 #[derive(Clone,Copy,Debug,PartialEq,Eq,Serialize)]
 #[serde(rename_all="snake_case")]
@@ -22,12 +23,14 @@ pub struct Snapshot{
     heartbeats:u32,
     declined_requests:u32,
     detail:Option<String>,
+    devices:Vec<DeviceStatus>,
+    checked_at:Option<u64>,
 }
 impl Default for Snapshot{
-    fn default()->Self{Self{stage:Stage::Offline,active:false,device_id:None,public_key:None,retries:0,persistent:false,heartbeats:0,declined_requests:0,detail:None}}
+    fn default()->Self{Self{stage:Stage::Offline,active:false,device_id:None,public_key:None,retries:0,persistent:false,heartbeats:0,declined_requests:0,detail:None,devices:Vec::new(),checked_at:None}}
 }
 #[derive(Default)]
-struct Inner{snapshot:Snapshot,stop:Option<watch::Sender<bool>>}
+struct Inner{snapshot:Snapshot,stop:Option<watch::Sender<bool>>,queries:Option<mpsc::Sender<Vec<String>>>,server_id:String}
 #[derive(Default)]
 pub struct PresenceManager{inner:Arc<Mutex<Inner>>}
 fn locked<T>(m:&Mutex<T>)->MutexGuard<'_,T>{m.lock().unwrap_or_else(|e|e.into_inner())}
@@ -38,7 +41,7 @@ fn identity(persistent:bool)->Result<DeviceIdentity,String>{
     #[cfg(not(any(target_os="windows",target_os="macos")))]
     {Err("Persistent device identity is not available on this platform yet".into())}
 }
-async fn worker(inner:Arc<Mutex<Inner>>,endpoint:Endpoint,persistent:bool,reconnect:bool,mut stop:watch::Receiver<bool>)->Result<(),String>{
+async fn worker(inner:Arc<Mutex<Inner>>,endpoint:Endpoint,persistent:bool,reconnect:bool,mut stop:watch::Receiver<bool>,mut queries:mpsc::Receiver<Vec<String>>)->Result<(),String>{
     // Key store operations may prompt or block. They never run on the UI
     // thread; cancellation prevents any later network registration.
     let id=tokio::select!{
@@ -48,7 +51,7 @@ async fn worker(inner:Arc<Mutex<Inner>>,endpoint:Endpoint,persistent:bool,reconn
     };
     if *stop.borrow(){return Ok(());}
     let public_key=hex(&id.public_key());
-    online_with_retry(endpoint,&id,stop,Duration::from_secs(300),reconnect,|event|{
+    online_with_queries(endpoint,&id,stop,Duration::from_secs(300),reconnect,Some(&mut queries),|event|{
         let mut state=locked(&inner);
         if state.snapshot.stage==Stage::Stopping{return;}
         match event{
@@ -58,7 +61,8 @@ async fn worker(inner:Arc<Mutex<Inner>>,endpoint:Endpoint,persistent:bool,reconn
             },
             PresenceLifecycle::Heartbeat=>state.snapshot.heartbeats=state.snapshot.heartbeats.saturating_add(1),
             PresenceLifecycle::RequestDeclined=>state.snapshot.declined_requests=state.snapshot.declined_requests.saturating_add(1),
-            PresenceLifecycle::Reconnecting(attempt)=>{state.snapshot.stage=Stage::Reconnecting;state.snapshot.retries=attempt;},
+            PresenceLifecycle::Reconnecting(attempt)=>{state.snapshot.stage=Stage::Reconnecting;state.snapshot.retries=attempt;state.snapshot.devices.clear();state.snapshot.checked_at=None;},
+            PresenceLifecycle::Devices(items)=>{state.snapshot.devices=items;state.snapshot.checked_at=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).ok().map(|d|d.as_secs());},
         }
     }).await
 }
@@ -76,16 +80,17 @@ impl PresenceManager{
         let mut state=locked(&self.inner);
         if state.snapshot.stage.active(){return Err("A registration is already active".into());}
         let(tx,rx)=watch::channel(false);
-        state.stop=Some(tx);
+        let(query_tx,query_rx)=mpsc::channel(1);
+        state.stop=Some(tx);state.queries=Some(query_tx);state.server_id=server_id.to_ascii_lowercase();
         state.snapshot=Snapshot{stage:Stage::Connecting,active:true,persistent,..Snapshot::default()};
         let inner=self.inner.clone();
         tauri::async_runtime::spawn(async move{
-            let result=worker(inner.clone(),endpoint,persistent,reconnect,rx).await;
+            let result=worker(inner.clone(),endpoint,persistent,reconnect,rx,query_rx).await;
             let mut state=locked(&inner);
             state.snapshot.stage=if result.is_ok(){Stage::Offline}else{Stage::Failed};
             state.snapshot.active=false;
             state.snapshot.detail=result.err();
-            state.stop=None;
+            state.stop=None;state.queries=None;state.snapshot.devices.clear();state.snapshot.checked_at=None;
         });
         Ok(state.snapshot.clone())
     }
@@ -139,4 +144,15 @@ pub async fn persistent_identity_info(window:WebviewWindow,confirmed:bool)->Resu
         let id=identity(true)?;
         Ok(IdentityInfo{device_id:hex(&id.fingerprint()),public_key:hex(&id.public_key())})
     }).await.map_err(|_|"Identity task failed")?
+}
+
+#[tauri::command]
+pub fn presence_lookup(window:WebviewWindow,manager:State<'_,PresenceManager>,server_id:String,device_ids:Vec<String>)->Result<(),String>{
+    main_window(&window)?;
+    if device_ids.is_empty()||device_ids.len()>32{return Err("Select up to 32 trusted devices".into());}
+    let trusted=crate::trust::trusted_list(window,server_id.clone())?;
+    if !device_ids.iter().all(|id|trusted.iter().any(|d|d.device_id==*id)){return Err("Lookup only supports saved trusted devices".into());}
+    let state=locked(&manager.inner);
+    if state.snapshot.stage!=Stage::Online||state.server_id!=server_id.to_ascii_lowercase(){return Err("Go online with this server first".into());}
+    state.queries.as_ref().ok_or("Presence query unavailable")?.try_send(device_ids).map_err(|_|"A lookup is already queued".to_owned())
 }

@@ -1,4 +1,5 @@
 export const en = {
+  deviceRefreshStatus:"Check online status (first 32 matches)",deviceUnknown:"Unknown",deviceBusy:"In session",
   sessionTab:"Session",multiSessionNotice:"Up to three independent controller sessions. Only one persistent identity; each temporary identity must be separately enrolled. Host, audio and content exchange are exclusive.",networkStats:"Connection statistics",networkBitrate:"Measured RTP bitrate",networkLoss:"Packet loss",networkRoute:"Selected route",
   audioMode:"System audio (experimental)",audioVolume:"Playback volume",audioNotice:"Windows host system-audio loopback; Windows/macOS playback. Separate audio session, not microphone capture.",audioSendConsent:"I explicitly authorize sharing my current system output audio with this verified device.",audioPlayConsent:"I explicitly authorize playback of audio from this verified device.",
   exchangeFile:"File transfer",exchangeText:"Clipboard text",exchangeImage:"Clipboard image",exchangeSender:"Sender role",exchangeSource:"Selected local source file (absolute path)",exchangeDestination:"New local destination file (absolute path)",
@@ -67,6 +68,7 @@ export const en = {
 } as const;
 export type TextKey = keyof typeof en;
 export const zh: Record<TextKey, string> = {
+  deviceRefreshStatus:"查询在线状态（前32条）",deviceUnknown:"未知",deviceBusy:"会话中",
   sessionTab:"会话",multiSessionNotice:"最多三个独立主控会话。仅一个会话使用持久身份，其他临时身份需分别登记。被控、音频及内容交换会话独占。",networkStats:"连接统计",networkBitrate:"实测 RTP 码率",networkLoss:"丢包率",networkRoute:"选中线路",
   audioMode:"系统声音（实验版）",audioVolume:"播放音量",audioNotice:"Windows 被控端系统声音回录，Windows/macOS 播放。独立音频会话，不采集麦克风。",audioSendConsent:"我明确授权向此已核对设备发送当前系统输出声音。",audioPlayConsent:"我明确授权播放此已核对设备发送的声音。",
   exchangeFile:"文件传输",exchangeText:"剪贴板文本",exchangeImage:"剪贴板图片",exchangeSender:"发送方角色",exchangeSource:"本机选定的源文件（绝对路径）",exchangeDestination:"本机新文件目标（绝对路径）",

@@ -61,6 +61,7 @@ async fn run()->Result<()>{
     let result=presence(&mut conn,rx,Duration::from_secs(30),|event|match event{
         PresenceEvent::Heartbeat=>println!("HEARTBEAT OK"),
         PresenceEvent::RequestDeclined=>println!("REQUEST DECLINED: remote sessions are not enabled here"),
+        PresenceEvent::Devices(_)=>{},
     }).await;
     signal.abort();
     result?;

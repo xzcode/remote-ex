@@ -27,6 +27,7 @@ fn main() {
             presence::presence_start,
             presence::presence_status,
             presence::presence_stop,
+            presence::presence_lookup,
             presence::persistent_identity_info,
             trust::trusted_list,
             trust::trusted_add,

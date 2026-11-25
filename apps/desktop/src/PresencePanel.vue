@@ -4,7 +4,8 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import type { TextKey } from "./i18n";
 import TrustPanel from "./TrustPanel.vue";
 type Stage = "offline" | "connecting" | "online" | "reconnecting" | "stopping" | "failed";
-type Snapshot = {stage:Stage; active:boolean; device_id:string|null; public_key:string|null; retries:number; persistent:boolean; heartbeats:number; declined_requests:number; detail:string|null};
+type DeviceStatus={device_id:string;online:boolean;busy:boolean};
+type Snapshot = {devices?:DeviceStatus[];checked_at?:number|null;stage:Stage; active:boolean; device_id:string|null; public_key:string|null; retries:number; persistent:boolean; heartbeats:number; declined_requests:number; detail:string|null};
 const props = defineProps<{t:(key:TextKey)=>string}>();
 const emit = defineEmits<{active:[value:boolean]}>();
 const development = ref(false);
@@ -114,5 +115,5 @@ onBeforeUnmount(()=>{
     <p v-if="error||snapshot.detail" class="error" role="alert">{{ t("error") }}: {{ error||snapshot.detail }}</p>
     <p v-if="!native" class="muted">{{ t("browser") }}</p>
   </section>
-  <TrustPanel v-if="!development && /^[a-fA-F0-9]{64}$/.test(serverId.trim())" :t="t" :server-id="serverId.trim()" :disabled="busy||snapshot.active" />
+  <TrustPanel v-if="!development && /^[a-fA-F0-9]{64}$/.test(serverId.trim())" :t="t" :server-id="serverId.trim()" :disabled="busy||snapshot.active" :online="snapshot.stage==='online'" :statuses="snapshot.devices??[]" :checked-at="snapshot.checked_at??null" />
 </template>

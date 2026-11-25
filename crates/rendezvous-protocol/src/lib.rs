@@ -21,6 +21,7 @@ pub struct ServerFrame { pub version: u16, pub message: Server }
 pub enum Client {
     Register { public_key: String, signature: String },
     Ping,
+    Lookup { targets:Vec<String> },
     Request { target: String, requested: u8, controller_nonce: String },
     Decision { session: String, grant: Option<u8>, host_nonce: Option<String> },
     Signal { session: String, payload: Signal },
@@ -53,6 +54,7 @@ pub enum Server {
     Challenge { server: String, nonce: String },
     Registered { device_id: String },
     Pong,
+    Presence { items:Vec<DeviceStatus> },
     Requested { session: String, target: String },
     Incoming { session: String, controller: String, controller_key: String, requested: u8, controller_nonce: String },
     Decision { session: String, grant: Option<u8>, host_key: String, host_nonce: Option<String> },
@@ -60,6 +62,13 @@ pub enum Server {
     IceConfig { session: String, config: IceConfig },
     Closed { session: String, reason: String },
     Error { code: String },
+}
+#[derive(Clone,Debug,Serialize,Deserialize,PartialEq,Eq)]
+#[serde(deny_unknown_fields)]
+pub struct DeviceStatus{pub device_id:String,pub online:bool,pub busy:bool}
+fn targets_valid<'a>(mut ids:impl Iterator<Item=&'a str>)->bool{
+    let mut seen=std::collections::HashSet::new();
+    ids.all(|id|canonical::<32>(id)&&seen.insert(id)&&seen.len()<=32)&&!seen.is_empty()
 }
 pub fn grant_valid(flags: u8) -> bool {
     flags & VIEW != 0 && flags & !(VIEW | INPUT) == 0
@@ -74,6 +83,7 @@ impl Client {
             Self::Register { public_key, signature } if canonical::<32>(public_key)
                 && decode_hex::<64>(signature).is_ok() => Ok(()),
             Self::Ping => Ok(()),
+            Self::Lookup{targets} if targets_valid(targets.iter().map(String::as_str))=>Ok(()),
             Self::Request { target, requested, controller_nonce } if canonical::<32>(target)
                 && canonical::<32>(controller_nonce) && grant_valid(*requested) => Ok(()),
             Self::Decision { session, grant, host_nonce } if canonical::<16>(session)
@@ -118,6 +128,7 @@ impl Server {
             Self::Challenge { server, nonce } if canonical::<32>(server) && canonical::<32>(nonce) => Ok(()),
             Self::Registered { device_id } if canonical::<32>(device_id) => Ok(()),
             Self::Pong => Ok(()),
+            Self::Presence{items} if targets_valid(items.iter().map(|d|d.device_id.as_str()))&&items.iter().all(|d|d.online||!d.busy)=>Ok(()),
             Self::Requested { session, target } if canonical::<16>(session) && canonical::<32>(target) => Ok(()),
             Self::Incoming { session, controller, controller_key, requested, controller_nonce }
                 if canonical::<16>(session) && canonical::<32>(controller)

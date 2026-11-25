@@ -23,3 +23,5 @@ tokio = { version = "1", features = ["sync", "time", "macros"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 
 remote-ex-desktop-features = { path = "../../../crates/desktop-features" }
+
+remote-ex-rendezvous-protocol = { path = "../../../crates/rendezvous-protocol" }
