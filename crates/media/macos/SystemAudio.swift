@@ -7,6 +7,7 @@ import ScreenCaptureKit
 import CoreMedia
 import CoreGraphics
 import AVFoundation
+import AudioToolbox
 import Darwin
 
 @available(macOS 13.0, *)
@@ -71,8 +72,8 @@ final class Output: NSObject, SCStreamOutput, SCStreamDelegate {
             config.channelCount = 1
             config.excludesCurrentProcessAudio = true
             if #available(macOS 15.0, *) { config.captureMicrophone = false }
-            config.width = 2
-            config.height = 2
+            config.width = 64
+            config.height = 64
             config.minimumFrameInterval = CMTime(value: 1, timescale: 1)
             config.queueDepth = 3
             let output = Output()

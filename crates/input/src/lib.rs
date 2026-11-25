@@ -219,6 +219,16 @@ mod tests {
         assert!(DisplayArea { x: i32::MAX, ..AREA }.validate().is_err());
     }
     #[test]
+    fn secondary_display_negative_origin_maps_inside_authorized_rectangle(){
+        let area=DisplayArea{x:-1920,y:-240,width:1920,height:1080};
+        assert_eq!(area.map(0,0).unwrap(),(-1920,-240));
+        assert_eq!(area.map(65535,65535).unwrap(),(-1,839));
+        assert!(area.contains(-1920,-240));
+        assert!(!area.contains(0,839));
+        assert!(!area.contains(-1,840));
+        assert!(DisplayArea{x:i32::MAX-1,y:0,width:3,height:1}.validate().is_err());
+    }
+    #[test]
     fn view_only_and_wrong_sequence_never_inject() {
         let backend = Fake::default(); let log = backend.log.clone();
         let mut d = Dispatcher::new(gate(false), backend, AREA).unwrap();

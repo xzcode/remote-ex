@@ -49,6 +49,18 @@ impl RouteBinding {
 mod tests {
     use super::*;
     #[test]
+    fn av_profiles_cannot_reuse_view_or_control_authority(){
+        let c=DeviceIdentity::generate();let h=DeviceIdentity::generate();
+        let mut binding=RouteBinding{session:[1;16],controller:c.public_key(),host:h.public_key(),controller_nonce:[2;32],host_nonce:[3;32],requested:VIEW,granted:VIEW,profile:17,relay_only:false};
+        let sig=binding.sign(&c,Role::Controller,&[4;32]).unwrap();
+        assert!(binding.verify(Role::Controller,&[4;32],&sig).is_ok());
+        binding.profile=1;
+        assert!(binding.verify(Role::Controller,&[4;32],&sig).is_err());
+        binding.profile=18;assert!(binding.context().is_err());
+        binding.requested=VIEW|INPUT;binding.granted=VIEW|INPUT;assert!(binding.context().is_ok());
+        binding.profile=17;assert!(binding.context().is_err());
+    }
+    #[test]
     fn proof_binds_handshake_role_permission_and_both_nonces(){
         let c=DeviceIdentity::generate();let h=DeviceIdentity::generate();
         let b=RouteBinding{session:[1;16],controller:c.public_key(),host:h.public_key(),

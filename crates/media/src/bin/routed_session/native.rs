@@ -44,6 +44,8 @@ fn capture(displays:Vec<(u32,DisplayArea)>,input:bool,config:VideoConfig,seconda
             let next=Instant::now()+Duration::from_millis(1000/u64::from(config.fps));
             let index=selected.load(Ordering::Acquire);
             let result=(||->MediaResult<Captured>{
+                #[cfg(target_os="windows")]
+                let _dpi=if secondary{Some(windows_display::DpiGuard::new()?)}else{None};
                 permissions(input)?;
                 let chosen:Vec<_>=if index==displays.len()&&displays.len()>1&&!input{displays.clone()}
                     else{vec![*displays.get(index).ok_or("Unapproved display selection")?]};
