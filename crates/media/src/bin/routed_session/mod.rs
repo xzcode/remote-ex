@@ -401,7 +401,7 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
     let url=a.next().ok_or("Missing WSS URL")?;
     let pin=decode_hex::<32>(&a.next().ok_or("Missing server ID")?).map_err(error)?;
     let endpoint=Endpoint::secure(&url,pin)?;
-    let mut ca=None;let mut relay_only=false;let mut profile=Profile::Test;let mut display=None;let mut supervised=false;let mut persistent=false;let mut defer_test_registration=false;let mut quality="compat".to_owned();let mut exchange_path=None;let mut volume=75u8;let mut extra_displays=Vec::new();let mut identity_slot=None;let mut resume=exchange::ResumeOptions::default();
+    let mut ca=None;let mut relay_only=false;let mut profile=Profile::Test;let mut display=None;let mut supervised=false;let mut persistent=false;let mut defer_test_registration=false;let mut quality="compat".to_owned();let mut exchange_path=None;let mut volume=75u8;let mut extra_displays=Vec::new();let mut identity_slot=None;let mut resume=exchange::ResumeOptions::default();let mut shared_controller=false;
     while let Some(arg)=a.next(){match arg.as_str(){
         "--ca" if ca.is_none()=>ca=Some(a.next().ok_or("Missing CA path")?),
         "--relay-only" if !relay_only=>relay_only=true,
@@ -409,6 +409,7 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
         "--desktop-session" if !supervised=>supervised=true,
         "--defer-test-registration" if !native_allowed&&!defer_test_registration=>defer_test_registration=true,
         "--persistent" if !persistent=>persistent=true,
+        "--shared-controller" if !shared_controller=>shared_controller=true,
         "--identity-slot" if identity_slot.is_none()=>{
             let n=a.next().ok_or("Missing identity slot")?.parse::<u8>().map_err(error)?;
             remote_ex_security::identity_store::credential_name(n)?;identity_slot=Some(n);
@@ -433,6 +434,7 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
         "--control" if native_allowed&&profile==Profile::Test=>{profile=Profile::Control;if host{display=Some(a.next().ok_or("Select display ID")?.parse::<u32>().map_err(error)?);}},
         _=>return Err("Unexpected argument".into()),
     }}
+    if shared_controller&&(host||!matches!(profile,Profile::Test|Profile::View|Profile::Control)||persistent&&identity_slot.unwrap_or(0)!=0){return Err("Shared identity is only for outgoing view/control/test using slot one identity".into());}
     if identity_slot.is_some()&&!persistent{return Err("Identity slot requires explicit persistent storage opt-in".into());}
     if defer_test_registration&&(!supervised||persistent||profile!=Profile::Test){return Err("Test registration barrier requires synthetic temporary supervised mode".into());}
     if native_allowed&&profile==Profile::Test{return Err("Choose a separate view, control or exchange profile".into());}
@@ -481,7 +483,12 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
     if defer_test_registration && (input()?!="REGISTER TEST"||canceled()){
         return Err("Test enrollment canceled".into());
     }
-    let mut conn=if let Some(path)=ca{Connection::register_with_roots(endpoint,&id,roots(&path)?).await?}else{Connection::register(endpoint,&id).await?};
+    let mut conn=match (shared_controller,ca){
+        (true,Some(path))=>Connection::register_controller_with_roots(endpoint,&id,roots(&path)?).await?,
+        (true,None)=>Connection::register_controller(endpoint,&id).await?,
+        (false,Some(path))=>Connection::register_with_roots(endpoint,&id,roots(&path)?).await?,
+        (false,None)=>Connection::register(endpoint,&id).await?,
+    };
     out(&format!("ONLINE {}",conn.device_id()))?;
     out("PEER_KEY (independently verify the peer's entire public key)")?;
     let expected=decode_hex::<32>(&input()?).map_err(error)?;

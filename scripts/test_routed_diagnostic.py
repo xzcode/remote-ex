@@ -97,6 +97,7 @@ def main():
             source=os.path.join(directory,"source.bin");target=os.path.join(directory,"received.bin")
             payload=bytes(range(256))*(32768 if checkpoint_test else 257)
             host_flags=list(flags);controller_flags=list(flags)
+            if "--shared-controller" in sys.argv[3:]:controller_flags.append("--shared-controller")
             if clipboard_test:
                 host_flags.extend(["--clipboard-sync-test","--desktop-session"]);controller_flags.extend(["--clipboard-sync-test","--desktop-session"])
             if audio_test:

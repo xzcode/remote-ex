@@ -17,9 +17,12 @@ const fileReceiver=computed(()=>mode.value==="file"&&role.value!==sender.value);
 watch([mode,role,sender],()=>{resumeFrom.value="";checkpointPath.value="";});
 const isExchange=computed(()=>["file","text","png","directory"].includes(mode.value));
 const isDisplay=computed(()=>mode.value==="view"||mode.value==="control");
-const url=ref(""),serverId=ref(""),ca=ref(""),relay=ref(false),persistent=ref(false);
+const url=ref(""),serverId=ref(""),ca=ref(""),relay=ref(false),persistent=ref(false),sharedIdentity=ref(false);
+const shareAvailable=computed(()=>persistent.value&&role.value==="controller"&&["test","view","control"].includes(mode.value));
 const enrollment=ref<{device_id:string;public_key:string}|null>(null);
-watch(persistent,value=>{if(!value)enrollment.value=null;});
+watch(persistent,value=>{if(!value){enrollment.value=null;sharedIdentity.value=false;}});
+watch(shareAvailable,value=>{if(!value)sharedIdentity.value=false;});
+watch(sharedIdentity,()=>{enrollment.value=null;});
 const displays=ref<Display[]>([]),displayId=ref<number|null>(null),trusted=ref<Device[]>([]),chosen=ref(""),peerId=ref(""),peerKey=ref("");
 const approved=ref(false),submitted=ref(false),busy=ref(false),error=ref("");
 const saveHistory=ref(false),invitation=ref(""),quality=ref("compat");
@@ -51,7 +54,7 @@ async function command(name:string,args:Record<string,unknown>={}){
 async function prepareSlotIdentity(){
  if(!native||busy.value||snapshot.value.active||!persistent.value)return;
  busy.value=true;error.value="";
- try{enrollment.value=await invoke("routed_identity_info",{slot:props.slot,confirmed:true});}
+ try{enrollment.value=await invoke("routed_identity_info",{slot:props.slot,confirmed:true,sharedIdentity:shareAvailable.value&&sharedIdentity.value});}
  catch(e){error.value=String(e);}finally{busy.value=false;}
 }
 async function chooseTransferFile(){
@@ -90,7 +93,7 @@ async function makeInvitation(){
 function prepare(){
  approved.value=false;submitted.value=false;
  return command("routed_prepare",{role:role.value,mode:mode.value,url:url.value.trim(),serverId:serverId.value.trim(),
- displayId:role.value==="host"&&isDisplay.value?displayId.value:null,relayOnly:relay.value,persistent:persistent.value,storageConsent:persistent.value,caPath:ca.value.trim()||null,saveHistory:saveHistory.value,quality:quality.value,sender:isExchange.value?sender.value:null,transferPath:["file","directory"].includes(mode.value)?transferPath.value.trim():null,volume:volume.value,extraDisplays:role.value==="host"&&mode.value==="view"?extraDisplays.value:[],resumeFrom:fileReceiver.value?resumeFrom.value.trim()||null:null,checkpointPath:fileReceiver.value?checkpointPath.value.trim()||null:null});
+ displayId:role.value==="host"&&isDisplay.value?displayId.value:null,relayOnly:relay.value,persistent:persistent.value,storageConsent:persistent.value,caPath:ca.value.trim()||null,saveHistory:saveHistory.value,quality:quality.value,sender:isExchange.value?sender.value:null,transferPath:["file","directory"].includes(mode.value)?transferPath.value.trim():null,volume:volume.value,extraDisplays:role.value==="host"&&mode.value==="view"?extraDisplays.value:[],resumeFrom:fileReceiver.value?resumeFrom.value.trim()||null:null,checkpointPath:fileReceiver.value?checkpointPath.value.trim()||null:null,sharedIdentity:shareAvailable.value&&sharedIdentity.value});
 }
 function confirm(){if(!canConfirm.value)return;submitted.value=true;return command("routed_confirm",{deviceId:peerId.value.trim(),peerKey:peerKey.value.trim(),approved:true});}
 let stopDrop:(()=>void)|undefined;
@@ -128,6 +131,8 @@ onBeforeUnmount(()=>{disposed=true;stopDrop?.();if(timer!==undefined)window.clea
   <label>{{ t("qualityPreset") }}</label><select v-model="quality" :disabled="busy||snapshot.active"><option value="compat">540p · 10 fps</option><option value="low">480p · 15 fps</option><option value="balanced">720p · 30 fps</option><option value="high">1080p · 30 fps</option><option value="qhd">1440p · 30 fps</option><option value="uhd">2160p · 30 fps</option></select><p class="muted">{{ t("qualityNotice") }}</p>
   <label class="check-label"><input type="checkbox" v-model="relay" :disabled="busy||snapshot.active"/>{{ t("routedRelay") }}</label>
   <label class="check-label"><input type="checkbox" v-model="persistent" :disabled="busy||snapshot.active"/>{{ t("presenceStorageConsent") }}</label>
+  <label v-if="shareAvailable" class="check-label"><input type="checkbox" v-model="sharedIdentity" :disabled="busy||snapshot.active"/>{{ t("sharedIdentity") }}</label>
+  <p v-if="shareAvailable&&sharedIdentity" class="muted">{{ t("sharedIdentityNotice") }}</p>
   <button v-if="persistent" :disabled="busy||snapshot.active||!native" @click="prepareSlotIdentity">{{ t("identityPrepare") }}</button>
   <template v-if="enrollment&&persistent"><label>{{ t("identityEnrollment") }}</label><input readonly :value="enrollment.device_id" class="key-input"/><label>{{ t("trustPublicKey") }}</label><input readonly :value="enrollment.public_key" class="key-input"/></template>
   <label class="check-label"><input type="checkbox" v-model="saveHistory" :disabled="busy||snapshot.active"/>{{ t("deviceSaveHistory") }}</label>

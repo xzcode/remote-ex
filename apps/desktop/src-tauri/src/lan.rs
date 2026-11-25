@@ -436,9 +436,10 @@ impl SessionManager {
         }
         self.spawn(command,profile,host,None)
     }
-    fn prepare_routed(&self,role:&str,url:&str,server_id:&str,profile:Profile,display_id:Option<u32>,relay_only:bool,persistent:bool,storage_consent:bool,ca_path:Option<String>,history_path:Option<PathBuf>,quality:&str,transfer_path:Option<String>,volume:u8,extra_displays:Vec<u32>,identity_slot:u8,resume_from:Option<String>,checkpoint_path:Option<String>)->Result<Snapshot,String>{
+    fn prepare_routed(&self,role:&str,url:&str,server_id:&str,profile:Profile,display_id:Option<u32>,relay_only:bool,persistent:bool,storage_consent:bool,ca_path:Option<String>,history_path:Option<PathBuf>,quality:&str,transfer_path:Option<String>,volume:u8,extra_displays:Vec<u32>,identity_slot:u8,resume_from:Option<String>,checkpoint_path:Option<String>,shared_identity:bool)->Result<Snapshot,String>{
         if !profile.routed()||url.len()>512{return Err("Invalid routed session configuration".into());}
         if persistent&&!storage_consent{return Err("Persistent routed identity requires explicit native storage consent".into());}
+        if shared_identity&&(!persistent||role!="controller"||!matches!(profile,Profile::RoutedTest|Profile::RoutedView|Profile::RoutedControl)){return Err("Shared identity requires an explicitly selected persistent outgoing desktop session".into());}
         let pin=remote_ex_signaling::decode_hex::<32>(server_id).map_err(|_|"Invalid expected server ID")?;
         let _=remote_ex_rendezvous_client::Endpoint::secure(url,pin)?;
         let host=match role{"host"=>true,"controller"=>false,_=>return Err("Unknown routed role".into())};
@@ -491,6 +492,7 @@ impl SessionManager {
         command.arg("--quality").arg(quality);
         if relay_only{command.arg("--relay-only");}
         if persistent{remote_ex_security::identity_store::credential_name(identity_slot)?;command.arg("--persistent").arg("--identity-slot").arg(identity_slot.to_string());}
+        if shared_identity{command.arg("--shared-controller");}
         if let Some(ca)=ca_path.filter(|s|!s.is_empty()){
             let path=std::path::Path::new(&ca);
             if ca.len()>1024||!path.is_absolute()||!path.is_file(){return Err("Choose a valid absolute local CA certificate path".into());}
@@ -583,7 +585,7 @@ pub fn lan_prepare(window: WebviewWindow, manager: State<'_, SessionManager>, ma
 // audio sessions are exclusive; separate identities remain separate devices.
 // The signaling server still refuses duplicate registrations of one key.
 #[derive(Default)]
-struct Slots{sessions:[SessionManager;3],exclusive:[bool;3]}
+struct Slots{sessions:[SessionManager;3],exclusive:[bool;3],identity_slot:[Option<u8>;3],shared:[bool;3]}
 #[derive(Default)]
 pub struct RoutedManagers{slots:Mutex<Slots>}
 fn slot_index(slot:Option<u8>)->Result<usize,String>{
@@ -601,15 +603,16 @@ impl Drop for RoutedManagers{fn drop(&mut self){self.shutdown();}}
 #[derive(Serialize)]
 pub struct SlotIdentityInfo{device_id:String,public_key:String}
 #[tauri::command]
-pub async fn routed_identity_info(window:WebviewWindow,managers:State<'_,RoutedManagers>,slot:Option<u8>,confirmed:bool)->Result<SlotIdentityInfo,String>{
+pub async fn routed_identity_info(window:WebviewWindow,managers:State<'_,RoutedManagers>,slot:Option<u8>,confirmed:bool,shared_identity:Option<bool>)->Result<SlotIdentityInfo,String>{
     require_main(&window)?;
     if !confirmed{return Err("Explicit system credential storage consent is required".into());}
     let i=slot_index(slot)?;
+    let identity=if shared_identity.unwrap_or(false){0}else{i as u8};
     {if locked(&managers.slots).sessions[i].busy(){return Err("Finish this session before preparing its identity".into());}}
     #[cfg(any(target_os="windows",target_os="macos"))]
     {
         tauri::async_runtime::spawn_blocking(move||{
-            let id=remote_ex_security::identity_store::native::open_slot(i as u8)?;
+            let id=remote_ex_security::identity_store::native::open_slot(identity)?;
             Ok(SlotIdentityInfo{device_id:remote_ex_signaling::hex(&id.fingerprint()),public_key:remote_ex_signaling::hex(&id.public_key())})
         }).await.map_err(|_|"Identity task failed")?
     }
@@ -655,7 +658,7 @@ pub async fn select_transfer_file(window:WebviewWindow,receive:bool,directory:Op
     {let _=(receive,directory);Err("Native file selection unavailable".into())}
 }
 #[tauri::command]
-pub fn routed_prepare(window:WebviewWindow,manager:State<'_,SessionManager>,managers:State<'_,RoutedManagers>,slot:Option<u8>,role:String,url:String,server_id:String,mode:String,display_id:Option<u32>,relay_only:bool,persistent:bool,storage_consent:bool,ca_path:Option<String>,save_history:Option<bool>,quality:Option<String>,sender:Option<String>,transfer_path:Option<String>,volume:Option<u8>,extra_displays:Option<Vec<u32>>,resume_from:Option<String>,checkpoint_path:Option<String>)->Result<Snapshot,String>{
+pub fn routed_prepare(window:WebviewWindow,manager:State<'_,SessionManager>,managers:State<'_,RoutedManagers>,slot:Option<u8>,role:String,url:String,server_id:String,mode:String,display_id:Option<u32>,relay_only:bool,persistent:bool,storage_consent:bool,ca_path:Option<String>,save_history:Option<bool>,quality:Option<String>,sender:Option<String>,transfer_path:Option<String>,volume:Option<u8>,extra_displays:Option<Vec<u32>>,resume_from:Option<String>,checkpoint_path:Option<String>,shared_identity:Option<bool>)->Result<Snapshot,String>{
     require_main(&window)?;
     let profile=match (mode.as_str(),sender.as_deref()){
         ("test",_)=>Profile::RoutedTest,("view",_)=>Profile::RoutedView,("control",_)=>Profile::RoutedControl,("audio",_)=>Profile::RoutedAudio,("clipboard_sync",_)=>Profile::RoutedClipboardSync,
@@ -670,12 +673,16 @@ pub fn routed_prepare(window:WebviewWindow,manager:State<'_,SessionManager>,mana
     let mut slots=locked(&managers.slots);
     if manager.busy(){return Err("Finish the LAN session first".into());}
     let exclusive=role=="host"||profile.exchange().is_some()||matches!(profile,Profile::RoutedAudio|Profile::RoutedClipboardSync);
+    let shared=shared_identity.unwrap_or(false);
+    if shared&&(!persistent||exclusive){return Err("Shared identity is only for persistent outgoing test/view/control sessions".into());}
+    let identity=if shared{0}else{i as u8};
     for (n,other) in slots.sessions.iter().enumerate(){
         if n==i||!other.busy(){continue;}
         if exclusive||slots.exclusive[n]{return Err("Host and content-sharing sessions require exclusive access".into());}
+        if persistent&&slots.identity_slot[n]==Some(identity)&&!(shared&&slots.shared[n]){return Err("Choose shared identity in all slots using the same device ID".into());}
     }
-    let result=slots.sessions[i].prepare_routed(&role,url.trim(),server_id.trim(),profile,display_id,relay_only,persistent,storage_consent,ca_path,history,quality.as_deref().unwrap_or("compat"),transfer_path,volume.unwrap_or(75),extra_displays.unwrap_or_default(),i as u8,resume_from,checkpoint_path)?;
-    slots.exclusive[i]=exclusive;Ok(result)
+    let result=slots.sessions[i].prepare_routed(&role,url.trim(),server_id.trim(),profile,display_id,relay_only,persistent,storage_consent,ca_path,history,quality.as_deref().unwrap_or("compat"),transfer_path,volume.unwrap_or(75),extra_displays.unwrap_or_default(),identity,resume_from,checkpoint_path,shared)?;
+    slots.exclusive[i]=exclusive;slots.identity_slot[i]=persistent.then_some(identity);slots.shared[i]=shared;Ok(result)
 }
 #[tauri::command]
 pub fn lan_confirm(window: WebviewWindow, manager: State<'_, SessionManager>, peer_key: String, approved: bool) -> Result<Snapshot, String> {
