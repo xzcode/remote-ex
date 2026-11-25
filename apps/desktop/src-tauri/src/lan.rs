@@ -38,10 +38,11 @@ pub struct Snapshot {
     profile: Profile,
     input_released: bool,
     device_id: Option<String>,
+    peer_id: Option<String>,
 }
 impl Default for Snapshot {
     fn default() -> Self {
-        Self { stage: Stage::Idle, active: false, local_key: None, detail: None, profile: Profile::Diagnostic, input_released: false, device_id: None }
+        Self { stage: Stage::Idle, active: false, local_key: None, detail: None, profile: Profile::Diagnostic, input_released: false, device_id: None, peer_id: None }
     }
 }
 
@@ -272,6 +273,9 @@ fn supervise(
                     continue;
                 }
                 approved = true;
+                if profile.routed(){
+                    if let Ok(key)=remote_ex_signaling::decode_hex::<32>(&peer){locked(&shared).peer_id=Some(remote_ex_signaling::hex(&remote_ex_security::fingerprint(&key)));}
+                }
                 // Secure view child monitors the pipe for parent loss. Keep
                 // it open until the supervisor exits; the diagnostic does not.
                 if profile == Profile::Diagnostic { stdin.take(); }
@@ -349,9 +353,9 @@ impl SessionManager {
                 command.arg("--desktop-session");
             }
         }
-        self.spawn(command,profile,host)
+        self.spawn(command,profile,host,None)
     }
-    fn prepare_routed(&self,role:&str,url:&str,server_id:&str,profile:Profile,display_id:Option<u32>,relay_only:bool,persistent:bool,storage_consent:bool,ca_path:Option<String>)->Result<Snapshot,String>{
+    fn prepare_routed(&self,role:&str,url:&str,server_id:&str,profile:Profile,display_id:Option<u32>,relay_only:bool,persistent:bool,storage_consent:bool,ca_path:Option<String>,history_path:Option<PathBuf>)->Result<Snapshot,String>{
         if !profile.routed()||url.len()>512{return Err("Invalid routed session configuration".into());}
         if persistent&&!storage_consent{return Err("Persistent routed identity requires explicit native storage consent".into());}
         let pin=remote_ex_signaling::decode_hex::<32>(server_id).map_err(|_|"Invalid expected server ID")?;
@@ -375,9 +379,10 @@ impl SessionManager {
             command.arg("--ca").arg(path);
         }
         command.arg("--desktop-session");
-        self.spawn(command,profile,host)
+        let history=history_path.map(|path|(path,remote_ex_signaling::hex(&pin)));
+        self.spawn(command,profile,host,history)
     }
-    fn spawn(&self,mut command:Command,profile:Profile,host:bool)->Result<Snapshot,String>{
+    fn spawn(&self,mut command:Command,profile:Profile,host:bool,history:Option<(PathBuf,String)>)->Result<Snapshot,String>{
         let mut worker=locked(&self.worker);
         if worker.as_ref().is_some_and(|w|!w.join.is_finished()){return Err("A remote session is already running".into());}
         if let Some(old)=worker.take(){let _=old.join.join();}
@@ -388,12 +393,26 @@ impl SessionManager {
         }
         let child = command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped())
             .spawn().map_err(|e| format!("Cannot start native media diagnostic: {e}"))?;
-        *locked(&self.shared) = Snapshot { stage: Stage::Starting, active: true, local_key: None, detail: None, profile, input_released: false, device_id: None };
+        *locked(&self.shared) = Snapshot { stage: Stage::Starting, active: true, local_key: None, detail: None, profile, input_released: false, device_id: None, peer_id: None };
         let (tx, rx) = mpsc::sync_channel(4);
         let shared = self.shared.clone();
         let stop = Arc::new(AtomicBool::new(false));
         let worker_stop = stop.clone();
-        let join = thread::spawn(move || supervise(ChildGuard(child), rx, shared, profile, host, worker_stop));
+        let join = thread::spawn(move || {
+            let started=Instant::now();
+            supervise(ChildGuard(child), rx, shared.clone(), profile, host, worker_stop);
+            if let Some((path,server))=history{
+                let snap=locked(&shared).clone();
+                let mode=match profile{Profile::RoutedTest=>"test",Profile::RoutedView=>"view",Profile::RoutedControl=>"control",_=>return};
+                let outcome=match snap.stage{Stage::Passed=>"passed",Stage::Failed=>"failed",Stage::Canceled=>"canceled",_=>return};
+                if let Some(id)=snap.peer_id {
+                    // A history failure cannot change actual release confirmation.
+                    if crate::trust::record_history(&path,&server,&id,mode,outcome,started.elapsed().as_secs()).is_err(){
+                        let mut s=locked(&shared);if s.detail.is_none(){s.detail=Some("Local connection history could not be saved".into());}
+                    }
+                }
+            }
+        });
         *worker = Some(Worker { tx, stop, join });
         Ok(self.snapshot())
     }
@@ -439,10 +458,11 @@ pub fn lan_prepare(window: WebviewWindow, manager: State<'_, SessionManager>, ro
     require_main(&window)?; manager.prepare(&role, &address, preview, Profile::parse(&profile)?, display_id)
 }
 #[tauri::command]
-pub fn routed_prepare(window:WebviewWindow,manager:State<'_,SessionManager>,role:String,url:String,server_id:String,mode:String,display_id:Option<u32>,relay_only:bool,persistent:bool,storage_consent:bool,ca_path:Option<String>)->Result<Snapshot,String>{
+pub fn routed_prepare(window:WebviewWindow,manager:State<'_,SessionManager>,role:String,url:String,server_id:String,mode:String,display_id:Option<u32>,relay_only:bool,persistent:bool,storage_consent:bool,ca_path:Option<String>,save_history:Option<bool>)->Result<Snapshot,String>{
     require_main(&window)?;
     let profile=match mode.as_str(){"test"=>Profile::RoutedTest,"view"=>Profile::RoutedView,"control"=>Profile::RoutedControl,_=>return Err("Invalid routed mode".into())};
-    manager.prepare_routed(&role,url.trim(),server_id.trim(),profile,display_id,relay_only,persistent,storage_consent,ca_path)
+    let history=if save_history.unwrap_or(false){Some(crate::trust::database_path(&window)?)}else{None};
+    manager.prepare_routed(&role,url.trim(),server_id.trim(),profile,display_id,relay_only,persistent,storage_consent,ca_path,history)
 }
 #[tauri::command]
 pub fn lan_confirm(window: WebviewWindow, manager: State<'_, SessionManager>, peer_key: String, approved: bool) -> Result<Snapshot, String> {
@@ -486,7 +506,7 @@ mod tests {
     fn control_requires_distinct_consent_and_release_marker() {
         assert_eq!(Profile::Control.consent(true), "ALLOW SCREEN AND INPUT");
         assert_eq!(Profile::Control.consent(false), "ALLOW REMOTE INPUT");
-        let shared = Mutex::new(Snapshot { stage: Stage::Connected, active: true, local_key: None, detail: None, profile: Profile::Control, input_released: false, device_id: None });
+        let shared = Mutex::new(Snapshot { stage: Stage::Connected, active: true, local_key: None, detail: None, profile: Profile::Control, input_released: false, device_id: None, peer_id: None });
         let (mut pass, mut failure) = (false, None);
         stage(&shared, Stage::Stopping, None);
         assert!(locked(&shared).active);
@@ -496,7 +516,7 @@ mod tests {
     }
     #[test]
     fn status_requires_valid_local_key_and_terminal_state() {
-        let shared = Mutex::new(Snapshot { stage: Stage::Starting, active: true, local_key: None, detail: None, profile: Profile::Diagnostic, input_released: false, device_id: None });
+        let shared = Mutex::new(Snapshot { stage: Stage::Starting, active: true, local_key: None, detail: None, profile: Profile::Diagnostic, input_released: false, device_id: None, peer_id: None });
         let (mut pass, mut fail) = (false, None);
         handle_output(&shared, Output::Stdout(format!("KEY {}", "ab".repeat(32))), &mut pass, &mut fail);
         assert_eq!(locked(&shared).stage, Stage::AwaitingApproval);

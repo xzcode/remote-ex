@@ -28,6 +28,11 @@ fn main() {
             trust::trusted_list,
             trust::trusted_add,
             trust::trusted_remove,
+            trust::trusted_metadata,
+            trust::connection_history,
+            trust::clear_connection_history,
+            trust::invitation_create,
+            trust::invitation_parse,
         ])
         .on_window_event(|window, event| {
             if window.label() == "main" && matches!(event, tauri::WindowEvent::CloseRequested { .. }) {

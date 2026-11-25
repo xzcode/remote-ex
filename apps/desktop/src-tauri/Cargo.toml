@@ -21,3 +21,5 @@ remote-ex-security = { path = "../../../crates/security", features = ["native-va
 tokio = { version = "1", features = ["sync", "time", "macros"] }
 
 rusqlite = { version = "0.32", features = ["bundled"] }
+
+remote-ex-desktop-features = { path = "../../../crates/desktop-features" }
