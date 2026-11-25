@@ -1,0 +1,20 @@
+name: Synthetic media probe
+on:
+  workflow_dispatch:
+  push:
+    branches: [master]
+    paths: ['scripts/probe_media.py', '.github/workflows/media-probe.yml']
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GStreamer diagnostic packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-nice
+      - name: Local synthetic VP8 encode and decode
+        run: python3 scripts/probe_media.py

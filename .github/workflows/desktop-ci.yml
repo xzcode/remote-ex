@@ -1,0 +1,37 @@
+name: Desktop checks
+on:
+  push:
+    branches: [master]
+    paths: ['apps/desktop/**', '.github/workflows/desktop-ci.yml']
+  pull_request:
+    paths: ['apps/desktop/**', '.github/workflows/desktop-ci.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: desktop-ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: apps/desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install frontend dependencies
+        run: npm install --no-audit --no-fund
+      - name: Build frontend
+        run: npm run build
+      - name: Check desktop Rust
+        run: cargo check --manifest-path src-tauri/Cargo.toml
+      - name: Test capture bounds
+        run: cargo test --manifest-path src-tauri/Cargo.toml
