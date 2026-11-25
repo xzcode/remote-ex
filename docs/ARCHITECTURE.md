@@ -115,3 +115,7 @@ servers/signaling 加入 workspace，Axum 0.8、Tokio、WebSocket JSON v1；独�
 ## ADR-016：开发包平台运行修复
 
 官方 GStreamer 1.26.11 SDK 下 Windows/macOS native-control release 已编译；macOS 运行时报缺失 LC_RPATH，build.rs 将官方 framework 的固定 lib 路径链接进媒体二进制。开发包改为 Remote EX.app，固定 sidecars 位于 Contents/MacOS，plutil/codesign 校验、ad-hoc签名；依旧外部官方运行时，非 notarized installer。Windows nonblocking listener accept 后恢复 bounded blocking TCP 模式；保留原超时，加跨平台信令单测。修复待完整运行复验。开发包包括 BUILD_INFO；不取消已开始的上一个跨平台 build，最新提交单独排队。
+
+## ADR-017：M2.2 显式注册与持久身份
+
+共享 crates/rendezvous-protocol，server 保留 re-export；crates/rendezvous-client 使用 tokio-tungstenite/rustls，验证 CA、证书与主机名，另校验配置的非零 server ID（部署标识，不是独立密码学证书）；明文只允许明确选择的数字 IPv4 回环开发。WSS 无降级，自签/私有 CA 必须由 CLI 显式提供信任根，GUI 当前使用 WebPKI roots。服务端 axum-server 0.8 可选 cert/key/server ID 全量配置，仍只绑定 IPv4 loopback，缺项失败。私钥由 OS 凭据库 keyring 3.6.3 可选保存（Windows/macOS），显式同意后访问，默认临时身份、无启动访问；私钥不经 WebView IPC，不自动替换不可读/损坏记录。协作实例通过本地文件锁串行创建，锁文件无私钥。后端取消可阻止后续网络注册，但已启动的系统凭据操作可能仍需完成；实际系统存储待实机。桌面服务器连接页展示 ID、上线/下线、心跳次数与拒绝请求计数，最长5分钟预览，所有远程请求均拒绝，无重连/远程媒体/系统输入。真正会话 owner 和可信设备记录待 M2.3；生产注册与网络安全评审尚未完成。

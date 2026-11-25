@@ -79,3 +79,9 @@ Rust 核心 CI 通过：[45564676252](https://github.com/xzcode/remote-ex/action
 - #45576282390：M1 正常结束、主控端授权管道关闭、被控端授权管道关闭的 inert 输入释放集成测试通过。#45575817861 Windows/macOS 最新桌面 CI 全部通过。
 - #45576059718：Windows 和 macOS 均成功安装 SDK、编译 desktop Release、编译 native-control media Release 并通过原生输入单元测试；运行控制测试失败。macOS 日志 dyld @rpath/libgstapp-1.0.0.dylib 无 LC_RPATH；Windows 10035 WouldBlock 后断开，接受的非阻塞 socket 未恢复。85acd0b 与 ed2aca9 分别修复。最新开发包 #45577251479 待验证，无正式包或真实设备测试。
 - #45577085766 Core CI 成功：M2.1 新增两个 Hub unit tests 与两个实际 WebSocket integration tests（身份注册/错误签名/拒绝、授权/随机数/顺序/会话隔离/路由/关闭）通过。测试仅 loopback，未实现真实客户端或公网。
+
+## 第十三批实际结果
+
+- M1 #45577251490 与 #45577702520 媒体集成成功；#45577251526 / #45577702536 核心成功，#45577702523 native input 成功。跨平台开发包 #45577182682 仍运行（较早仅 macOS rpath 修复），#45577251479 等待；无可下载产物。
+- 91781d6 共享协议/WSS client/可选 identity store；#45577702536 core CI 通过（含内存存储重复加载与损坏检查、端点限制），并非系统凭据库实测。
+- f122a79、27d1c3a、d45b19b WSS 服务及真实 TLS 测试、注册管理、双语 GUI。#45577808339/#45577983637 测试因 std listener 未 nonblocking 被 Tokio 拒绝，c0091bb 修复生产入口/测试入口并新增实际 presence 心跳、拒绝和取消测试。#45578147785 核心、#45578147789 桌面增量待结果。未声称 TLS 测试通过或 GUI 实机。
