@@ -50,7 +50,7 @@ fn add(db:&mut Connection,server:&str,id:&str,key:&str,label:&str,confirmed:bool
     if count>=256{return Err("Trust record limit exceeded".into());}
     tx.execute("INSERT INTO trusted_device(server_id,device_id,public_key,label) VALUES(?1,?2,?3,?4)",
         params![server,device_id,hex(&key),label]).map_err(|_|"Device or name already exists. Revoke the old pin before trusting a changed key.")?;
-    tx.commit().map_err(|_|"Cannot save trusted device")
+    tx.commit().map_err(|_|"Cannot save trusted device".to_owned())
 }
 fn remove(db:&Connection,server:&str,id:&str,confirmed:bool)->Result<(),String>{
     if !confirmed{return Err("Confirm removal of the device pin".into());}
