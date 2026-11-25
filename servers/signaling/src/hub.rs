@@ -31,15 +31,18 @@ struct Session {
     ice_count: [u16;2],
     noise_step: u8,
     sealed_count: [u8;2],
+    ice_issued: [bool;2],
 }
 #[derive(Default)]
 pub struct Hub {
     devices: HashMap<String, Device>,
     sessions: HashMap<String, Session>,
+    issuer: Option<crate::turn::IceIssuer>,
 }
 fn error(code: &str) -> Server { Server::Error { code: code.into() } }
 
 impl Hub {
+    pub fn with_issuer(issuer:crate::turn::IceIssuer)->Self{Self{issuer:Some(issuer),..Self::default()}}
     pub fn register(&mut self, id: String, connection: u64, key: PublicKey, tx: mpsc::Sender<Server>) -> bool {
         if self.devices.len() >= 128 || self.devices.contains_key(&id) { return false; }
         self.devices.insert(id, Device { connection, key, tx, session: None, last_request: None });
@@ -84,6 +87,7 @@ impl Hub {
             Client::Decision { session, grant, host_nonce } =>
                 self.decision(id, &session, grant, host_nonce, now),
             Client::Signal { session, payload } => self.signal(id, &session, payload),
+            Client::IceConfig { session } => Some(self.ice_config(id,&session)),
             Client::Close { session } => {
                 if self.devices[id].session.as_deref() != Some(session.as_str()) {
                     return Some(error("session_unavailable"));
@@ -119,7 +123,7 @@ impl Hub {
         self.devices.get_mut(&target).unwrap().session = Some(session.clone());
         self.sessions.insert(session.clone(), Session {
             controller: id.into(), host: target.clone(), requested, controller_nonce, grant: None,
-            deadline: now + PENDING_TTL, offer: false, answer: false, proofs: [false;2], ice_count: [0;2], noise_step:0, sealed_count:[0;2],
+            deadline: now + PENDING_TTL, offer: false, answer: false, proofs: [false;2], ice_count: [0;2], noise_step:0, sealed_count:[0;2], ice_issued:[false;2],
         });
         Server::Requested { session, target }
     }
@@ -142,6 +146,13 @@ impl Hub {
         }
         if grant.is_none() { self.finish(session, "declined"); }
         None
+    }
+    fn ice_config(&mut self,id:&str,session:&str)->Server{
+        let Some(s)=self.sessions.get_mut(session)else{return error("session_unavailable");};
+        let role=if s.controller==id{0}else if s.host==id{1}else{return error("session_unavailable");};
+        if s.grant.is_none()||s.noise_step!=2||s.sealed_count.iter().any(|&n|n==0)||s.ice_issued[role]{return error("ice_config_unavailable");}
+        let config=match &self.issuer{Some(issuer)=>match issuer.issue(id,session){Ok(c)=>c,Err(_)=>return error("ice_config_unavailable")},None=>crate::protocol::IceConfig::default()};
+        s.ice_issued[role]=true;Server::IceConfig{session:session.into(),config}
     }
     fn signal(&mut self, id: &str, session: &str, payload: Signal) -> Option<Server> {
         let Some(s) = self.sessions.get_mut(session) else { return Some(error("session_unavailable")); };

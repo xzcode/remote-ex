@@ -16,6 +16,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let identity = std::env::var("REMOTE_EX_SERVER_ID").ok();
     match (cert,key,identity) {
         (None,None,None) => {
+            if ["REMOTE_EX_STUN_URL","REMOTE_EX_TURN_URL","REMOTE_EX_TURN_SECRET_FILE"].iter().any(|name|std::env::var_os(name).is_some()){
+                return Err("ICE configuration requires WSS".into());
+            }
             let listener=tokio::net::TcpListener::bind(address).await?;
             println!("Remote EX loopback plaintext development signaling: {}",listener.local_addr()?);
             axum::serve(listener,remote_ex_rendezvous::router())
@@ -23,7 +26,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         (Some(cert),Some(key),Some(identity))=>{
             let pin=decode_hex::<32>(&identity)?;
-            let app=remote_ex_rendezvous::router_with_identity(pin)?;
+            let issuer=remote_ex_rendezvous::turn::IceIssuer::from_env()?;
+            let app=remote_ex_rendezvous::router_with_ice(pin,Some(issuer))?;
             rustls::crypto::ring::default_provider().install_default().map_err(|_|"TLS provider already installed")?;
             let config=RustlsConfig::from_pem_file(cert,key).await?;
             let listener=std::net::TcpListener::bind(address)?;

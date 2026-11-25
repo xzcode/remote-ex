@@ -3,6 +3,7 @@
 //! public deployment or production authentication of the server itself.
 mod hub;
 pub mod protocol;
+pub mod turn;
 
 use axum::{
     extract::{State, ws::{Message, WebSocket, WebSocketUpgrade}},
@@ -44,10 +45,15 @@ pub fn router() -> Router {
 /// Stable public server identity configured by the operator. This is an
 /// additional application pin, not a substitute for a trusted TLS certificate.
 pub fn router_with_identity(server_id: [u8;32]) -> Result<Router, &'static str> {
+    router_with_ice(server_id,None)
+}
+
+pub fn router_with_ice(server_id:[u8;32],issuer:Option<turn::IceIssuer>)->Result<Router,&'static str>{
     if server_id == [0;32] { return Err("invalid server identity"); }
+    let hub=match issuer{Some(issuer)=>Hub::with_issuer(issuer),None=>Hub::default()};
     let state = App {
         server_id,
-        hub: Arc::new(Mutex::new(Hub::default())),
+        hub: Arc::new(Mutex::new(hub)),
         slots: Arc::new(Semaphore::new(MAX_CONNECTIONS)),
         next_connection: Arc::new(AtomicU64::new(1)),
     };

@@ -24,6 +24,7 @@ pub enum Client {
     Request { target: String, requested: u8, controller_nonce: String },
     Decision { session: String, grant: Option<u8>, host_nonce: Option<String> },
     Signal { session: String, payload: Signal },
+    IceConfig { session: String },
     Close { session: String },
 }
 
@@ -54,6 +55,7 @@ pub enum Server {
     Incoming { session: String, controller: String, controller_key: String, requested: u8, controller_nonce: String },
     Decision { session: String, grant: Option<u8>, host_key: String, host_nonce: Option<String> },
     Signal { session: String, payload: Signal },
+    IceConfig { session: String, config: IceConfig },
     Closed { session: String, reason: String },
     Error { code: String },
 }
@@ -77,7 +79,7 @@ impl Client {
                 && grant.is_some() == host_nonce.is_some()
                 && host_nonce.as_ref().is_none_or(|nonce| canonical::<32>(nonce)) => Ok(()),
             Self::Signal { session, payload } if canonical::<16>(session) => payload.validate(),
-            Self::Close { session } if canonical::<16>(session) => Ok(()),
+            Self::IceConfig { session } | Self::Close { session } if canonical::<16>(session) => Ok(()),
             _ => Err("invalid message"),
         }
     }
@@ -121,6 +123,7 @@ impl Server {
                 && grant.is_some() == host_nonce.is_some()
                 && host_nonce.as_ref().is_none_or(|n| canonical::<32>(n)) => Ok(()),
             Self::Signal { session, payload } if canonical::<16>(session) => payload.validate(),
+            Self::IceConfig { session, config } if canonical::<16>(session) => config.validate(),
             Self::Closed { session, reason } if canonical::<16>(session) && short_code(reason) => Ok(()),
             Self::Error { code } if short_code(code) => Ok(()),
             _ => Err("invalid server message"),
@@ -132,3 +135,53 @@ fn short_code(s: &str)->bool{
 }
 
 fn hex_packet(s:&str)->bool{s.len()%2==0&&s.bytes().all(|b|b.is_ascii_digit()||(b'a'..=b'f').contains(&b))}
+
+// Credentials are short-lived secrets. Avoid Debug output of passwords.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TurnCredential { pub url:String, pub username:String, pub password:String, pub expires_at:u64 }
+impl std::fmt::Debug for TurnCredential {
+    fn fmt(&self,f:&mut std::fmt::Formatter<'_>)->std::fmt::Result{
+        f.debug_struct("TurnCredential").field("url",&self.url).field("expires_at",&self.expires_at).finish_non_exhaustive()
+    }
+}
+#[derive(Clone,Default,Debug,Serialize,Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct IceConfig { pub stun:Option<String>, pub turn:Option<TurnCredential> }
+
+/// Restrict server addresses to explicitly configured host:port URIs. No
+/// embedded credentials, paths, fragments, query, or implicit public service.
+pub fn ice_url(value:&str,schemes:&[&str])->Result<url::Url,&'static str>{
+    if value.len()>512||value.chars().any(char::is_control){return Err("invalid ICE server URL");}
+    let u=url::Url::parse(value).map_err(|_|"invalid ICE server URL")?;
+    if !schemes.contains(&u.scheme())||u.host().is_none()||u.port().is_none_or(|p|p==0)
+        ||!u.username().is_empty()||u.password().is_some()
+        ||!matches!(u.path(),""|"/")||u.query().is_some()||u.fragment().is_some(){
+        return Err("invalid ICE server URL");
+    }
+    Ok(u)
+}
+impl IceConfig {
+    pub fn validate(&self)->Result<(),&'static str>{
+        if let Some(stun)=&self.stun{ice_url(stun,&["stun"])?;}
+        if let Some(turn)=&self.turn{
+            ice_url(&turn.url,&["turn","turns"])?;
+            if turn.username.is_empty()||turn.username.len()>160||!turn.username.bytes().all(|b|b.is_ascii_alphanumeric()||matches!(b,b':'|b'-'|b'_'))
+                ||turn.password.len()!=28||!turn.password.bytes().all(|b|b.is_ascii_alphanumeric()||matches!(b,b'+'|b'/'|b'='))
+                ||turn.expires_at==0{return Err("invalid TURN credential");}
+        }
+        Ok(())
+    }
+}
+#[cfg(test)]
+mod ice_tests {
+    use super::*;
+    #[test]
+    fn urls_reject_credentials_paths_and_implicit_ports(){
+        assert!(ice_url("stun://127.0.0.1:3478",&["stun"]).is_ok());
+        assert!(ice_url("turns://relay.example.com:5349",&["turns"]).is_ok());
+        assert!(ice_url("turn://user:pass@relay.example.com:3478",&["turn"]).is_err());
+        assert!(ice_url("stun://example.com",&["stun"]).is_err());
+        assert!(ice_url("turn://example.com:3478?transport=udp",&["turn"]).is_err());
+    }
+}

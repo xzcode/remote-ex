@@ -9,3 +9,5 @@ remote-ex-security = { path = "../security" }
 remote-ex-signaling = { path = "../signaling" }
 serde.workspace = true
 serde_json.workspace = true
+
+url = "2"

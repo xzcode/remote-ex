@@ -18,6 +18,11 @@ futures-util = "0.3"
 axum-server = { version = "=0.8.0", features = ["tls-rustls-no-provider"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 
+hmac = "0.12"
+sha1 = "0.10"
+base64 = "0.22"
+zeroize = "1"
+
 [dev-dependencies]
 remote-ex-rendezvous-client = { path = "../../crates/rendezvous-client" }
 rcgen = "0.13"
