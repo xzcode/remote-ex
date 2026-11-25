@@ -67,3 +67,7 @@ flowchart LR
 - https://developer.apple.com/documentation/screencapturekit
 - https://learn.microsoft.com/en-us/windows/win32/direct3ddxgi/desktop-dup-api
 - https://flatpak.github.io/xdg-desktop-portal/docs/
+
+## ADR-006：M1 单帧本地诊断实现
+
+Tauri 2/Vue3 桌面应用采用独立 Cargo workspace，避免原生 GUI 依赖污染核心 CI。XCap 0.9.10 是显示器枚举和单次本地 PNG 预览的候选依赖；只在本机明确操作后执行，限制尺寸、并发及频率，不持久化图片、不开放网络服务。Tauri raw IPC 只用于有限的单次诊断，连续媒体不得使用该接口。XCap 并非已冻结的视频引擎；连续屏幕采集、GStreamer/WebRTC 媒体及低拷贝渲染仍需实际验证。平台编译与依赖许可证尚待确认。

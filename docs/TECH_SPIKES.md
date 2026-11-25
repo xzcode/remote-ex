@@ -24,3 +24,7 @@
 
 ## 记录模板
 编号、日期、提交、环境（OS/CPU/GPU/版本）、命令/步骤、结果、日志/性能数据、限制、选择或淘汰理由。若无法获取平台环境，记为待验证。
+
+## 2026-11-25 增量记录
+
+Rust 核心 CI 通过：[45564676252](https://github.com/xzcode/remote-ex/actions/runs/45564676252)。这不是媒体测试。桌面候选使用 XCap 0.9.10 的 Monitor API 与 Tauri 原生命令做单帧诊断；暂不宣称连续采集、真实桌面权限或 GPU 渲染完成。XCap 上游声明 Apache-2.0，实际传递依赖与媒体分发义务仍需审查。Windows/macOS Desktop checks 与 Ubuntu Synthetic media probe 已触发，结果见 Actions。S01–S07 退出条件不变。
