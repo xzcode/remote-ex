@@ -12,6 +12,7 @@ use sha2::{Digest, Sha256};
 pub type PublicKey = [u8; 32];
 pub type Fingerprint = [u8; 32];
 const REGISTER_DOMAIN: &[u8] = b"Remote EX/register-proof/v1\0";
+const CONTROLLER_DOMAIN:&[u8]=b"Remote EX/register-controller-only/v1\0";
 
 pub struct DeviceIdentity(SigningKey);
 impl DeviceIdentity {
@@ -23,6 +24,9 @@ impl DeviceIdentity {
     pub fn sign_registration(&self, server_identity: &Fingerprint, challenge: &[u8; 32]) -> [u8; 64] {
         self.0.sign(&registration_bytes(server_identity, challenge)).to_bytes()
     }
+    pub fn sign_controller_registration(&self,server_identity:&Fingerprint,challenge:&[u8;32])->[u8;64]{
+        self.0.sign(&controller_registration_bytes(server_identity,challenge)).to_bytes()
+    }
 }
 pub fn fingerprint(public: &PublicKey) -> Fingerprint {
     Sha256::digest(public).into()
@@ -30,6 +34,13 @@ pub fn fingerprint(public: &PublicKey) -> Fingerprint {
 pub fn verify_registration(public: &PublicKey, server_identity: &Fingerprint, challenge: &[u8; 32], signature: &[u8; 64]) -> bool {
     let Ok(key) = VerifyingKey::from_bytes(public) else { return false; };
     key.verify_strict(&registration_bytes(server_identity, challenge), &Signature::from_bytes(signature)).is_ok()
+}
+pub fn verify_controller_registration(public:&PublicKey,server_identity:&Fingerprint,challenge:&[u8;32],signature:&[u8;64])->bool{
+    let Ok(key)=VerifyingKey::from_bytes(public)else{return false;};
+    key.verify_strict(&controller_registration_bytes(server_identity,challenge),&Signature::from_bytes(signature)).is_ok()
+}
+fn controller_registration_bytes(server_identity:&Fingerprint,challenge:&[u8;32])->Vec<u8>{
+    let mut b=CONTROLLER_DOMAIN.to_vec();b.extend_from_slice(server_identity);b.extend_from_slice(challenge);b
 }
 fn registration_bytes(server_identity: &Fingerprint, challenge: &[u8; 32]) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(REGISTER_DOMAIN.len() + 64);
@@ -53,5 +64,10 @@ mod tests {
         assert!(!verify_registration(&id.public_key(), &[5;32], &challenge, &proof));
         assert!(!verify_registration(&id.public_key(), &server, &[5;32], &proof));
         assert_ne!(id.fingerprint(), other.fingerprint());
+        let controller=id.sign_controller_registration(&server,&challenge);
+        assert!(verify_controller_registration(&id.public_key(),&server,&challenge,&controller));
+        assert!(!verify_registration(&id.public_key(),&server,&challenge,&controller));
+        assert!(!verify_controller_registration(&id.public_key(),&server,&challenge,&proof));
+        assert!(!verify_controller_registration(&id.public_key(),&server,&[5;32],&controller));
     }
 }

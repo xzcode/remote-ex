@@ -53,6 +53,17 @@ impl Connection {
     /// Explicit CA trust configuration (e.g. a private organization's CA).
     /// Hostname, validity, chain and signature verification remain enabled.
     pub async fn register_with_roots(endpoint:Endpoint,identity:&DeviceIdentity,roots:rustls::RootCertStore)->Result<Self>{
+        Self::register_scoped(endpoint,identity,roots,false).await
+    }
+    pub async fn register_controller(endpoint:Endpoint,identity:&DeviceIdentity)->Result<Self>{
+        let roots=rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+        Self::register_controller_with_roots(endpoint,identity,roots).await
+    }
+    pub async fn register_controller_with_roots(endpoint:Endpoint,identity:&DeviceIdentity,roots:rustls::RootCertStore)->Result<Self>{
+        if endpoint.url.scheme()!="wss"||endpoint.expected.is_none(){return Err("Shared controller registration requires verified WSS".into());}
+        Self::register_scoped(endpoint,identity,roots,true).await
+    }
+    async fn register_scoped(endpoint:Endpoint,identity:&DeviceIdentity,roots:rustls::RootCertStore,controller_only:bool)->Result<Self>{
         let tls=rustls::ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
             .with_safe_default_protocol_versions().map_err(|_|"Invalid TLS configuration")?
             .with_root_certificates(roots).with_no_client_auth();
@@ -64,8 +75,10 @@ impl Connection {
         let server=decode_hex::<32>(&server).map_err(|_|"Invalid server identity")?;
         let nonce=decode_hex::<32>(&nonce).map_err(|_|"Invalid registration nonce")?;
         if endpoint.expected.is_some_and(|expected|expected!=server){return Err("Configured server identity mismatch".into());}
-        let proof=identity.sign_registration(&server,&nonce);
-        conn.send_inner(Client::Register{public_key:hex(&identity.public_key()),signature:hex(&proof)}).await?;
+        let public_key=hex(&identity.public_key());
+        let registration=if controller_only{Client::RegisterController{public_key,signature:hex(&identity.sign_controller_registration(&server,&nonce))}}
+            else{Client::Register{public_key,signature:hex(&identity.sign_registration(&server,&nonce))}};
+        conn.send_inner(registration).await?;
         match conn.receive(IO_LIMIT).await?{
             Server::Registered{device_id} if device_id==conn.device_id=>Ok(conn),
             _=>Err("Server rejected registration or changed the device identity".into()),
@@ -82,7 +95,7 @@ impl Connection {
         Ok(())
     }
     pub async fn send(&mut self,message:Client)->Result<()>{
-        if matches!(message,Client::Register{..}){return Err("Already registered".into());}
+        if matches!(message,Client::Register{..}|Client::RegisterController{..}){return Err("Already registered".into());}
         self.send_inner(message).await
     }
     pub async fn receive(&mut self,limit:Duration)->Result<Server>{

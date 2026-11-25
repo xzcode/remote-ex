@@ -150,3 +150,58 @@ async fn presence_reconnects_with_same_identity_after_transport_loss(){
     assert_eq!((online,retried),(2,1));
     tokio::time::timeout(Duration::from_secs(6),fixture).await.unwrap().unwrap();
 }
+
+#[tokio::test]
+async fn shared_controller_identity_is_scoped_to_each_authenticated_socket(){
+    use remote_ex_security::session::VIEW;
+    let _=rustls::crypto::ring::default_provider().install_default();
+    let rcgen::CertifiedKey{cert,key_pair}=rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+    let config=RustlsConfig::from_pem(cert.pem().into_bytes(),key_pair.serialize_pem().into_bytes()).await.unwrap();
+    let mut roots=rustls::RootCertStore::empty();roots.add(cert.der().clone()).unwrap();
+    let listener=std::net::TcpListener::bind("127.0.0.1:0").unwrap();listener.set_nonblocking(true).unwrap();
+    let url=format!("wss://localhost:{}/v1/ws",listener.local_addr().unwrap().port());
+    let app=remote_ex_rendezvous::router_with_identity([7;32]).unwrap();
+    let handle=axum_server::Handle::new();let server=axum_server::from_tcp_rustls(listener,config).unwrap().handle(handle.clone());
+    let task=tokio::spawn(async move{server.serve(app.into_make_service()).await.unwrap();});
+    tokio::time::timeout(Duration::from_secs(3),handle.listening()).await.unwrap().unwrap();
+    let ep=||Endpoint::secure(&url,[7;32]).unwrap();
+    let key=DeviceIdentity::generate();
+    let mut c1=Connection::register_controller_with_roots(ep(),&key,roots.clone()).await.unwrap();
+    let mut c2=Connection::register_controller_with_roots(ep(),&key,roots.clone()).await.unwrap();
+    let c3=Connection::register_controller_with_roots(ep(),&key,roots.clone()).await.unwrap();
+    assert_eq!(c1.device_id(),c2.device_id());assert_eq!(c1.device_id(),c3.device_id());
+    assert!(Connection::register_controller_with_roots(ep(),&key,roots.clone()).await.is_err());
+    assert!(Connection::register_with_roots(ep(),&key,roots.clone()).await.is_err());
+    let h1_key=DeviceIdentity::generate();let h2_key=DeviceIdentity::generate();
+    let mut h1=Connection::register_with_roots(ep(),&h1_key,roots.clone()).await.unwrap();
+    let mut h2=Connection::register_with_roots(ep(),&h2_key,roots.clone()).await.unwrap();
+    let wait=Duration::from_secs(3);
+    // Controller-only sockets cannot be targets.
+    h1.send(Client::Request{target:c1.device_id().into(),requested:VIEW,controller_nonce:"01".repeat(32)}).await.unwrap();
+    assert!(matches!(h1.receive(wait).await.unwrap(),Server::Error{..}));
+    c1.send(Client::Request{target:h1.device_id().into(),requested:VIEW,controller_nonce:"02".repeat(32)}).await.unwrap();
+    c2.send(Client::Request{target:h2.device_id().into(),requested:VIEW,controller_nonce:"03".repeat(32)}).await.unwrap();
+    let Server::Requested{session:s1,..}=c1.receive(wait).await.unwrap()else{panic!("request1")};
+    let Server::Requested{session:s2,..}=c2.receive(wait).await.unwrap()else{panic!("request2")};
+    assert_ne!(s1,s2);
+    for (host,sid) in [(&mut h1,&s1),(&mut h2,&s2)]{
+        assert!(matches!(host.receive(wait).await.unwrap(),Server::Incoming{session,controller,..} if session==*sid&&controller==c1.device_id()));
+        host.send(Client::Decision{session:sid.clone(),grant:Some(VIEW),host_nonce:Some("04".repeat(32))}).await.unwrap();
+    }
+    assert!(matches!(c1.receive(wait).await.unwrap(),Server::Decision{session,..} if session==s1));
+    assert!(matches!(c2.receive(wait).await.unwrap(),Server::Decision{session,..} if session==s2));
+    c2.send(Client::Close{session:s1.clone()}).await.unwrap();
+    assert!(matches!(c2.receive(wait).await.unwrap(),Server::Error{..}));
+    c2.send(Client::Signal{session:s1.clone(),payload:remote_ex_rendezvous::protocol::Signal::NoiseHandshake{step:1,packet:"05".repeat(32)}}).await.unwrap();
+    assert!(matches!(c2.receive(wait).await.unwrap(),Server::Error{..}));
+    c1.close().await.unwrap();
+    assert!(matches!(h1.receive(wait).await.unwrap(),Server::Closed{session,..} if session==s1));
+    c2.send(Client::Signal{session:s2.clone(),payload:remote_ex_rendezvous::protocol::Signal::NoiseHandshake{step:1,packet:"06".repeat(32)}}).await.unwrap();
+    assert!(matches!(h2.receive(wait).await.unwrap(),Server::Signal{session,..} if session==s2));
+    c2.send(Client::Close{session:s2.clone()}).await.unwrap();
+    assert!(matches!(h2.receive(wait).await.unwrap(),Server::Closed{session,..} if session==s2));
+    assert!(matches!(c2.receive(wait).await.unwrap(),Server::Closed{session,..} if session==s2));
+    c2.close().await.unwrap();c3.close().await.unwrap();h1.close().await.unwrap();h2.close().await.unwrap();
+    handle.graceful_shutdown(Some(Duration::from_secs(1)));
+    tokio::time::timeout(Duration::from_secs(3),task).await.unwrap().unwrap();
+}

@@ -11,8 +11,10 @@ const ROUTING_TTL: Duration = Duration::from_secs(120);
 const REQUEST_COOLDOWN: Duration = Duration::from_secs(3);
 const MAX_ICE_PER_PEER: u16 = 128;
 
+const MAX_SHARED_CONTROLLERS:usize=3;
 struct Device {
-    connection: u64,
+    id:String,
+    controller_only:bool,
     key: PublicKey,
     tx: mpsc::Sender<Server>,
     session: Option<String>,
@@ -20,8 +22,8 @@ struct Device {
     last_lookup:Option<Instant>,
 }
 struct Session {
-    controller: String,
-    host: String,
+    controller: u64,
+    host: u64,
     requested: u8,
     controller_nonce: String,
     grant: Option<u8>,
@@ -36,7 +38,7 @@ struct Session {
 }
 #[derive(Default)]
 pub struct Hub {
-    devices: HashMap<String, Device>,
+    devices: HashMap<u64, Device>,
     sessions: HashMap<String, Session>,
     issuer: Option<crate::turn::IceIssuer>,
 }
@@ -44,22 +46,27 @@ fn error(code: &str) -> Server { Server::Error { code: code.into() } }
 
 impl Hub {
     pub fn with_issuer(issuer:crate::turn::IceIssuer)->Self{Self{issuer:Some(issuer),..Self::default()}}
-    pub fn register(&mut self, id: String, connection: u64, key: PublicKey, tx: mpsc::Sender<Server>) -> bool {
-        if self.devices.len() >= 128 || self.devices.contains_key(&id) { return false; }
-        self.devices.insert(id, Device { connection, key, tx, session: None, last_request: None,last_lookup:None });
-        true
+    #[cfg(test)]
+    pub fn register(&mut self,id:String,connection:u64,key:PublicKey,tx:mpsc::Sender<Server>)->bool{
+        self.register_scoped(id,connection,key,tx,false)
     }
-    fn deliver(&self, id: &str, event: Server) -> bool {
-        self.devices.get(id).is_some_and(|d| d.tx.try_send(event).is_ok())
+    pub fn register_scoped(&mut self,id:String,connection:u64,key:PublicKey,tx:mpsc::Sender<Server>,controller_only:bool)->bool{
+        if self.devices.len()>=128||self.devices.contains_key(&connection){return false;}
+        let peers:Vec<_>=self.devices.values().filter(|d|d.id==id).collect();
+        // Host/ordinary registration remains exclusive. Only fresh scoped
+        // controller proofs allow up to three independent sockets per ID.
+        if !peers.is_empty()&&(!controller_only||peers.iter().any(|d|!d.controller_only||d.key!=key)||peers.len()>=MAX_SHARED_CONTROLLERS){return false;}
+        self.devices.insert(connection,Device{id,key,controller_only,tx,session:None,last_request:None,last_lookup:None});true
     }
-    fn finish(&mut self, session: &str, reason: &str) {
-        let Some(s) = self.sessions.remove(session) else { return; };
-        for id in [s.controller, s.host] {
-            if let Some(d) = self.devices.get_mut(&id) {
-                if d.session.as_deref() == Some(session) { d.session = None; }
-                // An overloaded destination is not allowed to queue unbounded
-                // notifications. Endpoint deadlines must also fail closed.
-                let _ = d.tx.try_send(Server::Closed { session: session.into(), reason: reason.into() });
+    fn deliver(&self,connection:u64,event:Server)->bool{
+        self.devices.get(&connection).is_some_and(|d|d.tx.try_send(event).is_ok())
+    }
+    fn finish(&mut self,session:&str,reason:&str){
+        let Some(s)=self.sessions.remove(session)else{return;};
+        for connection in [s.controller,s.host]{
+            if let Some(d)=self.devices.get_mut(&connection){
+                if d.session.as_deref()==Some(session){d.session=None;}
+                let _=d.tx.try_send(Server::Closed{session:session.into(),reason:reason.into()});
             }
         }
     }
@@ -69,38 +76,39 @@ impl Hub {
         for id in expired { self.finish(&id, "expired"); }
     }
     pub fn disconnect(&mut self, id: &str, connection: u64) {
-        if !self.devices.get(id).is_some_and(|d| d.connection == connection) { return; }
-        if let Some(d) = self.devices.remove(id) {
+        if !self.devices.get(&connection).is_some_and(|d|d.id==id){return;}
+        if let Some(d)=self.devices.remove(&connection){
             if let Some(session) = d.session { self.finish(&session, "peer_disconnected"); }
         }
     }
     pub fn handle(&mut self, id: &str, connection: u64, message: Client, now: Instant) -> Option<Server> {
         self.prune(now);
-        if !self.devices.get(id).is_some_and(|d| d.connection == connection) {
+        if !self.devices.get(&connection).is_some_and(|d|d.id==id) {
             return Some(error("not_registered"));
         }
         if message.validate().is_err() { return Some(error("invalid_message")); }
         match message {
             Client::Ping => Some(Server::Pong),
             Client::Lookup{targets}=>{
-                let d=self.devices.get_mut(id).expect("registered");
+                let d=self.devices.get_mut(&connection).expect("registered");
                 if d.last_lookup.is_some_and(|last|now.saturating_duration_since(last)<Duration::from_secs(2)){return Some(error("lookup_limited"));}
                 d.last_lookup=Some(now);
                 // No directory or public-key disclosure: only exact requested IDs.
                 Some(Server::Presence{items:targets.into_iter().map(|device_id|{
-                    let device=self.devices.get(&device_id);
-                    crate::protocol::DeviceStatus{device_id,online:device.is_some(),busy:device.is_some_and(|d|d.session.is_some())}
+                    let online=self.devices.values().any(|d|d.id==device_id);
+                    let busy=self.devices.values().any(|d|d.id==device_id&&d.session.is_some());
+                    crate::protocol::DeviceStatus{device_id,online,busy}
                 }).collect()})
             },
-            Client::Register { .. } => Some(error("already_registered")),
+            Client::Register { .. }|Client::RegisterController{..} => Some(error("already_registered")),
             Client::Request { target, requested, controller_nonce } =>
-                Some(self.request(id, target, requested, controller_nonce, now)),
+                Some(self.request(connection, target, requested, controller_nonce, now)),
             Client::Decision { session, grant, host_nonce } =>
-                self.decision(id, &session, grant, host_nonce, now),
-            Client::Signal { session, payload } => self.signal(id, &session, payload),
-            Client::IceConfig { session } => Some(self.ice_config(id,&session)),
+                self.decision(connection, &session, grant, host_nonce, now),
+            Client::Signal { session, payload } => self.signal(connection, &session, payload),
+            Client::IceConfig { session } => Some(self.ice_config(connection,&session)),
             Client::Close { session } => {
-                if self.devices[id].session.as_deref() != Some(session.as_str()) {
+                if self.devices[&connection].session.as_deref() != Some(session.as_str()) {
                     return Some(error("session_unavailable"));
                 }
                 self.finish(&session, "closed");
@@ -108,66 +116,64 @@ impl Hub {
             }
         }
     }
-    fn request(&mut self, id: &str, target: String, requested: u8, controller_nonce: String, now: Instant) -> Server {
-        let d = self.devices.get_mut(id).expect("registered");
+    fn request(&mut self, connection:u64, target: String, requested: u8, controller_nonce: String, now: Instant) -> Server {
+        let d = self.devices.get_mut(&connection).expect("registered");
         if d.last_request.is_some_and(|last| now.saturating_duration_since(last) < REQUEST_COOLDOWN) {
             return error("request_limited");
         }
         // Charge the request even for nonexistent or unavailable targets.
         d.last_request = Some(now);
-        if target == id || d.session.is_some() || !grant_valid(requested) {
+        if target == d.id || d.session.is_some() || !grant_valid(requested) {
             return error("request_unavailable");
         }
-        let key = d.key;
-        if !self.devices.get(&target).is_some_and(|d| d.session.is_none()) {
-            return error("request_unavailable");
-        }
+        let key=d.key;let id=d.id.clone();
+        let Some(host)=self.devices.iter().find(|(_,d)|d.id==target&&!d.controller_only&&d.session.is_none()).map(|(&conn,_)|conn)else{return error("request_unavailable");};
         let mut session = hex(&new_session_id());
         while self.sessions.contains_key(&session) { session = hex(&new_session_id()); }
-        if !self.deliver(&target, Server::Incoming {
+        if !self.deliver(host, Server::Incoming {
             session: session.clone(), controller: id.into(), controller_key: hex(&key), requested,
             controller_nonce: controller_nonce.clone(),
         }) {
             return error("request_unavailable");
         }
-        self.devices.get_mut(id).unwrap().session = Some(session.clone());
-        self.devices.get_mut(&target).unwrap().session = Some(session.clone());
+        self.devices.get_mut(&connection).unwrap().session=Some(session.clone());
+        self.devices.get_mut(&host).unwrap().session=Some(session.clone());
         self.sessions.insert(session.clone(), Session {
-            controller: id.into(), host: target.clone(), requested, controller_nonce, grant: None,
+            controller:connection,host,requested,controller_nonce,grant:None,
             deadline: now + PENDING_TTL, offer: false, answer: false, proofs: [false;2], ice_count: [0;2], noise_step:0, sealed_count:[0;2], ice_issued:[false;2],
         });
         Server::Requested { session, target }
     }
-    fn decision(&mut self, id: &str, session: &str, grant: Option<u8>, host_nonce: Option<String>, now: Instant) -> Option<Server> {
+    fn decision(&mut self, connection:u64, session: &str, grant: Option<u8>, host_nonce: Option<String>, now: Instant) -> Option<Server> {
         let Some(s) = self.sessions.get_mut(session) else { return Some(error("session_unavailable")); };
-        if s.host != id || s.grant.is_some() { return Some(error("session_unavailable")); }
+        if s.host != connection || s.grant.is_some() { return Some(error("session_unavailable")); }
         if grant.is_some_and(|g| !grant_valid(g) || g & !s.requested != 0)
             || host_nonce.as_ref().is_some_and(|nonce| nonce == &s.controller_nonce) {
             return Some(error("invalid_grant"));
         }
-        let controller = s.controller.clone();
-        let host_key = hex(&self.devices[id].key);
+        let controller=s.controller;
+        let host_key=hex(&self.devices[&connection].key);
         if let Some(g) = grant {
             s.grant = Some(g);
             s.deadline = now + ROUTING_TTL;
         }
-        if !self.deliver(&controller, Server::Decision { session: session.into(), grant, host_key, host_nonce }) {
+        if !self.deliver(controller, Server::Decision { session: session.into(), grant, host_key, host_nonce }) {
             self.finish(session, "peer_unavailable");
             return Some(error("session_unavailable"));
         }
         if grant.is_none() { self.finish(session, "declined"); }
         None
     }
-    fn ice_config(&mut self,id:&str,session:&str)->Server{
+    fn ice_config(&mut self,connection:u64,session:&str)->Server{
         let Some(s)=self.sessions.get_mut(session)else{return error("session_unavailable");};
-        let role=if s.controller==id{0}else if s.host==id{1}else{return error("session_unavailable");};
+        let role=if s.controller==connection{0}else if s.host==connection{1}else{return error("session_unavailable");};
         if s.grant.is_none()||s.noise_step!=2||s.sealed_count.iter().any(|&n|n==0)||s.ice_issued[role]{return error("ice_config_unavailable");}
-        let config=match &self.issuer{Some(issuer)=>match issuer.issue(id,session){Ok(c)=>c,Err(_)=>return error("ice_config_unavailable")},None=>crate::protocol::IceConfig::default()};
+        let config=match &self.issuer{Some(issuer)=>match issuer.issue(&self.devices[&connection].id,session){Ok(c)=>c,Err(_)=>return error("ice_config_unavailable")},None=>crate::protocol::IceConfig::default()};
         s.ice_issued[role]=true;Server::IceConfig{session:session.into(),config}
     }
-    fn signal(&mut self, id: &str, session: &str, payload: Signal) -> Option<Server> {
+    fn signal(&mut self, connection:u64, session: &str, payload: Signal) -> Option<Server> {
         let Some(s) = self.sessions.get_mut(session) else { return Some(error("session_unavailable")); };
-        let role = if s.controller == id { 0 } else if s.host == id { 1 } else {
+        let role = if s.controller == connection { 0 } else if s.host == connection { 1 } else {
             return Some(error("session_unavailable"));
         };
         if s.grant.is_none() { return Some(error("session_unavailable")); }
@@ -192,8 +198,8 @@ impl Hub {
             _ => false,
         };
         if !valid { return Some(error("invalid_signal_order")); }
-        let peer = if role == 0 { s.host.clone() } else { s.controller.clone() };
-        if !self.deliver(&peer, Server::Signal { session: session.into(), payload }) {
+        let peer=if role==0{s.host}else{s.controller};
+        if !self.deliver(peer, Server::Signal { session: session.into(), payload }) {
             self.finish(session, "peer_unavailable");
             return Some(error("session_unavailable"));
         }

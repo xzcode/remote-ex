@@ -16,7 +16,7 @@ use futures_util::{SinkExt, StreamExt};
 use hub::Hub;
 use protocol::{Client, ClientFrame, Server, ServerFrame, VERSION};
 use rand_core::{OsRng, RngCore};
-use remote_ex_security::{DeviceIdentity, fingerprint, verify_registration};
+use remote_ex_security::{DeviceIdentity, fingerprint, verify_registration, verify_controller_registration};
 use remote_ex_signaling::{decode_hex, hex};
 use std::{
     collections::HashSet,
@@ -128,9 +128,15 @@ async fn serve(socket: WebSocket, app: App) {
         }
         Err(())
     }).await;
-    let Ok(Ok(Client::Register { public_key, signature })) = proof else { return; };
+    let (public_key,signature,controller_only)=match proof{
+        Ok(Ok(Client::Register{public_key,signature}))=>(public_key,signature,false),
+        Ok(Ok(Client::RegisterController{public_key,signature}))=>(public_key,signature,true),
+        _=>return,
+    };
     let (Ok(key), Ok(sig)) = (decode_hex::<32>(&public_key), decode_hex::<64>(&signature)) else { return; };
-    if !verify_registration(&key, &app.server_id, &challenge, &sig) { return; }
+    let verified=if controller_only{verify_controller_registration(&key,&app.server_id,&challenge,&sig)}
+        else{verify_registration(&key,&app.server_id,&challenge,&sig)};
+    if !verified{return;}
     let id = hex(&fingerprint(&key));
     if app.allowed_devices.as_ref().is_some_and(|ids|!ids.contains(&id)){
         let _=write(&mut sink,Server::Error{code:"registration_unavailable".into()}).await;
@@ -139,7 +145,7 @@ async fn serve(socket: WebSocket, app: App) {
     let connection = app.next_connection.fetch_add(1, Ordering::Relaxed);
     let (tx, mut rx) = mpsc::channel(32);
     let registered = app.hub.lock().unwrap_or_else(|e| e.into_inner())
-        .register(id.clone(), connection, key, tx);
+        .register_scoped(id.clone(), connection, key, tx,controller_only);
     if !registered {
         let _ = write(&mut sink, Server::Error { code: "registration_unavailable".into() }).await;
         return;
@@ -163,7 +169,7 @@ async fn serve(socket: WebSocket, app: App) {
                             count += 1;
                             if count > 40 { break; }
                             let Ok(message) = parse(text.as_str()) else { break; };
-                            if matches!(message, Client::Register { .. }) { break; }
+                            if matches!(message, Client::Register { .. }|Client::RegisterController{..}) { break; }
                             let reply = app.hub.lock().unwrap_or_else(|e| e.into_inner())
                                 .handle(&id, connection, message, Instant::now());
                             if let Some(reply) = reply {

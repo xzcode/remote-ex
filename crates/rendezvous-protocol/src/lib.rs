@@ -20,6 +20,7 @@ pub struct ServerFrame { pub version: u16, pub message: Server }
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Client {
     Register { public_key: String, signature: String },
+    RegisterController { public_key:String, signature:String },
     Ping,
     Lookup { targets:Vec<String> },
     Request { target: String, requested: u8, controller_nonce: String },
@@ -81,7 +82,7 @@ fn canonical<const N: usize>(s: &str) -> bool {
 impl Client {
     pub fn validate(&self) -> Result<(), &'static str> {
         match self {
-            Self::Register { public_key, signature } if canonical::<32>(public_key)
+            Self::Register { public_key, signature } | Self::RegisterController{public_key,signature} if canonical::<32>(public_key)
                 && decode_hex::<64>(signature).is_ok() => Ok(()),
             Self::Ping => Ok(()),
             Self::Lookup{targets} if targets_valid(targets.iter().map(String::as_str))=>Ok(()),
