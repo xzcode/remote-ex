@@ -13,6 +13,7 @@ async fn real_tls_registration_requires_trusted_certificate_hostname_and_server_
     let mut roots=rustls::RootCertStore::empty();
     roots.add(cert.der().clone()).unwrap();
     let listener=std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
     let port=listener.local_addr().unwrap().port();
     let app=remote_ex_rendezvous::router_with_identity([7;32]).unwrap();
     let handle=axum_server::Handle::new();
@@ -54,4 +55,33 @@ async fn reusable_client_registers_and_rejects_an_incoming_request(){
     a.close().await.unwrap();
     b.close().await.unwrap();
     task.abort();
+}
+
+#[tokio::test]
+async fn presence_declines_requests_and_stops_on_local_cancel() {
+    use remote_ex_rendezvous_client::{presence,PresenceEvent};
+    use remote_ex_security::session::VIEW;
+    let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url=format!("ws://{}/v1/ws",listener.local_addr().unwrap());
+    let server=tokio::spawn(async move{axum::serve(listener,remote_ex_rendezvous::router()).await.unwrap();});
+    let a_id=DeviceIdentity::generate();
+    let b_id=DeviceIdentity::generate();
+    let mut a=Connection::register(Endpoint::development(&url).unwrap(),&a_id).await.unwrap();
+    let mut b=Connection::register(Endpoint::development(&url).unwrap(),&b_id).await.unwrap();
+    let bid=b.device_id().to_owned();
+    let(stop,rx)=tokio::sync::watch::channel(false);
+    let(events,mut observed)=tokio::sync::mpsc::unbounded_channel();
+    let worker=tokio::spawn(async move{
+        presence(&mut b,rx,Duration::from_secs(20),|event|{let _=events.send(event);}).await.unwrap();
+        b.close().await.unwrap();
+    });
+    assert_eq!(tokio::time::timeout(Duration::from_secs(3),observed.recv()).await.unwrap(),Some(PresenceEvent::Heartbeat));
+    a.send(Client::Request{target:bid,requested:VIEW,controller_nonce:"01".repeat(32)}).await.unwrap();
+    assert!(matches!(a.receive(Duration::from_secs(3)).await.unwrap(),Server::Requested{..}));
+    assert!(matches!(a.receive(Duration::from_secs(3)).await.unwrap(),Server::Decision{grant:None,..}));
+    assert_eq!(tokio::time::timeout(Duration::from_secs(3),observed.recv()).await.unwrap(),Some(PresenceEvent::RequestDeclined));
+    stop.send(true).unwrap();
+    tokio::time::timeout(Duration::from_secs(3),worker).await.unwrap().unwrap();
+    a.close().await.unwrap();
+    server.abort();
 }

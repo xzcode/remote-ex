@@ -27,6 +27,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             rustls::crypto::ring::default_provider().install_default().map_err(|_|"TLS provider already installed")?;
             let config=RustlsConfig::from_pem_file(cert,key).await?;
             let listener=std::net::TcpListener::bind(address)?;
+            // Tokio requires a nonblocking listener when adopting std sockets.
+            listener.set_nonblocking(true)?;
             let handle=axum_server::Handle::new();
             let shutdown=handle.clone();
             tokio::spawn(async move{

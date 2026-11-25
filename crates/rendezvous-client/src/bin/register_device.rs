@@ -3,7 +3,9 @@
 use remote_ex_rendezvous_client::{Connection,Endpoint,Result,PresenceEvent,presence};
 use remote_ex_security::DeviceIdentity;
 use remote_ex_signaling::decode_hex;
-use std::{io::{self,IsTerminal,Write,Read},time::Duration};
+use std::{io::Read,time::Duration};
+#[cfg(all(feature="persistent",any(target_os="windows",target_os="macos")))]
+use std::io::{self,IsTerminal,Write};
 
 fn local_identity(persistent:bool)->Result<DeviceIdentity>{
     if !persistent{return Ok(DeviceIdentity::generate());}
