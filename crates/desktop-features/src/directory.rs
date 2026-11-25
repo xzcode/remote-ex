@@ -4,6 +4,7 @@
 use crate::exchange::MAX_FILE;
 use serde::{Deserialize,Serialize};
 use std::{collections::BTreeSet,fs::{self,File,OpenOptions},io::{Read,Write},path::{Path,PathBuf}};
+pub mod managed;
 const MAGIC:&[u8;8]=b"REXDIR01";
 const MAX_ENTRIES:usize=256;
 const MAX_DEPTH:usize=8;
