@@ -6,11 +6,12 @@ on:
     paths:
       - '.github/workflows/development-build.yml'
       - 'scripts/ci/install-gstreamer.*'
+      - 'docs/DEV_BUILD.md'
 permissions:
   contents: read
 concurrency:
   group: development-build-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 env:
   GST_VERSION: '1.26.11'
 jobs:

@@ -2,10 +2,10 @@
 
 **Development preview, not a signed production installer or an unattended access service.** This bundle contains the app and three locally built media programs. The GStreamer runtime is NOT redistributed; install the official, architecture-matched GStreamer 1.26.11 runtime separately from https://gstreamer.freedesktop.org/download/ (choose old stable 1.26). On Windows, use the MSVC x86_64 runtime and ensure its bin directory is in PATH. On macOS, use the official universal runtime. Do not mix runtime architectures or third-party plugin trees. Dependencies and distribution obligations remain under review.
 
-Extract all files into the same directory. Start remote-ex-desktop (Windows: remote-ex-desktop.exe). Do not move or replace any media program independently. The GUI supports encrypted view-only sharing (30-second limit) and diagnostics. Both peers must compare the complete displayed key bundle independently and explicitly approve. Keep the host UI visible and use Disconnect. Grant OS screen-recording permission normally if prompted; no elevated privileges or privacy bypass.
+Extract all files into the same directory. Start remote-ex-desktop (Windows: remote-ex-desktop.exe). Do not move or replace any media program independently. The GUI supports encrypted view-only sharing, diagnostics and experimental control (30-second limit). Both peers must compare the complete displayed key bundle independently and explicitly approve. Keep the host UI visible and use Disconnect. Grant OS screen-recording permission normally if prompted; no elevated privileges or privacy bypass.
 
 ## Native control prototype
-This iteration's real keyboard/mouse mode is a separate, visible, interactive terminal prototype, not enabled in the GUI. Requires native-control build, both owned/authorized devices, matching primary display coordinates, ordinary Screen Recording/Accessibility on macOS. From the extracted directory on the host:
+Choose Remote control (experimental) on both desktop applications. Select roles and the host's primary display. Independently verify the full key bundles and explicitly grant screen and input access. Keep the host UI visible. Disconnect requests graceful revocation and reports release confirmation or failure. Requires native-control build, both owned/authorized devices, matching primary display coordinates and ordinary OS permissions. Alternatively, use the visible terminal prototype from the extracted directory on the host:
 ```
 ./lan_control --listen PRIVATE_IP:PORT --control DISPLAY_ID
 ```
