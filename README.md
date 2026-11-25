@@ -31,6 +31,8 @@
 - [M1 第八批交接](docs/M1_VIEW_INPUT_HANDOFF.md)
 - [M1 第九批交接](docs/M1_CONTROL_HANDOFF.md)
 - [M1 第十批交接](docs/M1_CONTROL_GUI_HANDOFF.md)
+- [M1 第十一批交接](docs/M1_REVOCATION_HANDOFF.md)
+- [物理设备验收清单](docs/M1_DEVICE_ACCEPTANCE.md)
 - [开发测试包说明](docs/DEV_BUILD.md)
 - [输入适配说明](crates/input/README.md)
 - [LAN 信令诊断](crates/signaling/README.md)
