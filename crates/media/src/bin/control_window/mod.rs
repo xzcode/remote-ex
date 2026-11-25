@@ -1,5 +1,5 @@
 //! Native viewer, focus-gated input; no global input hooks.
-use super::{canceled,connected,Geometry,CONFIG,HEARTBEAT};
+use super::{canceled,connected,poll_release,Geometry,CONFIG,HEARTBEAT};
 use minifb::{Key as K,MouseButton,MouseMode,Window,WindowOptions};
 use prost::Message as _;
 use remote_ex_media::{MediaResult,Peer,ControlChannel};
@@ -24,7 +24,7 @@ fn pointer(g:Geometry,x:f32,y:f32)->Option<(u32,u32)>{
     let norm=|v:f32,o:u32,n:u32|(((v-o as f32)/(n-1)as f32).clamp(0.,1.)*65535.).round()as u32;
     Some((norm(x,g.x,g.width),norm(y,g.y,g.height)))
 }
-pub fn run(peer:&Peer,channel:&ControlChannel,session:[u8;16],geometry:Geometry)->MediaResult<u32>{
+pub fn run(peer:&Peer,channel:&ControlChannel,session:[u8;16],geometry:Geometry)->MediaResult<(u32,bool)>{
     let(w,h)=(CONFIG.width as usize,CONFIG.height as usize);
     let mut window=Window::new("Remote EX — authorized control (Esc disconnects)",w,h,WindowOptions{resize:false,..Default::default()}).map_err(|e|e.to_string())?;
     window.set_target_fps(60);
@@ -37,8 +37,10 @@ pub fn run(peer:&Peer,channel:&ControlChannel,session:[u8;16],geometry:Geometry)
     let mut keys=BTreeSet::new();let mut buttons=BTreeSet::new();
     let mut armed=false;let mut previous=None;let mut last_frame=Instant::now();
     let mut heartbeat=Instant::now()-Duration::from_secs(1);let started=Instant::now();
+    let mut peer_released=false;
     let result: MediaResult<u32>=(||{
         while window.is_open()&&!canceled()&&started.elapsed()<Duration::from_secs(28){
+            if poll_release(channel)?{peer_released=true;break;}
             connected(peer,channel)?;
             if heartbeat.elapsed()>=Duration::from_millis(300){channel.send(HEARTBEAT)?;heartbeat=Instant::now();}
             if let Some(sample)=peer.pull_frame(Duration::ZERO)?{
@@ -51,7 +53,8 @@ pub fn run(peer:&Peer,channel:&ControlChannel,session:[u8;16],geometry:Geometry)
                 count+=1;last_frame=Instant::now();
             }
             window.update_with_buffer(&buffer,w,h).map_err(|e|e.to_string())?;
-            if window.is_key_down(K::Escape){break;}
+            if canceled()||window.is_key_down(K::Escape){break;}
+            if poll_release(channel)?{peer_released=true;break;}
             if last_frame.elapsed()>Duration::from_secs(2){return Err("Video stalled; input stopped".into());}
             let pos=window.get_mouse_pos(MouseMode::Discard).and_then(|(x,y)|pointer(geometry,x,y));
             let current_keys:BTreeSet<u16>=window.get_keys().into_iter().filter_map(hid).collect();
@@ -77,5 +80,6 @@ pub fn run(peer:&Peer,channel:&ControlChannel,session:[u8;16],geometry:Geometry)
             }
         }Ok(count)
     })();
-    let release=emit(Event::ReleaseAll(ReleaseAll{}));release?;result
+    if !peer_released { emit(Event::ReleaseAll(ReleaseAll{}))?; }
+    result.map(|frames|(frames,peer_released))
 }
