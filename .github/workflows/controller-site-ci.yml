@@ -1,0 +1,27 @@
+name: Controller site deployment preflight
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'deploy/controller-site*'
+      - 'deploy/remote-ex-controller-site.service.example'
+      - 'scripts/test-controller-site.mjs'
+      - 'scripts/stage-mobile-client.mjs'
+      - 'scripts/verify-mobile-stage.mjs'
+      - '.github/workflows/controller-site-ci.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  site:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verified static HTTPS controller snapshot and exact response policy
+        run: |
+          node --check deploy/controller-site.mjs
+          node scripts/test-controller-site.mjs

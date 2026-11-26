@@ -34,3 +34,7 @@ Direct view.html navigation now runs the same local compatibility gate before en
 ## Trusted mobile touch follow-up
 
 The mobile Chromium fixture now uses real trusted CDP/touchscreen gestures against the existing SurfaceInput and bounded protobuf encoder, with only generated video and an in-memory sink. It checks tap, right click, drag, scroll, second-finger/cancel ReleaseAll and absence of signaling. SurfaceInput releases explicit pointer capture on disable/dispose and refuses touch movement/end without current focus; physical mouse release only handles mouse pointers. This is not physical mobile/OS input verification. New Web CI pending.
+
+## Self-host static controller deployment
+
+5a2919d baseline: earlier Android runtime 45783211012 remained in progress and in-progress logs unavailable; latest Web/touch/mobile jobs queued at inspection. No confirmed Android root cause. New deploy/controller-site.mjs accepts verified staged assets, validates and freezes exact bytes/header configuration, checks local certificate hostname/validity/key match, serves fixed HTTPS GET/HEAD routes and rejects other hosts/paths/methods. No proxy/administrative API. Loopback default; public opt-in requires explicit configured site and operator review. Offline check and sample unprivileged service are separate from startup; no public service started. Dedicated local TLS test with synthetic assets verifies real trusted HTTPS and rejection gates. Actual iOS WKWebView connecting to the configured site and physical mobile acceptance remain open.

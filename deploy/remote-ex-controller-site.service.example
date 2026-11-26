@@ -1,0 +1,28 @@
+# Review paths, DNS, certificate permissions and bind before installation.
+# This template does not start or enable a service.
+[Unit]
+Description=Remote EX static HTTPS controller site
+After=network.target
+
+[Service]
+Type=simple
+User=remote-ex-site
+Group=remote-ex-site
+WorkingDirectory=/opt/remote-ex
+EnvironmentFile=/etc/remote-ex-site/site.env
+ExecStartPre=/usr/bin/node /opt/remote-ex/deploy/controller-site.mjs --check-config /var/lib/remote-ex-site/reviewed-assets
+ExecStart=/usr/bin/node /opt/remote-ex/deploy/controller-site.mjs --serve /var/lib/remote-ex-site/reviewed-assets
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+RestrictAddressFamilies=AF_INET AF_UNIX
+CapabilityBoundingSet=
+AmbientCapabilities=
+MemoryMax=192M
+TasksMax=32
+TimeoutStopSec=10s
+Restart=no
+
+[Install]
+WantedBy=multi-user.target
