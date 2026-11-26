@@ -93,3 +93,6 @@ Saved expiring per-device host policy with exact server, device, display and sco
 
 ### M4 fourth integrated batch
 2bb2dc2: all six CI workflows passed. Candidate adds Portal v6+ stable serial targeting, native Wayland monitor+keyboard/pointer via explicit compositor RemoteDesktop grant, native console/desktop/sleep lifecycle checks and fail-closed suspend guard, continuous saved-policy verification, locally authorized 12 sequential sessions/2h option with 15-minute per-wait bound, and local native view-only sharing pause/fresh-frame resume. Physical privacy and Windows/macOS virtual display driver are not implemented; Wayland real compositor and OS lock/suspend behavior still need physical acceptance. New CI pending. M4 is not formally accepted.
+
+### Alpha preview publication gate
+Owner approved v0.1.0-alpha.1 after Linux portal compilation repair and successful same-commit CI across three platforms. Six checks, exact-source package manifest and SHA256SUMS required. Publication does not imply M4 completion or real-device acceptance. Release status remains pending until the actual GitHub Release exists.

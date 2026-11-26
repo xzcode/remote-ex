@@ -90,3 +90,7 @@ M4 third batch: experimental Wayland Portal read-only sharing (monitor/window/vi
 
 
 M4 fourth batch adds experimental native Wayland input and stable portal stream targeting, local view-only sharing privacy pause, active desktop/suspend checks, policy revalidation, and a bounded two-hour visible host service. Physical display privacy and Windows/macOS virtual display drivers remain open. See [M4 handoff](docs/M4_FULL_HANDOFF.md) for exact scope and CI.
+
+## Alpha preview releases
+
+The first approved preview is `v0.1.0-alpha.1`. See [Releases](https://github.com/xzcode/remote-ex/releases) for published archives. Preview builds are published only when all six checks pass on the exact requested master commit and the three archives carry matching commit stamps. These are experimental development archives, not signed installers or production deployments. See [preview release process](docs/PREVIEW_RELEASE.md).

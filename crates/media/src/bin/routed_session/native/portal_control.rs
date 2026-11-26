@@ -43,7 +43,7 @@ impl Backend for PortalBackend{
         let point=if down{Some(self.position()?)}else{None};
         self.send(Op::Button(code,down,point))
     }
-    fn scroll_steps(&mut self,x:i32,y:i32)->InputResult<()>{if x.unsigned_abs()>20||y.unsigned_abs()>20{return Err("Portal scroll limit exceeded".into());}self.send(Op::Scroll(x,y,self.position()?))}
+    fn scroll_steps(&mut self,x:i32,y:i32)->InputResult<()>{if x.unsigned_abs()>20||y.unsigned_abs()>20{return Err("Portal scroll limit exceeded".into());}let point=self.position()?;self.send(Op::Scroll(x,y,point))}
 }
 async fn apply(rd:&RemoteDesktop,session:&Session<RemoteDesktop>,node:u32,op:Op)->MediaResult<()>{
     let state=|down|if down{KeyState::Pressed}else{KeyState::Released};
@@ -129,7 +129,7 @@ async fn run(c:VideoConfig,stop:Arc<AtomicBool>,alive:Arc<AtomicBool>,frames:&Sy
             if canceled()||stop.load(Ordering::Acquire){break;}
             if let Some(sample)=sink.try_pull_sample(gst::ClockTime::ZERO){
                 let f=frame(&sample,area,c,&mut actual)?;
-                match frames.try_send(Ok(f)){Ok(())|Err(TrySendError::Full(_))=>{},Err(TrySendError::Disconnected(_))=>break;}
+                match frames.try_send(Ok(f)){Ok(())|Err(TrySendError::Full(_))=>{},Err(TrySendError::Disconnected(_))=>break,}
                 if !announced{alive.store(true,Ordering::Release);ready.try_send(Ok(area)).map_err(|_|"Portal owner disappeared")?;announced=true;}
             }
             if announced{

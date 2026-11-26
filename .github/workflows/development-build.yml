@@ -5,6 +5,7 @@ on:
     branches: [master]
     paths:
       - '.github/workflows/development-build.yml'
+      - '.github/preview-release.json'
       - 'scripts/ci/install-gstreamer.*'
       - 'docs/DEV_BUILD.md'
       - 'scripts/ci/macos-development-info.plist'
@@ -135,6 +136,7 @@ jobs:
           foreach ($name in @('lan_view','lan_diagnostic','lan_control','routed_diagnostic','routed_control')) {
             Copy-Item "crates/media/target/release/$name.exe" stage/
           }
+          Copy-Item target/release/remote-ex-rendezvous.exe stage/
           Copy-Item docs/DEV_BUILD.md stage/README.md
           @("commit=$env:GITHUB_SHA", "runtime=$env:GST_VERSION", "architecture=$env:RUNNER_ARCH") | Set-Content stage/BUILD_INFO.txt
           Compress-Archive -Path stage/* -DestinationPath artifacts/Remote-EX-dev-Windows-x64.zip -Force
@@ -155,6 +157,8 @@ jobs:
           codesign --force --sign - "$app/Contents/MacOS/remote-ex-mac-audio"
           codesign --force --sign - "$app"
           codesign --verify --deep --strict "$app"
+          cp target/release/remote-ex-rendezvous stage/
+          codesign --force --sign - stage/remote-ex-rendezvous
           cp docs/DEV_BUILD.md stage/README.md
           printf 'commit=%s\nruntime=%s\narchitecture=%s\n' "$GITHUB_SHA" "$GST_VERSION" "$RUNNER_ARCH" > stage/BUILD_INFO.txt
           tar -czf "artifacts/Remote-EX-dev-macOS-$(uname -m).tar.gz" -C stage .

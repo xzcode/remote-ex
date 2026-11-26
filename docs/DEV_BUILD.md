@@ -72,3 +72,7 @@ Linux Wayland: choose View with the host role and select one available portal so
 
 ## M4 fourth integration batch
 For Wayland control choose Control and a monitor on the host; both current clients required. The OS independently grants keyboard/pointer and a monitor; input focus is desktop-wide, not window-isolated. New portal v6+ uses the provided stable serial, old portal v2–5 uses exact restricted node, no default stream fallback. The real compositor is unverified. Native screen-only View host can locally pause/resume sharing, sending a generated status frame while paused and fresh desktop frames on resume; no physical monitor blackout. Saved policy may be locally activated for 12 sequential sessions/2 hours with 15-minute wait limit; only rearm after clean release, never after failure, timeout or suspend. No auto access at login, no driver installation. New development builds pending.
+
+## First three-platform preview publication
+
+The owner approved `v0.1.0-alpha.1` as a GitHub pre-release. All three platform archives must come from the same source commit with six successful workflow runs. Windows/macOS now also carry the independently built rendezvous server; external GStreamer remains separately installed. Windows is unsigned, macOS ad-hoc signed and not notarized, Linux is a debug development archive with distro dependencies. See [preview release process](PREVIEW_RELEASE.md). New builds and publication are pending at this entry; do not mistake temporary Actions artifacts for a published release.

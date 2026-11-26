@@ -2,7 +2,7 @@ name: Native input checks
 on:
   push:
     branches: [master]
-    paths: ['Cargo.toml', 'crates/input/**', 'crates/core/**', 'crates/protocol/**', 'crates/security/**', '.github/workflows/input-ci.yml']
+    paths: ['Cargo.toml', 'crates/input/**', 'crates/core/**', 'crates/protocol/**', 'crates/security/**', '.github/workflows/input-ci.yml', '.github/preview-release.json']
   pull_request:
     paths: ['Cargo.toml', 'crates/input/**', 'crates/core/**', 'crates/protocol/**', 'crates/security/**', '.github/workflows/input-ci.yml']
   workflow_dispatch:

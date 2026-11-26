@@ -1,0 +1,190 @@
+name: Publish verified preview release
+on:
+  workflow_run:
+    workflows:
+      - Core CI
+      - Desktop checks
+      - Native input checks
+      - Native media engine
+      - Desktop development builds
+      - Linux X11 development candidate
+    types: [completed]
+    branches: [master]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: remote-ex-preview-release
+  cancel-in-progress: false
+jobs:
+  publish:
+    # Never publish an artifact from a fork, pull request, or another branch.
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master') ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'master' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      HEAD_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+    steps:
+      - name: Require an explicitly requested preview and all same-commit checks
+        id: gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'ready=false' >> "$GITHUB_OUTPUT"
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          current="$(gh api "repos/$REPO/git/ref/heads/master" --jq '.object.sha')"
+          if [[ "$current" != "$HEAD_SHA" ]]; then
+            echo 'Superseded candidate; no release.'
+            exit 0
+          fi
+          if ! gh api "repos/$REPO/contents/.github/preview-release.json?ref=$HEAD_SHA" --jq '.content' > intent.b64; then
+            echo 'No release request for this commit.'
+            exit 0
+          fi
+          base64 -d intent.b64 > intent.json
+          jq -e '.prerelease == true and (.tag | type == "string" and test("^v[0-9]+\\.[0-9]+\\.[0-9]+-alpha\\.[0-9]+$"))' intent.json >/dev/null
+          tag="$(jq -r '.tag' intent.json)"
+          if gh release view "$tag" --repo "$REPO" --json tagName >/dev/null 2>&1; then
+            echo "$tag already exists; never overwrite published assets."
+            exit 0
+          fi
+          # Require the explicit release-intent edit on this exact SHA. A
+          # later fix must increment attempt in the marker to request a retry.
+          changed="$(gh api "repos/$REPO/commits/$HEAD_SHA" --jq '.files[].filename')"
+          if ! grep -Fxq '.github/preview-release.json' <<< "$changed"; then
+            echo 'This commit does not explicitly request a preview.'
+            exit 0
+          fi
+          for workflow in core-ci.yml desktop-ci.yml input-ci.yml media-engine-ci.yml development-build.yml linux-x11-ci.yml; do
+            runs="$(gh api --method GET "repos/$REPO/actions/workflows/$workflow/runs" -f head_sha="$HEAD_SHA" -f branch=master -f event=push -F per_page=10)"
+            row="$(jq -c --arg sha "$HEAD_SHA" '[.workflow_runs[] | select(.head_sha == $sha and .head_branch == "master" and .event == "push")] | sort_by(.id) | last // empty' <<< "$runs")"
+            if [[ -z "$row" ]] || ! jq -e '.status == "completed" and .conclusion == "success"' <<< "$row" >/dev/null; then
+              echo "$workflow has not passed on $HEAD_SHA; no release."
+              exit 0
+            fi
+            id="$(jq -r '.id' <<< "$row")"
+            [[ "$id" =~ ^[0-9]+$ ]]
+            case "$workflow" in
+              development-build.yml) echo "desktop_run=$id" >> "$GITHUB_OUTPUT" ;;
+              linux-x11-ci.yml) echo "linux_run=$id" >> "$GITHUB_OUTPUT" ;;
+            esac
+          done
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo 'ready=true' >> "$GITHUB_OUTPUT"
+      - name: Download exact verified platform archives
+        if: steps.gate.outputs.ready == 'true'
+        env:
+          DESKTOP_RUN: ${{ steps.gate.outputs.desktop_run }}
+          LINUX_RUN: ${{ steps.gate.outputs.linux_run }}
+          TAG: ${{ steps.gate.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          gh run download "$DESKTOP_RUN" --repo "$REPO" --name Remote-EX-dev-Windows-X64 --dir downloads/windows
+          gh run download "$DESKTOP_RUN" --repo "$REPO" --name Remote-EX-dev-macOS-ARM64 --dir downloads/macos
+          gh run download "$LINUX_RUN" --repo "$REPO" --name Remote-EX-dev-Linux-x64 --dir downloads/linux
+          cp downloads/windows/Remote-EX-dev-Windows-x64.zip "release/Remote-EX-$TAG-Windows-x64.zip"
+          cp downloads/macos/Remote-EX-dev-macOS-arm64.tar.gz "release/Remote-EX-$TAG-macOS-arm64.tar.gz"
+          cp downloads/linux/Remote-EX-dev-Linux-x64.tar.gz "release/Remote-EX-$TAG-Linux-x64.tar.gz"
+      - name: Inspect archive contents, commit stamps and checksums
+        if: steps.gate.outputs.ready == 'true'
+        env:
+          TAG: ${{ steps.gate.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os, pathlib, tarfile, zipfile
+          root = pathlib.Path('release')
+          tag = os.environ['TAG']
+          sha = os.environ['HEAD_SHA']
+          cases = [
+              ('Windows-x64.zip', {'remote-ex-desktop.exe','routed_control.exe','routed_diagnostic.exe','remote-ex-rendezvous.exe'}, 'x64'),
+              ('macOS-arm64.tar.gz', {'Remote EX.app/Contents/MacOS/remote-ex-desktop','Remote EX.app/Contents/MacOS/routed_control','Remote EX.app/Contents/MacOS/remote-ex-mac-audio','remote-ex-rendezvous'}, 'arm64'),
+              ('Linux-x64.tar.gz', {'remote-ex-desktop','routed_x11_view','routed_diagnostic','remote-ex-rendezvous'}, 'x64'),
+          ]
+          def inspect(path, required):
+              if path.suffix == '.zip':
+                  with zipfile.ZipFile(path) as archive:
+                      names = {x.filename.removeprefix('./'):x for x in archive.infolist() if not x.is_dir()}
+                      assert required <= names.keys(), f'{path.name}: missing binaries'
+                      stamp = names['BUILD_INFO.txt']
+                      assert stamp.file_size <= 4096
+                      return archive.read(stamp)
+              with tarfile.open(path, 'r:gz') as archive:
+                  names = {x.name.removeprefix('./'):x for x in archive.getmembers() if x.isfile()}
+                  assert required <= names.keys(), f'{path.name}: missing binaries'
+                  stamp = names['BUILD_INFO.txt']
+                  assert stamp.size <= 4096
+                  return archive.extractfile(stamp).read()
+          for suffix, required, arch in cases:
+              path = root / f'Remote-EX-{tag}-{suffix}'
+              info = dict(line.split('=',1) for line in inspect(path, required).decode('utf-8-sig').splitlines() if '=' in line)
+              assert info.get('commit') == sha, f'{path.name}: wrong commit'
+              assert info.get('architecture','').lower() == arch, f'{path.name}: wrong architecture'
+              print(f'Validated {path.name}: {sha}, {arch}')
+          PY
+          (cd release && sha256sum Remote-EX-* > SHA256SUMS.txt)
+      - name: Publish the immutable alpha release
+        if: steps.gate.outputs.ready == 'true'
+        env:
+          TAG: ${{ steps.gate.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(gh api "repos/$REPO/git/ref/heads/master" --jq '.object.sha')" == "$HEAD_SHA" ]]
+          if gh release view "$TAG" --repo "$REPO" --json tagName >/dev/null 2>&1; then
+            echo 'Release already exists; skip.'
+            exit 0
+          fi
+          # Refuse an existing tag pointing at a different revision. Never move tags.
+          refs="$(gh api "repos/$REPO/git/matching-refs/tags/$TAG")"
+          existing="$(jq -c --arg tag "refs/tags/$TAG" '.[] | select(.ref == $tag)' <<< "$refs")"
+          if [[ -n "$existing" ]]; then
+            jq -e --arg sha "$HEAD_SHA" '.object.type == "commit" and .object.sha == $sha' <<< "$existing" >/dev/null
+          fi
+          cat > release-notes.md <<'NOTES'
+          ## Remote EX alpha preview / 预览版
+
+          Three platform archives built from the same verified source revision.
+          This is an experimental pre-release, not a production-ready remote desktop
+          or a signed installer. Native Wayland, real-device input/audio, display
+          permissions, suspend/lock behavior, and power actions still require
+          testing on authorized devices. Physical display privacy and Windows/macOS
+          virtual display drivers are not supported. Startup is offline by default.
+
+          ### Packages
+          - Windows x64: extract the ZIP and launch the desktop executable. Requires
+            WebView2 and the matching official GStreamer 1.26.11 MSVC x64 runtime.
+          - macOS ARM64: extract the tar.gz containing Remote EX.app. The app is
+            ad-hoc signed, not Developer ID signed/notarized; requires the official
+            GStreamer 1.26.11 framework and ordinary Screen Recording/Accessibility
+            permissions when explicitly sharing or controlling a desktop.
+          - Linux x64: extract the development tar.gz (debug build); needs a
+            compatible Linux distribution, WebKitGTK, GStreamer and the documented
+            desktop/portal dependencies. Real Wayland compositor compatibility is
+            experimental.
+
+          Each archive includes a rendezvous-server binary for manual self-hosting.
+          No public server is deployed by this release. External GStreamer
+          runtimes are not bundled. See the included development build guide.
+          Verify downloads with SHA256SUMS.txt before use.
+          NOTES
+          printf '\nSource commit: %s\n' "$HEAD_SHA" >> release-notes.md
+          printf '\n[Build and runtime guide](https://github.com/%s/blob/%s/docs/DEV_BUILD.md)\n' "$REPO" "$HEAD_SHA" >> release-notes.md
+          gh release create "$TAG" release/Remote-EX-* release/SHA256SUMS.txt \
+            --repo "$REPO" --target "$HEAD_SHA" --title "Remote EX $TAG" \
+            --notes-file release-notes.md --prerelease --latest=false
+          gh release view "$TAG" --repo "$REPO" --json url,tagName,isPrerelease,assets

@@ -9,6 +9,7 @@ on:
       - 'crates/rendezvous-client/**'
       - 'scripts/test_routed_diagnostic.py'
       - '.github/workflows/linux-x11-ci.yml'
+      - '.github/preview-release.json'
   workflow_dispatch:
 permissions:
   contents: read
@@ -69,6 +70,7 @@ jobs:
           cp crates/media/target/debug/routed_diagnostic dist/linux-dev/
           cp target/debug/remote-ex-rendezvous dist/linux-dev/
           cp docs/DEV_BUILD.md dist/linux-dev/
+          printf 'commit=%s\narchitecture=%s\nbuild=debug\n' "$GITHUB_SHA" "$RUNNER_ARCH" > dist/linux-dev/BUILD_INFO.txt
           tar -C dist/linux-dev -czf dist/Remote-EX-dev-Linux-x64.tar.gz .
       - uses: actions/upload-artifact@v4
         with:

@@ -8,6 +8,7 @@ on:
       - 'crates/**'
       - 'servers/**'
       - '.github/workflows/core-ci.yml'
+      - '.github/preview-release.json'
   pull_request:
     paths:
       - 'Cargo.toml'
