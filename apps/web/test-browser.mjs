@@ -60,6 +60,39 @@ try{
  page.on("pageerror",e=>errors.push(String(e.message)));
  await page.goto(url,{waitUntil:"networkidle"});
  await nativeInterop(page);
+ // The separate identity page has no network/session capabilities.
+ await page.goto(url+"/identity.html",{waitUntil:"networkidle"});
+ await page.waitForFunction(()=>!document.querySelector("#identity-create").disabled);
+ assert(await page.locator("#identity-delete").isDisabled());
+ await page.locator("#identity-create").click();
+ await page.waitForFunction(()=>document.querySelector("#identity-status").dataset.state==="verified");
+ const first=await page.locator("#device-id").inputValue(),pub=await page.locator("#public-key").inputValue();
+ assert.match(first,/^[0-9a-f]{64}$/);assert.match(pub,/^[0-9a-f]{64}$/);
+ assert(await page.evaluate(async()=>{
+     const v=await import("/identity.js"),i=await v.readIdentity();
+     let exportRejected=false,replacementRejected=false;
+     try{await crypto.subtle.exportKey("pkcs8",i.key.privateKey);}catch{exportRejected=true;}
+     try{await v.createIdentity();}catch{replacementRejected=true;}
+     return exportRejected&&replacementRejected&&(await v.readIdentity()).id===i.id;
+ }));
+ await page.reload({waitUntil:"networkidle"});
+ await page.waitForFunction(()=>document.querySelector("#identity-status").dataset.state==="verified");
+ assert.equal(await page.locator("#device-id").inputValue(),first);
+ assert.equal(await page.locator("#public-key").inputValue(),pub);
+ const otherContext=await browser.newContext({permissions:[]});
+ try{
+     const other=await otherContext.newPage();await other.goto(url+"/identity.html");
+     await other.waitForFunction(()=>!document.querySelector("#identity-create").disabled);
+     assert.equal(await other.locator("#device-id").inputValue(),"");
+ }finally{await otherContext.close();}
+ await page.locator("#identity-confirm").check();await page.locator("#identity-delete").click();
+ await page.waitForFunction(()=>!document.querySelector("#identity-create").disabled);
+ assert.equal(await page.locator("#device-id").inputValue(),"");
+ await page.reload({waitUntil:"networkidle"});
+ await page.waitForFunction(()=>!document.querySelector("#identity-create").disabled);
+ assert.equal(await page.locator("#public-key").inputValue(),"");
+ await page.goto(url,{waitUntil:"networkidle"});
+ console.log("PASS browser controller vault: explicit creation, non-extractable key, no overwrite, reload persistence, context isolation and deletion");
  assert(await page.locator("#start").isDisabled());
  await page.locator("#consent").check();await page.locator("#start").click();
  await page.waitForFunction(()=>["verified","error","stopped"].includes(document.querySelector("#status").dataset.state),{},{timeout:32000});

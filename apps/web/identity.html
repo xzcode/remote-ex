@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Remote EX — Browser identity</title><link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top"><div><strong>Remote EX</strong><span class="muted"> / Browser controller identity</span></div><span class="tag">M6 · local only</span></header>
+<main>
+<section class="intro"><h1>Browser controller identity</h1><p>Create a device identity for this browser origin. The non-extractable private key stays in browser storage; the public device ID and key can be used for future administrator enrollment. This page cannot connect to a remote desktop or register with a server.</p></section>
+<section class="card">
+<div class="row"><h2>Device identity</h2><span id="identity-status" role="status" data-state="idle">Checking storage…</span></div>
+<label for="device-id">Device ID (SHA-256 public-key fingerprint)</label>
+<input id="device-id" class="identity-value" readonly spellcheck="false" autocomplete="off">
+<label for="public-key">Public key (Ed25519, hexadecimal)</label>
+<input id="public-key" class="identity-value" readonly spellcheck="false" autocomplete="off">
+<p class="muted">Use the same browser profile and origin, including the same port, to retain this identity. Clearing browser data removes it. This is not server enrollment and grants no viewing or input permissions.</p>
+<div class="actions">
+<div class="buttons"><button id="identity-create" disabled>Create identity</button><button id="identity-refresh">Refresh</button></div>
+<label><input type="checkbox" id="identity-confirm" disabled> I understand that removing the local key is irreversible and does not revoke server enrollment or active sessions.</label>
+<div class="buttons"><button id="identity-delete" disabled>Remove local identity</button></div>
+</div>
+<p id="identity-error" class="error" role="alert"></p>
+</section>
+<p><a href="/">Back to the synthetic compatibility lab</a></p>
+</main><script type="module" src="identity-page.js"></script>
+</body></html>

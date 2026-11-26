@@ -1,7 +1,7 @@
 # Remote EX Web compatibility lab (M6)
 
 **Synthetic-only local development candidate, not a remote desktop client.**
-Two browser peer connections in one page, one explicitly authorized run lasting at most 30 seconds. No remote endpoint field, signaling server, registration, screen capture, microphone/camera, input, clipboard, file transfer, background session, STUN/TURN, or persistent identity. Browser-generated host ICE candidates are exchanged only between the two local peer connections. Do not publish this lab as a real remote-access service.
+Two browser peer connections in one page, one explicitly authorized run lasting at most 30 seconds. No remote endpoint field, signaling server, registration, screen capture, microphone/camera, input, clipboard, file transfer, background session, STUN/TURN, or persistent identity in the synthetic test itself. Browser-generated host ICE candidates are exchanged only between the two local peer connections. Do not publish this lab as a real remote-access service.
 
 ## Build and use
 
@@ -28,3 +28,7 @@ CI is designed to run native Rust unit tests and real headless Chromium with no 
 ## WSS compatibility fixture (CI only)
 
 The next lab workflow is pinned to Ubuntu 24.04 because Playwright 1.56.1 cannot install Chromium on the Ubuntu 26.04 hosted image. Native Rust tests and wasm32 generation passed on the earlier runner, but Chromium never ran there. The new CI additionally builds the existing rendezvous binary and uses a disposable loopback TLS service with a generated CA imported only into a temporary browser HOME/NSS database. It checks the exact configured browser Origin, independently selected server ID, two generated enrolled identities, signed registration and v1 route, mutual Noise authentication, encrypted host offer/controller answer and ordered mutual SDP signatures, actual DTLS fingerprints and generated video decoding. No certificate verification bypass or external relay is used. The WSS fixture module is enabled only by the test harness and is not included in the downloadable laboratory bundle. Its browser and Rust peers are still synthetic; it is not a real desktop controller or a deployed Web app. CI result pending.
+
+## Local controller identity candidate
+
+Open `/identity.html` on the same local origin to create and manage a non-extractable Ed25519 controller identity stored in IndexedDB. Public key and device ID can be manually recorded for future enrollment; no server registration or remote connection is possible. Local removal does not revoke server enrollment. Retain the same profile and origin (including port); no private-key backup/export. The separate CI-only WSS fixture still generates independent disposable identities and now tests native-order encrypted compat quality and ICE batches. Native GStreamer/browser interoperability remains unverified. See docs/M6_NATIVE_ORDER_HANDOFF.md.

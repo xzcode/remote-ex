@@ -97,13 +97,13 @@ try{
  await other.close();
  await page.bringToFront();
  const result=await page.evaluate(async({endpoint,serverId})=>{const lab=await import("/wss-fixture.js");return lab.run(endpoint,serverId);},{endpoint,serverId});
- for(const key of ["wss","registration","route","noise","encryptedSdp","dtls","video","closed"])assert.equal(result[key],true,key);
+ for(const key of ["wss","registration","route","noise","nativeQuality","encryptedSdp","encryptedIce","dtls","video","closed"])assert.equal(result[key],true,key);
  assert(result.frames>=3);
  assert.equal(await page.evaluate(()=>window.__forbiddenCalls),0);
  assert.equal(await page.evaluate(()=>document.querySelector("video").srcObject===null),true);
  assert.deepEqual(unexpected,[]);assert.deepEqual(errors,[]);
  await context.close();
- console.log("PASS real Chromium WSS: private CA validation, exact Origin/pin, two enrolled keys, authenticated v1 route, Noise-encrypted offer/answer/proofs, negotiated DTLS, decoded frames and route close");
+ console.log("PASS real Chromium WSS: private CA validation, exact Origin/pin, two enrolled keys, authenticated v1 route, Noise-encrypted native-order quality, offer/answer/proofs and ICE batches, negotiated DTLS, decoded frames and route close");
 }finally{
  await browser?.close();
  await stopChild(child);

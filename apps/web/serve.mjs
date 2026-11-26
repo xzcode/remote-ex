@@ -12,6 +12,9 @@ const routes=new Map([
  ["/style.css",["style.css","text/css; charset=utf-8"]],
  ["/app.js",["app.js","text/javascript; charset=utf-8"]],
  ["/crypto.js",["crypto.js","text/javascript; charset=utf-8"]],
+ ["/identity.html",["identity.html","text/html; charset=utf-8"]],
+ ["/identity.js",["identity.js","text/javascript; charset=utf-8"]],
+ ["/identity-page.js",["identity-page.js","text/javascript; charset=utf-8"]],
  ["/pkg/noise.js",["pkg/noise.js","text/javascript; charset=utf-8"]],
  ["/pkg/noise_bg.wasm",["pkg/noise_bg.wasm","application/wasm"]],
  ["/v1-fixture.json",[existsSync(path.join(root,"v1-fixture.json"))?"v1-fixture.json":"../../docs/protocol/v1-fixture.json","application/json; charset=utf-8"]]

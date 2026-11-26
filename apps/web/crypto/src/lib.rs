@@ -9,6 +9,7 @@ use snow::{Builder,HandshakeState,TransportState};
 use wasm_bindgen::prelude::*;
 use zeroize::Zeroizing;
 mod fixture_sdp;
+mod native_records;
 use fixture_sdp::SdpState;
 const FIXTURE:&[u8]=b"Remote EX/browser/fixture-only/v1";
 type Result<T>=std::result::Result<T,String>;
@@ -18,6 +19,7 @@ struct Peer{
     binding:RouteBinding,role:Role,handshake:Option<HandshakeState>,transport:Option<TransportState>,
     hash:Option<[u8;32]>,step:u8,proof_sent:bool,proof_received:bool,failed:bool,
     sdp:SdpState,fixture_used:bool,
+    native_order:bool,quality_sent:bool,quality_received:bool,ice_sent:bool,ice_received:bool,
 }
 impl Peer{
     fn new(role:Role,session:&[u8],controller:&[u8],host:&[u8],cn:&[u8],hn:&[u8])->Result<Self>{
@@ -28,7 +30,7 @@ impl Peer{
         let b=Builder::new(NOISE_PATTERN.parse().map_err(|_|"Noise pattern unavailable")?);
         let b=noise(b.prologue(&context))?;
         let hs=if role==Role::Controller{noise(b.build_initiator())?}else{noise(b.build_responder())?};
-        Ok(Self{binding,role,handshake:Some(hs),transport:None,hash:None,step:0,proof_sent:false,proof_received:false,failed:false,sdp:SdpState::default(),fixture_used:false})
+        Ok(Self{binding,role,handshake:Some(hs),transport:None,hash:None,step:0,proof_sent:false,proof_received:false,failed:false,sdp:SdpState::default(),fixture_used:false,native_order:false,quality_sent:false,quality_received:false,ice_sent:false,ice_received:false})
     }
     fn run<T>(&mut self,f:impl FnOnce(&mut Self)->Result<T>)->Result<T>{
         if self.failed{return Err("Fixture closed".into());}
@@ -80,26 +82,26 @@ impl Peer{
     })}
     fn ready(&self)->bool{!self.failed&&self.proof_sent&&self.proof_received&&self.transport.is_some()}
     fn send_fixture(&mut self)->Result<Vec<u8>>{self.run(|s|{
-        if !s.ready()||s.sdp.started(){return Err("Mutual fixture proof required; record types cannot be mixed".into());}
+        if !s.ready()||s.sdp.started()||s.native_order{return Err("Mutual fixture proof required; record types cannot be mixed".into());}
         s.fixture_used=true;
         let mut out=vec![0;FIXTURE.len()+16];
         let n=noise(s.transport.as_mut().ok_or("Transport unavailable")?.write_message(FIXTURE,&mut out))?;
         if n!=out.len(){return Err("Invalid fixture ciphertext length".into());}Ok(out)
     })}
     fn receive_fixture(&mut self,packet:&[u8])->Result<()>{self.run(|s|{
-        if !s.ready()||s.sdp.started()||packet.len()!=FIXTURE.len()+16{return Err("Invalid fixture record".into());}
+        if !s.ready()||s.sdp.started()||s.native_order||packet.len()!=FIXTURE.len()+16{return Err("Invalid fixture record".into());}
         s.fixture_used=true;
         let mut out=Zeroizing::new(vec![0;packet.len()]);
         let n=noise(s.transport.as_mut().ok_or("Transport unavailable")?.read_message(packet,&mut out))?;
         if &out[..n]!=FIXTURE{return Err("Unexpected fixture plaintext".into());}Ok(())
     })}
     fn send_sdp(&mut self,sdp:&str)->Result<Vec<u8>>{self.run(|s|{
-        if !s.ready()||s.fixture_used{return Err("Mutual proof required for SDP fixture".into());}
+        if !s.ready()||s.fixture_used||(s.native_order&&!(s.quality_sent&&s.quality_received)){return Err("Mutual proof and native quality agreement required for SDP fixture".into());}
         let clear=Zeroizing::new(s.sdp.send_description(s.role,sdp)?);
         s.seal_sdp(&clear)
     })}
     fn receive_sdp(&mut self,packet:&[u8])->Result<String>{self.run(|s|{
-        if !s.ready()||s.fixture_used{return Err("Mutual proof required for SDP fixture".into());}
+        if !s.ready()||s.fixture_used||(s.native_order&&!(s.quality_sent&&s.quality_received)){return Err("Mutual proof and native quality agreement required for SDP fixture".into());}
         let clear=s.open_sdp(packet)?;
         s.sdp.receive_description(s.role,&clear)
     })}
@@ -112,6 +114,27 @@ impl Peer{
         if !s.ready()||s.fixture_used{return Err("Mutual proof required for SDP signature".into());}
         let clear=s.open_sdp(packet)?;
         s.sdp.receive_proof(s.role,&s.binding,&clear)
+    })}
+    fn enable_native_order(&mut self)->Result<()>{self.run(|s|{
+        if s.step!=0||s.native_order{return Err("Choose native fixture order before handshake".into());}
+        s.native_order=true;Ok(())
+    })}
+    fn send_quality(&mut self)->Result<Vec<u8>>{self.run(|s|{
+        if !s.native_order||!s.ready()||s.quality_sent||s.sdp.started(){return Err("Unexpected native quality state".into());}
+        let record=Zeroizing::new(native_records::quality()?);let packet=s.seal_sdp(&record)?;
+        s.quality_sent=true;Ok(packet)
+    })}
+    fn receive_quality(&mut self,packet:&[u8])->Result<()>{self.run(|s|{
+        if !s.native_order||!s.ready()||!s.quality_sent||s.quality_received||s.sdp.started(){return Err("Unexpected native quality state".into());}
+        let clear=s.open_sdp(packet)?;native_records::check_quality(&clear)?;s.quality_received=true;Ok(())
+    })}
+    fn send_ice_batch(&mut self,json:&str)->Result<Vec<u8>>{self.run(|s|{
+        if !s.native_order||!s.ready()||!s.sdp.verified()||s.ice_sent{return Err("Native ICE requires mutual exact SDP proofs".into());}
+        let record=Zeroizing::new(native_records::ice(json)?);let packet=s.seal_sdp(&record)?;s.ice_sent=true;Ok(packet)
+    })}
+    fn receive_ice_batch(&mut self,packet:&[u8])->Result<String>{self.run(|s|{
+        if !s.native_order||!s.ready()||!s.sdp.verified()||!s.ice_sent||s.ice_received{return Err("Unexpected native ICE state".into());}
+        let clear=s.open_sdp(packet)?;let items=native_records::check_ice(&clear)?;s.ice_received=true;Ok(items)
     })}
     fn seal_sdp(&mut self,clear:&[u8])->Result<Vec<u8>>{
         if clear.is_empty()||clear.len()>remote_ex_security::profiles::MAX_SEALED_CLEAR{return Err("SDP fixture exceeds record limit".into());}
@@ -147,6 +170,12 @@ impl FixturePeer{
     pub fn receive_sdp(&mut self,packet:&[u8])->std::result::Result<String,JsValue>{js(self.inner.receive_sdp(packet))}
     pub fn send_sdp_proof(&mut self,signature:&[u8])->std::result::Result<Vec<u8>,JsValue>{js(self.inner.send_sdp_proof(signature))}
     pub fn receive_sdp_proof(&mut self,packet:&[u8])->std::result::Result<(),JsValue>{js(self.inner.receive_sdp_proof(packet))}
+    pub fn enable_native_order(&mut self)->std::result::Result<(),JsValue>{js(self.inner.enable_native_order())}
+    pub fn send_quality(&mut self)->std::result::Result<Vec<u8>,JsValue>{js(self.inner.send_quality())}
+    pub fn receive_quality(&mut self,packet:&[u8])->std::result::Result<(),JsValue>{js(self.inner.receive_quality(packet))}
+    pub fn send_ice_batch(&mut self,json:&str)->std::result::Result<Vec<u8>,JsValue>{js(self.inner.send_ice_batch(json))}
+    pub fn receive_ice_batch(&mut self,packet:&[u8])->std::result::Result<String,JsValue>{js(self.inner.receive_ice_batch(packet))}
+    pub fn native_ice_verified(&self)->bool{self.inner.ready()&&self.inner.native_order&&self.inner.sdp.verified()&&self.inner.ice_sent&&self.inner.ice_received}
     pub fn sdp_verified(&self)->bool{self.inner.ready()&&self.inner.sdp.verified()}
     pub fn close(&mut self){self.inner.close();}
 }
@@ -171,6 +200,20 @@ mod tests{
         let packet=c.send_fixture().unwrap();h.receive_fixture(&packet).unwrap();
         assert!(h.receive_fixture(&packet).is_err());assert!(!h.ready());
         let(mut c,_,_,_)=peers();assert!(c.send_fixture().is_err());assert!(c.write().is_err());
+    }
+    #[test]fn native_quality_and_ice_order_fail_closed(){
+        let(mut c,mut h,ci,hi)=peers();
+        c.enable_native_order().unwrap();h.enable_native_order().unwrap();
+        h.read(&c.write().unwrap()).unwrap();c.read(&h.write().unwrap()).unwrap();
+        let a=c.binding.sign(&ci,Role::Controller,&c.hash.unwrap()).unwrap();
+        let b=h.binding.sign(&hi,Role::Host,&h.hash.unwrap()).unwrap();
+        let ap=c.send_proof(&a).unwrap();let bp=h.send_proof(&b).unwrap();
+        c.receive_proof(&bp).unwrap();h.receive_proof(&ap).unwrap();
+        let cq=c.send_quality().unwrap();let hq=h.send_quality().unwrap();
+        c.receive_quality(&hq).unwrap();h.receive_quality(&cq).unwrap();
+        assert!(c.quality_received&&h.quality_received);
+        assert!(c.send_ice_batch("[]").is_err());assert!(!c.ready());
+        assert!(h.receive_quality(&cq).is_err());assert!(!h.ready());
     }
     #[test]fn changed_context_and_invalid_proof_are_rejected(){
         let c_id=DeviceIdentity::generate();let h_id=DeviceIdentity::generate();

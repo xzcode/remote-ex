@@ -146,7 +146,7 @@ export async function run(endpoint,expected){
         h.send({type:"decision",session,grant:3,host_nonce:hex(hn)});
         const decision=type(await c.receive(),"decision",["session","grant","host_key","host_nonce"]);
         require(decision.session===session&&decision.grant===3&&decision.host_key===hex(host.pub)&&decision.host_nonce===hex(hn),"Synthetic grant mismatch");
-        const cp=new FixturePeer(true,sid,controller.pub,host.pub,cn,hn),hp=new FixturePeer(false,sid,controller.pub,host.pub,cn,hn);cryptoPeers.push(cp,hp);
+        const cp=new FixturePeer(true,sid,controller.pub,host.pub,cn,hn),hp=new FixturePeer(false,sid,controller.pub,host.pub,cn,hn);cryptoPeers.push(cp,hp);cp.enable_native_order();hp.enable_native_order();
         sendSignal(c,session,{type:"noise_handshake",step:1,packet:hex(cp.write_handshake())});
         const one=await receiveSignal(h,session,"noise_handshake",["step","packet"]);require(one.step===1,"Wrong handshake step");hp.read_handshake(unhex(one.packet,32));
         sendSignal(h,session,{type:"noise_handshake",step:2,packet:hex(hp.write_handshake())});
@@ -155,6 +155,9 @@ export async function run(endpoint,expected){
         sendSealed(h,session,hp.send_proof(await proofMessage(host,hp.signature_message())));
         cp.receive_proof(await sealed(c,session));hp.receive_proof(await sealed(h,session));
         require(cp.ready()&&hp.ready()&&!cp.sdp_verified()&&!hp.sdp_verified(),"Noise gate failed");
+        // Match the native v1 peers' explicit mutual compat quality record.
+        sendSealed(c,session,cp.send_quality());sendSealed(h,session,hp.send_quality());
+        cp.receive_quality(await sealed(c,session));hp.receive_quality(await sealed(h,session));
         // Existing v1 server admits ICE only after both encrypted proof records.
         // The disposable server intentionally provides no STUN/TURN services.
         c.send({type:"ice_config",session});h.send({type:"ice_config",session});
@@ -164,6 +167,17 @@ export async function run(endpoint,expected){
         }
         const opts={iceServers:[],bundlePolicy:"max-bundle"};
         const hostPc=new RTCPeerConnection(opts),controllerPc=new RTCPeerConnection(opts);peers.push(hostPc,controllerPc);
+        // Collect actual non-trickle ICE events separately from signed SDP.
+        const collect=pc=>{
+            const items=[];
+            pc.addEventListener("icecandidate",e=>{
+                if(!e.candidate?.candidate)return;
+                if(items.length>=128||e.candidate.sdpMLineIndex==null){abort.abort();return;}
+                items.push({mline:e.candidate.sdpMLineIndex,candidate:e.candidate.candidate});
+            });
+            return items;
+        };
+        const hostIce=collect(hostPc),controllerIce=collect(controllerPc);
         const tr=hostPc.addTransceiver("video",{direction:"sendonly"});
         const dc=hostPc.createDataChannel("synthetic-wss-fixture",{ordered:true});
         let remoteChannel=null;
@@ -173,17 +187,17 @@ export async function run(endpoint,expected){
             if(e.track.kind!=="video"){e.track.stop();abort.abort();return;}
             received=new MediaStream([e.track]);
         };
-        await hostPc.setLocalDescription(await hostPc.createOffer());
-        await wait(signal,()=>hostPc.iceGatheringState==="complete",7000,"Host ICE gathering timed out");
-        const offer=hostPc.localDescription.sdp,hf=sdpFingerprint(offer);
+        const initialOffer=await hostPc.createOffer();
+        await hostPc.setLocalDescription(initialOffer);
+        const offer=initialOffer.sdp,hf=sdpFingerprint(offer);
         sendSealed(h,session,hp.send_sdp(offer));
         const receivedOffer=cp.receive_sdp(await sealed(c,session));require(receivedOffer===offer,"Offer changed in transit");
         await controllerPc.setRemoteDescription({type:"offer",sdp:receivedOffer});
         const remoteTr=controllerPc.getTransceivers().find(t=>t.receiver.track.kind==="video");
         require(remoteTr,"Missing video transceiver");remoteTr.direction="recvonly";
-        await controllerPc.setLocalDescription(await controllerPc.createAnswer());
-        await wait(signal,()=>controllerPc.iceGatheringState==="complete",7000,"Controller ICE gathering timed out");
-        const answer=controllerPc.localDescription.sdp,cf=sdpFingerprint(answer);require(cf!==hf,"Distinct DTLS certificates required");
+        const initialAnswer=await controllerPc.createAnswer();
+        await controllerPc.setLocalDescription(initialAnswer);
+        const answer=initialAnswer.sdp,cf=sdpFingerprint(answer);require(cf!==hf,"Distinct DTLS certificates required");
         sendSealed(c,session,cp.send_sdp(answer));
         const receivedAnswer=hp.receive_sdp(await sealed(h,session));require(receivedAnswer===answer,"Answer changed in transit");
         // No generated track is attached or rendered while the SDP proofs
@@ -194,6 +208,13 @@ export async function run(endpoint,expected){
         require(!cp.sdp_verified()&&!hp.sdp_verified(),"Premature SDP proof gate");
         sendSealed(c,session,cp.send_sdp_proof(cs));hp.receive_sdp_proof(await sealed(h,session));
         require(cp.sdp_verified()&&hp.sdp_verified(),"Encrypted exact SDP proof failed");
+        await wait(signal,()=>hostPc.iceGatheringState==="complete"&&controllerPc.iceGatheringState==="complete",9000,"Native-order ICE gathering timed out");
+        require(hostIce.length>0&&controllerIce.length>0,"Missing real browser ICE candidates");
+        sendSealed(h,session,hp.send_ice_batch(JSON.stringify(hostIce)));
+        sendSealed(c,session,cp.send_ice_batch(JSON.stringify(controllerIce)));
+        for(const item of JSON.parse(cp.receive_ice_batch(await sealed(c,session))))await controllerPc.addIceCandidate({sdpMLineIndex:item.mline,candidate:item.candidate});
+        for(const item of JSON.parse(hp.receive_ice_batch(await sealed(h,session))))await hostPc.addIceCandidate({sdpMLineIndex:item.mline,candidate:item.candidate});
+        require(cp.native_ice_verified()&&hp.native_ice_verified(),"Native-order ICE proof gate failed");
         await wait(signal,()=>hostPc.connectionState==="connected"&&controllerPc.connectionState==="connected"&&dc.readyState==="open"&&remoteChannel?.readyState==="open",9000,"Routed fixture DTLS did not connect");
         await wait(signal,async()=>await dtlsFingerprint(hostPc,hf,cf)&&await dtlsFingerprint(controllerPc,cf,hf),4000,"Negotiated certificate stats unavailable");
         require(!signal.aborted,"Fixture canceled");approvedMedia=true;
@@ -219,7 +240,7 @@ export async function run(endpoint,expected){
         require(colored>100,"Generated pattern absent");
         c.send({type:"close",session});
         for(const socket of [c,h]){const closed=type(await socket.receive(),"closed",["session","reason"]);require(closed.session===session&&closed.reason==="closed","Route close mismatch");}
-        result={wss:true,registration:true,route:true,noise:true,encryptedSdp:true,dtls:true,frames,video:true,closed:true};
+        result={wss:true,registration:true,route:true,noise:true,nativeQuality:true,encryptedSdp:true,encryptedIce:true,dtls:true,frames,video:true,closed:true};
     }finally{
         clearTimeout(deadline);abort.abort();cleanupMedia();document.removeEventListener("visibilitychange",onHidden);window.removeEventListener("pagehide",onPageHide);
         for(const peer of cryptoPeers){try{peer.close();}finally{peer.free();}}
