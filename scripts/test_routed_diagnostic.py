@@ -57,6 +57,9 @@ def main():
     armed_wrong="--armed-wrong-key" in sys.argv[3:]
     armed_test=armed_test or armed_cancel or armed_wrong
     x11_test="--x11-view-test" in sys.argv[3:]
+    power_test="--power-test" in sys.argv[3:]
+    power_wrong="--power-wrong-token" in sys.argv[3:]
+    power_test=power_test or power_wrong
     av_test="--av-test" in sys.argv[3:]
     audio_test="--audio-test" in sys.argv[3:]
     if audio_test and exchange_sender:raise RuntimeError("Choose one test profile")
@@ -133,6 +136,8 @@ def main():
                 host_flags.extend(["--desktop-session",flag,source]);controller_flags.extend(["--desktop-session",flag,target])
             if clipboard_test:
                 host_flags.extend(["--clipboard-sync-test","--desktop-session"]);controller_flags.extend(["--clipboard-sync-test","--desktop-session"])
+            if power_test:
+                host_flags.extend(["--power-test","--desktop-session"]);controller_flags.extend(["--power-test","restart","--desktop-session"])
             if armed_test:
                 host_flags.extend(["--armed-test","--desktop-session"])
             if x11_test:
@@ -178,6 +183,19 @@ def main():
                 for role,pair,key in (("host",host,ck),("controller",controller,hk)):
                     consent=("ALLOW SEND " if role==exchange_sender else "ALLOW RECEIVE ")+("DIRECTORY" if directory_test else "FILE")
                     pair[0].stdin.write(key+"\n"+consent+"\n");pair[0].stdin.flush()
+            elif power_test:
+                for pair,key,consent in ((host,ck,"ALLOW REVIEW ONE POWER REQUEST"),(controller,hk,"ALLOW PROPOSE ONE POWER REQUEST")):
+                    pair[0].stdin.write(key+"\n"+consent+"\n");pair[0].stdin.flush()
+                token,action=expect(host,"POWER_REVIEW ",deadline).split(" ")
+                if action!="restart" or len(token)!=64:raise RuntimeError("Wrong power review")
+                if power_wrong:token=("0" if token[0]!="0" else "1")+token[1:]
+                host[0].stdin.write("POWER_APPROVE "+token+"\n");host[0].stdin.flush()
+                if power_wrong:
+                    expect(host,"FAIL: Power approval does not match exact review",deadline)
+                    if host[0].wait(timeout=8)==0:raise RuntimeError("Wrong review accepted")
+                    print("PASS: wrong power review token rejected; no OS action",flush=True);return
+                if expect(host,"POWER_TEST_AUTHORIZED ",deadline)!=token+" restart":raise RuntimeError("Wrong inert power receipt")
+                if expect(controller,"POWER_ACCEPTED ",deadline)!="restart":raise RuntimeError("Wrong controller power receipt")
             elif manage_test:
                 for pair,key,consent in ((host,ck,"ALLOW REVIEW FILE CHANGES"),(controller,hk,"ALLOW PROPOSE FILE CHANGES")):
                     pair[0].stdin.write(key+"\n"+consent+"\n");pair[0].stdin.flush()
@@ -283,6 +301,8 @@ def main():
                 if not match or int(match.group(1))<5:raise RuntimeError("No real X11 frames decoded")
             for proc,_ in peers[-2:]:
                 if proc.wait(timeout=5)!=0:raise RuntimeError("peer exited unsuccessfully")
+            if power_test:
+                print("PASS: signed power request with exact local review; inert path only",flush=True);return
             if armed_test:
                 print("PASS: armed host admitted only its preapproved peer after old 20-second wait",flush=True);return
             if x11_test:

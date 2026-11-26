@@ -1,4 +1,4 @@
-//! Linux X11 explicitly supervised screen view/control candidate.
+//! Linux native screen view/control sidecar; Wayland is portal-view only.
 #[cfg(target_os="linux")]
 mod routed_session;
 #[cfg(target_os="linux")]
@@ -8,9 +8,9 @@ async fn main(){
 }
 #[cfg(target_os="linux")]
 async fn run()->Result<(),String>{
-    remote_ex_desktop_features::platform::require_linux_x11()?;
     // Explicit local capture diagnostic only. No network or saved image.
     if std::env::args().len()==2&&std::env::args().nth(1).as_deref()==Some("--probe-x11"){
+        remote_ex_desktop_features::platform::require_linux_x11()?;
         let display=xcap::Monitor::all().map_err(|e|e.to_string())?.into_iter().next().ok_or("No X11 display")?;
         let id=display.id().map_err(|e|e.to_string())?;
         let width=display.width().map_err(|e|e.to_string())?;let height=display.height().map_err(|e|e.to_string())?;

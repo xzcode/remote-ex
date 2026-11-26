@@ -9,6 +9,7 @@ use xcap::{Monitor,image::{DynamicImage,RgbaImage,Rgba,imageops::{self,FilterTyp
 #[cfg(target_os="windows")] mod windows_display;
 #[cfg(target_os="macos")] mod macos_display;
 #[cfg(target_os="linux")] mod linux_display;
+#[cfg(target_os="linux")] mod portal_display;
 
 fn monitor(display:u32,area:Option<DisplayArea>,input:bool,secondary:bool)->MediaResult<(Monitor,DisplayArea)>{
     #[cfg(target_os="windows")]
@@ -44,8 +45,8 @@ fn permissions(input:bool)->MediaResult<()>{
     let _=input;Ok(())
 }
 struct Captured{layout:usize,pixels:Vec<u8>}
-struct Capture{rx:std::sync::mpsc::Receiver<MediaResult<Captured>>,stop:Arc<AtomicBool>,layout:Arc<AtomicUsize>,count:usize}
-impl Drop for Capture{fn drop(&mut self){self.stop.store(true,Ordering::Release);}}
+struct Capture{rx:std::sync::mpsc::Receiver<MediaResult<Captured>>,stop:Arc<AtomicBool>,layout:Arc<AtomicUsize>,count:usize,first_wait:Duration,done:Option<std::sync::mpsc::Receiver<()>>}
+impl Drop for Capture{fn drop(&mut self){self.stop.store(true,Ordering::Release);if let Some(done)=&self.done{let _=done.recv_timeout(Duration::from_secs(2));}}}
 fn capture(displays:Vec<(u32,DisplayArea)>,input:bool,config:VideoConfig,secondary:bool)->Capture{
     let(tx,rx)=sync_channel(1);let stop=Arc::new(AtomicBool::new(false));let worker=stop.clone();
     let layout=Arc::new(AtomicUsize::new(0));let selected=layout.clone();let count=displays.len();
@@ -82,13 +83,13 @@ fn capture(displays:Vec<(u32,DisplayArea)>,input:bool,config:VideoConfig,seconda
             std::thread::sleep(next.saturating_duration_since(Instant::now()));
         }
     });
-    Capture{rx,stop,layout,count}
+    Capture{rx,stop,layout,count,first_wait:Duration::from_secs(3),done:None}
 }
 async fn serve<B:Backend>(peer:&Peer,channel:&ControlChannel,conn:&mut Connection,session:&str,
     mut dispatcher:Dispatcher<B>,capture:Capture,input:bool,av:bool,extended:bool)->MediaResult<()>{
     // The native capture worker is already authorized and independent. Do not
     // acknowledge readiness or accept input before its first successful frame.
-    let first_deadline=Instant::now()+Duration::from_secs(3);
+    let first_deadline=Instant::now()+capture.first_wait;
     let initial=loop{
         if canceled()||Instant::now()>=first_deadline{return Err("First authorized display frame unavailable".into());}
         connected(peer,channel)?;
@@ -172,9 +173,29 @@ async fn serve<B:Backend>(peer:&Peer,channel:&ControlChannel,conn:&mut Connectio
     out("PASS ROUTED HOST: native session ended, input released")
 }
 pub(super) async fn host(peer:&Peer,channel:&ControlChannel,conn:&mut Connection,cipher:&mut RouteCipher,
-    session:&str,gate:SessionGate,profile:Profile,display:u32,extra_displays:Vec<u32>,secondary:bool,policy_display:Option<(u32,u32,String)>)->MediaResult<()>{
+    session:&str,gate:SessionGate,profile:Profile,display:u32,extra_displays:Vec<u32>,secondary:bool,policy_display:Option<(u32,u32,String)>,portal_source:Option<remote_ex_desktop_features::platform::PortalSource>)->MediaResult<()>{
     if canceled(){return Err("Authorization revoked".into());}
     let input=profile.native_control();
+    if let Some(source)=portal_source{
+        #[cfg(target_os="linux")]
+        {
+            if input||profile.av()||secondary||policy_display.is_some()||!extra_displays.is_empty()||display!=0{return Err("Invalid portal view scope".into());}
+            remote_ex_desktop_features::platform::require_wayland()?;
+            let config=peer.config();
+            // Portal content is view only; the fixed canvas never implies
+            // remote input coordinates or any unapproved physical display.
+            let area=DisplayArea{x:0,y:0,width:config.width,height:config.height}.validate()?;
+            cipher.send(conn,Geometry::from_area(area,config)?.signal()).await?;
+            cipher.send(conn,Signal::ViewLayout{count:1}).await?;
+            wait_data(peer,channel,conn,READY).await?;
+            if canceled(){return Err("Portal authorization revoked".into());}
+            out("LISTENING PORTAL")?;
+            let d=Dispatcher::new(gate,Inert::default(),area)?;
+            return serve(peer,channel,conn,session,d,portal_display::capture(source,config),false,false,profile.extended()).await;
+        }
+        #[cfg(not(target_os="linux"))]
+        {let _=source;return Err("Wayland portal host is Linux-only".into());}
+    }
     permissions(input)?;
     let config=peer.config();
     if input&&!extra_displays.is_empty(){return Err("Control is limited to one locally selected display".into());}

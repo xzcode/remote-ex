@@ -13,6 +13,14 @@ pub fn linux_session()->LinuxSession{
 pub fn require_linux_x11()->Result<(),String>{
     match linux_session(){LinuxSession::X11=>Ok(()),LinuxSession::Wayland=>Err("Wayland requires a separately authorized portal session; XWayland fallback is disabled".into()),LinuxSession::Unavailable=>Err("An explicitly logged-in X11 desktop is required".into())}
 }
+/// Local OS picker source; never supplied by a remote protocol message.
+#[derive(Clone,Copy,Debug,PartialEq,Eq)]
+pub enum PortalSource{Monitor,Window,Virtual}
+impl PortalSource{
+    pub fn parse(s:&str)->Result<Self,String>{match s{"monitor"=>Ok(Self::Monitor),"window"=>Ok(Self::Window),"virtual"=>Ok(Self::Virtual),_=>Err("Unknown local portal source".into())}}
+    pub fn as_str(self)->&'static str{match self{Self::Monitor=>"monitor",Self::Window=>"window",Self::Virtual=>"virtual"}}
+}
+pub fn require_wayland()->Result<(),String>{if linux_session()==LinuxSession::Wayland{Ok(())}else{Err("A native Wayland desktop session is required".into())}}
 pub fn wake_packet(mac:&str)->Result<[u8;102],String>{
     let normalized=mac.trim().replace(':',"").replace('-',"");
     if normalized.len()!=12||!normalized.bytes().all(|v|v.is_ascii_hexdigit()){return Err("Enter a six-byte network adapter MAC address".into());}
@@ -32,6 +40,11 @@ mod tests{
         assert_eq!(classify_linux(Some("x11"),Some(":0"),Some("wayland-0"),None),LinuxSession::Wayland);
         assert_eq!(classify_linux(None,Some(":0"),None,None),LinuxSession::Unavailable);
         assert_eq!(classify_linux(Some("x11"),None,None,None),LinuxSession::Unavailable);
+    }
+    #[test]fn portal_sources_are_explicit_and_finite(){
+        assert_eq!(PortalSource::parse("virtual").unwrap(),PortalSource::Virtual);
+        assert_eq!(PortalSource::parse("monitor").unwrap().as_str(),"monitor");
+        for s in ["","all","default","/dev/dri/card0","screen:1"]{assert!(PortalSource::parse(s).is_err());}
     }
     #[test]fn wol_requires_unicast_and_exact_magic_packet(){
         let a=[0x02,0x12,0x34,0x56,0x78,0x9a];

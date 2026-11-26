@@ -6,6 +6,7 @@ mod presence;
 mod trust;
 mod service;
 mod policy;
+mod power_local;
 use tauri::Manager;
 
 fn main() {
@@ -41,6 +42,7 @@ fn main() {
             lan::routed_catalog_batch_select,
             lan::routed_manage_submit,
             lan::routed_manage_approve,
+            lan::routed_power_approve,
             lan::select_transfer_file,
             lan::lan_status,
             lan::lan_confirm,

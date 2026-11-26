@@ -22,7 +22,7 @@ impl RouteBinding {
             ||self.controller==self.host||self.controller_nonce==[0;32]||self.host_nonce==[0;32]
             ||self.controller_nonce==self.host_nonce||self.requested&VIEW==0||self.granted&VIEW==0
             ||self.requested&!(VIEW|INPUT)!=0||self.granted&!self.requested!=0
-            ||!matches!(self.profile,0..=25)||((self.profile==1||(3..=15).contains(&self.profile)||matches!(self.profile,17|19|20|22|24))&&self.granted!=VIEW)||(matches!(self.profile,2|16|18|21|23|25)&&self.granted!=(VIEW|INPUT)){
+            ||!matches!(self.profile,0..=27)||((self.profile==1||(3..=15).contains(&self.profile)||matches!(self.profile,17|19|20|22|24|26|27))&&self.granted!=VIEW)||(matches!(self.profile,2|16|18|21|23|25)&&self.granted!=(VIEW|INPUT)){
             return Err(ProofError::InvalidTranscript);
         }
         let mut b=b"Remote EX/routed-noise/v1\0".to_vec();
@@ -77,6 +77,15 @@ mod tests {
         b.profile=23;assert!(b.context().is_err());
         b.requested=VIEW|INPUT;b.granted=VIEW|INPUT;assert!(b.context().is_ok());
         b.profile=24;assert!(b.context().is_err());
+    }
+    #[test]
+    fn power_has_independent_real_and_inert_profiles(){
+        let c=DeviceIdentity::generate();let h=DeviceIdentity::generate();
+        let mut b=RouteBinding{session:[1;16],controller:c.public_key(),host:h.public_key(),controller_nonce:[2;32],host_nonce:[3;32],requested:VIEW,granted:VIEW,profile:26,relay_only:false};
+        let s=b.sign(&c,Role::Controller,&[4;32]).unwrap();b.profile=27;
+        assert!(b.verify(Role::Controller,&[4;32],&s).is_err());
+        b.profile=1;assert!(b.verify(Role::Controller,&[4;32],&s).is_err());
+        b.profile=27;b.requested=VIEW|INPUT;b.granted=VIEW|INPUT;assert!(b.context().is_err());
     }
     #[test]
     fn proof_binds_handshake_role_permission_and_both_nonces(){

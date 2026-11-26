@@ -86,3 +86,6 @@ M4.1/M4.2：一次限时预授权等待（已保存设备公钥、屏幕限定�
 
 ### M4 second integrated batch
 Saved expiring per-device host policy with exact server, device, display and scope, local one-session activation, policy/identity validation and revocation; no persistent background listener. X11 input candidate with XTEST, single-monitor and active local unlocked logind checks; unit and disposable Xvfb fixtures, Linux archive workflow. Fixed known macOS Swift duration compile error. Latest CI pending. Wayland portal, additional power operations, virtual display, privacy mode, long-running supervised service and physical acceptance remain open.
+
+### M4 third integrated batch
+374e77f four CI succeeded; a6a4065 dual native packages passed. New implementation: Wayland ScreenCast/PipeWire view-only portal (versions 2–5, one monitor/window/virtual source, compositor-provided virtual capability), independent host-reviewed power request, and locally activated bounded three-session/30-minute saved-policy service. CI only verifies portal compile/element/frame conversion and inert power fixtures; real compositor/OS power/long service acceptance pending. No hidden or automatic login access, no Wayland input, no physical-display privacy, no Windows/macOS virtual display driver. M4 not yet accepted.

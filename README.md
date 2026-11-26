@@ -85,3 +85,5 @@ Rust + Tauri 2 + Vue 3/TypeScript；WebRTC/ICE/STUN/TURN；Rust/Axum 信令服�
 The current M4 batch adds one-time locally armed trusted-device connection, user-login launch, system tray, Linux X11 read-only view, Wake-on-LAN and platform capability diagnostics. See [M4 handoff](docs/M4_FULL_HANDOFF.md). Actual platform/CI verification is tracked separately; no production release or automatic access is enabled.
 
 M4 second batch adds locally activated, time-limited saved host policies and experimental Linux X11 native input. Linux debug archive build workflow added. Wayland, remote shutdown/restart, virtual display drivers, and physical privacy mode remain pending; no unattended startup access enabled. See [M4 handoff](docs/M4_FULL_HANDOFF.md).
+
+M4 third batch: experimental Wayland Portal read-only sharing (monitor/window/virtual where supported), separately reviewed shutdown/restart requests, and explicitly enabled bounded multi-session host service. No automatic login access or privileged service; real platform validation and native physical display privacy/virtual drivers remain open. See [M4 handoff](docs/M4_FULL_HANDOFF.md).

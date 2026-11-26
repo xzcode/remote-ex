@@ -2,6 +2,7 @@
 //! This interface does not accept arbitrary executable paths, commands,
 //! environment variables, file transfers, capture requests or system input.
 use serde::Serialize;
+use remote_ex_desktop_features::power::{PowerAction,PowerReview};
 use std::{
     io::{BufRead, BufReader, Read, Write},
     net::{IpAddr, SocketAddr},
@@ -57,9 +58,18 @@ pub struct Snapshot {
     manage_submitted:bool,
     manage_approved:bool,
     manage_applied:Option<usize>,
+    power_review:Option<PowerReview>,
+    power_approved:bool,
+    power_receipt:Option<PowerReview>,
+    power_accepted:Option<PowerAction>,
+    power_os_submitted:bool,
     secondary_control:bool,
     armed:bool,
     saved_policy:bool,
+    service_running:bool,
+    service_limit:u8,
+    service_completed:u8,
+    service_expires_at:Option<u64>,
     server_scope:Option<String>,
     extended:bool,
     stream_quality:Option<String>,
@@ -73,7 +83,7 @@ pub struct Snapshot {
 }
 impl Default for Snapshot {
     fn default() -> Self {
-        Self { stage: Stage::Idle, active: false, local_key: None, detail: None, profile: Profile::Diagnostic, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, transfer_paused:false, checkpoint_saved:None, directory_entries:None, clipboard_sent:None, clipboard_received:None, catalog:Vec::new(), catalog_ready:false,catalog_selected:None,manage_review:None,manage_token:None,manage_submitted:false,manage_approved:false,manage_applied:None,secondary_control:false,armed:false,saved_policy:false,server_scope:None,extended:false,stream_quality:None,stream_decoded:None,resume_offset:None, audio_volume:None, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None }
+        Self { stage: Stage::Idle, active: false, local_key: None, detail: None, profile: Profile::Diagnostic, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, transfer_paused:false, checkpoint_saved:None, directory_entries:None, clipboard_sent:None, clipboard_received:None, catalog:Vec::new(), catalog_ready:false,catalog_selected:None,manage_review:None,manage_token:None,manage_submitted:false,manage_approved:false,manage_applied:None,power_review:None,power_approved:false,power_receipt:None,power_accepted:None,power_os_submitted:false,secondary_control:false,armed:false,saved_policy:false,service_running:false,service_limit:0,service_completed:0,service_expires_at:None,server_scope:None,extended:false,stream_quality:None,stream_decoded:None,resume_offset:None, audio_volume:None, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None }
     }
 }
 
@@ -90,7 +100,7 @@ fn stage(shared: &Mutex<Snapshot>, next: Stage, detail: Option<String>) {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
-enum Profile { Diagnostic, SecureTest, Screen, Control, RoutedTest, RoutedView, RoutedControl, RoutedFileHost, RoutedFileController, RoutedTextHost, RoutedTextController, RoutedPngHost, RoutedPngController, RoutedAudio, RoutedDirectoryHost, RoutedDirectoryController, RoutedClipboardSync, RoutedCatalog, RoutedAvView, RoutedAvControl, RoutedManage, RoutedCatalogBatch }
+enum Profile { Diagnostic, SecureTest, Screen, Control, RoutedTest, RoutedView, RoutedControl, RoutedFileHost, RoutedFileController, RoutedTextHost, RoutedTextController, RoutedPngHost, RoutedPngController, RoutedAudio, RoutedDirectoryHost, RoutedDirectoryController, RoutedClipboardSync, RoutedCatalog, RoutedAvView, RoutedAvControl, RoutedManage, RoutedCatalogBatch, RoutedPower }
 impl Profile {
     fn parse(value: &str) -> Result<Self, String> {
         match value {
@@ -101,9 +111,9 @@ impl Profile {
             _ => Err("Unknown session profile".into()),
         }
     }
-    fn routed(self)->bool{matches!(self,Self::RoutedTest|Self::RoutedView|Self::RoutedControl|Self::RoutedAvView|Self::RoutedAvControl)||self.exchange().is_some()||matches!(self,Self::RoutedAudio|Self::RoutedClipboardSync|Self::RoutedCatalog|Self::RoutedCatalogBatch|Self::RoutedManage)}
+    fn routed(self)->bool{matches!(self,Self::RoutedTest|Self::RoutedView|Self::RoutedControl|Self::RoutedAvView|Self::RoutedAvControl)||self.exchange().is_some()||matches!(self,Self::RoutedAudio|Self::RoutedClipboardSync|Self::RoutedCatalog|Self::RoutedCatalogBatch|Self::RoutedManage|Self::RoutedPower)}
     fn exchange(self)->Option<(&'static str,bool)>{match self{Self::RoutedFileHost=>Some(("file",true)),Self::RoutedFileController=>Some(("file",false)),Self::RoutedTextHost=>Some(("text",true)),Self::RoutedTextController=>Some(("text",false)),Self::RoutedPngHost=>Some(("png",true)),Self::RoutedPngController=>Some(("png",false)),Self::RoutedDirectoryHost=>Some(("directory",true)),Self::RoutedDirectoryController=>Some(("directory",false)),_=>None}}
-    fn graceful(self)->bool{self.requires_release()||self.exchange().is_some()||matches!(self,Self::RoutedAudio|Self::RoutedClipboardSync|Self::RoutedCatalog|Self::RoutedCatalogBatch|Self::RoutedManage)}
+    fn graceful(self)->bool{self.requires_release()||self.exchange().is_some()||matches!(self,Self::RoutedAudio|Self::RoutedClipboardSync|Self::RoutedCatalog|Self::RoutedCatalogBatch|Self::RoutedManage|Self::RoutedPower)}
     fn av(self)->bool{matches!(self,Self::RoutedAvView|Self::RoutedAvControl)}
     fn view(self)->bool{matches!(self,Self::RoutedView|Self::RoutedAvView)}
     fn audio(self)->bool{self==Self::RoutedAudio||self.av()}
@@ -134,6 +144,7 @@ impl Profile {
             Self::RoutedCatalog=>if host{"ALLOW LIST AND DOWNLOAD SELECTED ROOT"}else{"ALLOW BROWSE AND RECEIVE ONE FILE"},
             Self::RoutedCatalogBatch=>if host{"ALLOW LIST AND DOWNLOAD FOUR FILES"}else{"ALLOW BROWSE AND RECEIVE FILE BATCH"},
             Self::RoutedManage=>if host{"ALLOW REVIEW FILE CHANGES"}else{"ALLOW PROPOSE FILE CHANGES"},
+            Self::RoutedPower=>if host{"ALLOW REVIEW ONE POWER REQUEST"}else{"ALLOW PROPOSE ONE POWER REQUEST"},
             Self::RoutedDirectoryHost|Self::RoutedDirectoryController=>if self.exchange().unwrap().1==host{"ALLOW SEND DIRECTORY"}else{"ALLOW RECEIVE DIRECTORY"},
         }
     }
@@ -164,11 +175,11 @@ fn sidecar_path(profile: Profile) -> Result<PathBuf, String> {
         (Profile::Control, false) => "lan_control",
         (Profile::RoutedTest,true)=>"routed_diagnostic.exe",
         (Profile::RoutedTest,false)=>"routed_diagnostic",
-        (Profile::RoutedView|Profile::RoutedControl,false) if cfg!(target_os="linux")=>"routed_x11_view",
+        (Profile::RoutedView|Profile::RoutedControl|Profile::RoutedPower,false) if cfg!(target_os="linux")=>"routed_x11_view",
         (p,true) if p.exchange().is_some()=>"routed_control.exe",
         (p,false) if p.exchange().is_some()=>"routed_control",
-        (Profile::RoutedView|Profile::RoutedControl|Profile::RoutedAvView|Profile::RoutedAvControl|Profile::RoutedAudio|Profile::RoutedClipboardSync|Profile::RoutedCatalog|Profile::RoutedCatalogBatch|Profile::RoutedManage,true)=>"routed_control.exe",
-        (Profile::RoutedView|Profile::RoutedControl|Profile::RoutedAvView|Profile::RoutedAvControl|Profile::RoutedAudio|Profile::RoutedClipboardSync|Profile::RoutedCatalog|Profile::RoutedCatalogBatch|Profile::RoutedManage,false)=>"routed_control",
+        (Profile::RoutedView|Profile::RoutedControl|Profile::RoutedAvView|Profile::RoutedAvControl|Profile::RoutedAudio|Profile::RoutedClipboardSync|Profile::RoutedCatalog|Profile::RoutedCatalogBatch|Profile::RoutedManage|Profile::RoutedPower,true)=>"routed_control.exe",
+        (Profile::RoutedView|Profile::RoutedControl|Profile::RoutedAvView|Profile::RoutedAvControl|Profile::RoutedAudio|Profile::RoutedClipboardSync|Profile::RoutedCatalog|Profile::RoutedCatalogBatch|Profile::RoutedManage|Profile::RoutedPower,false)=>"routed_control",
         (_, true) => "lan_view.exe",
         (_, false) => "lan_view",
     };
@@ -180,7 +191,7 @@ fn sidecar_path(profile: Profile) -> Result<PathBuf, String> {
     Ok(path)
 }
 
-enum WorkerCommand { Approve(String), Pause(bool), Volume(u8), CatalogSelect(usize), CatalogBatch(Vec<usize>), ManagePlan(String), ManageApprove(String) }
+enum WorkerCommand { Approve(String), Pause(bool), Volume(u8), CatalogSelect(usize), CatalogBatch(Vec<usize>), ManagePlan(String), ManageApprove(String), PowerApprove(PowerReview) }
 enum Output { Stdout(String), Stderr(String), Invalid }
 struct Worker { tx: SyncSender<WorkerCommand>, stop: Arc<AtomicBool>, join: JoinHandle<()> }
 struct ChildGuard(Child);
@@ -281,6 +292,20 @@ fn handle_output(shared: &Mutex<Snapshot>, output: Output, pass: &mut bool, fail
                 }
             } else if let Some(v)=text.strip_prefix("AUDIO_VOLUME "){
                 let mut snap=locked(shared);if snap.profile.audio(){snap.audio_volume=v.parse::<u8>().ok().filter(|v|*v<=100);}
+            } else if let Some(line)=text.strip_prefix("POWER_REVIEW "){
+                let mut s=locked(shared);
+                let parsed=line.split_once(' ').and_then(|(token,action)|Some(PowerReview{action:PowerAction::parse(action).ok()?,token:token.to_owned()})).filter(|v|v.validate().is_ok());
+                if s.profile==Profile::RoutedPower&&s.stage==Stage::Connected&&s.power_review.is_none()&&parsed.is_some(){s.power_review=parsed;}
+                else{*failure=Some("Invalid local power review".into());}
+            } else if let Some(line)=text.strip_prefix("POWER_AUTHORIZED "){
+                let mut s=locked(shared);
+                let parsed=line.split_once(' ').and_then(|(token,action)|Some(PowerReview{action:PowerAction::parse(action).ok()?,token:token.to_owned()})).filter(|v|v.validate().is_ok());
+                if s.profile==Profile::RoutedPower&&s.power_approved&&s.power_review.is_some()&&s.power_review==parsed&&s.power_receipt.is_none(){s.power_receipt=parsed;}
+                else{*failure=Some("Power receipt does not match local approval".into());}
+            } else if let Some(action)=text.strip_prefix("POWER_ACCEPTED "){
+                let mut s=locked(shared);
+                if s.profile==Profile::RoutedPower&&s.power_accepted.is_none(){match PowerAction::parse(action){Ok(a)=>s.power_accepted=Some(a),Err(e)=>*failure=Some(e)}}
+                else{*failure=Some("Unexpected power approval receipt".into());}
             } else if let Some(line)=text.strip_prefix("MANAGE_REVIEW "){
                 let mut snap=locked(shared);
                 if snap.profile==Profile::RoutedManage&&snap.stage==Stage::Connected&&snap.manage_review.is_none(){
@@ -346,15 +371,25 @@ fn handle_output(shared: &Mutex<Snapshot>, output: Output, pass: &mut bool, fail
     }
 }
 #[derive(Clone)]
-struct AutoApproval{peer_key:String,local_key:String,expires_at:u64,display_width:u32,display_height:u32,display_name:String}
+struct AutoApproval{peer_key:String,local_key:String,expires_at:u64,display_width:u32,display_height:u32,display_name:String,policy_path:PathBuf,policy:crate::policy::Policy,limit:u8,deadline:Instant,wall_deadline:u64}
+impl AutoApproval{
+    fn valid(&self)->bool{
+        Instant::now()<self.deadline&&crate::policy::now().is_ok_and(|n|n<self.wall_deadline)
+            &&crate::policy::get(&self.policy_path,&self.policy.server_id,&self.policy.device_id).is_ok_and(|p|p==self.policy)
+    }
+}
+fn may_rearm(limit:u8,completed:u8,passed:bool,released:bool,stopped:bool,valid:bool)->bool{
+    limit>1&&completed<limit&&passed&&released&&!stopped&&valid
+}
 fn supervise(
-    mut child: ChildGuard, commands: Receiver<WorkerCommand>, shared: Arc<Mutex<Snapshot>>,
+    mut child: ChildGuard, commands: &Receiver<WorkerCommand>, shared: Arc<Mutex<Snapshot>>,
     profile: Profile, host: bool, stop: Arc<AtomicBool>, automatic:Option<AutoApproval>,
 ) {
     let (tx, output) = mpsc::sync_channel(64);
     let overflow = Arc::new(AtomicBool::new(false));
     let mut stdin = child.0.stdin.take();
     let mut approved = false;
+    let mut power_delivered:Option<PowerReview>=None;
     let Some(stdout) = child.0.stdout.take() else {
         stage(&shared, Stage::Failed, Some("Missing process stdout".into())); return;
     };
@@ -369,13 +404,14 @@ fn supervise(
     let mut stopping: Option<Instant> = None;
     let mut stop_error: Option<String> = None;
     let mut automatic=automatic;
-    let expires=automatic.as_ref().map(|a|a.expires_at);
+    let expires=automatic.as_ref().map(|a|a.expires_at.min(a.wall_deadline));
+    let run_deadline=automatic.as_ref().map(|a|a.deadline);
     let remaining=expires.map(|e|Duration::from_secs(e.saturating_sub(crate::policy::now().unwrap_or(u64::MAX))));
     loop {
         for message in output.try_iter().take(64) {
             handle_output(&shared, message, &mut pass, &mut failure);
         }
-        let expired=expires.is_some_and(|e|crate::policy::now().map_or(true,|now|now>=e))||remaining.is_some_and(|d|started.elapsed()>=d);
+        let expired=run_deadline.is_some_and(|d|Instant::now()>=d)||expires.is_some_and(|e|crate::policy::now().map_or(true,|now|now>=e))||remaining.is_some_and(|d|started.elapsed()>=d);
         let reason = if expired {Some("Saved host policy expired".into())}
             else if overflow.load(Ordering::Acquire) { Some("Media process output limit exceeded".into()) }
             else if started.elapsed() >= ({let s=locked(&shared);if s.armed{Duration::from_secs(780)}else if s.extended{Duration::from_secs(480)}else{SESSION_LIMIT}}) { Some("Session expired".into()) }
@@ -400,7 +436,7 @@ fn supervise(
             let next=if let Some(a)=automatic.as_ref(){
                 let s=locked(&shared).clone();
                 if s.stage==Stage::AwaitingApproval&&s.device_id.is_some(){
-                    if s.local_key.as_deref()!=Some(a.local_key.as_str())||!s.armed||!host{
+                    if s.local_key.as_deref()!=Some(a.local_key.as_str())||!s.armed||!host||!a.valid(){
                         failure=Some("Saved host identity or authorization changed".into());Err(TryRecvError::Empty)
                     }else{
                         let a=automatic.take().expect("saved policy present");
@@ -475,6 +511,15 @@ fn supervise(
                     if let Some(pipe)=stdin.as_mut(){if writeln!(pipe,"APPROVE {token}").and_then(|_|pipe.flush()).is_err(){failure=Some("Could not deliver exact local review approval".into());}}
                 }
             }
+            Ok(WorkerCommand::PowerApprove(review))=>{
+                let valid={let s=locked(&shared);s.stage==Stage::Connected&&s.power_approved&&s.power_review.as_ref()==Some(&review)};
+                if approved&&profile==Profile::RoutedPower&&host&&valid&&power_delivered.is_none(){
+                    if let Some(pipe)=stdin.as_mut(){
+                        if writeln!(pipe,"POWER_APPROVE {}",review.token).and_then(|_|pipe.flush()).is_ok(){power_delivered=Some(review);}
+                        else{failure=Some("Could not deliver exact power review".into());}
+                    }
+                }else{failure=Some("Invalid power approval state".into());}
+            }
             Err(TryRecvError::Empty) => {}
         }}
         match child.0.try_wait() {
@@ -496,7 +541,17 @@ fn supervise(
                 } else if stopping.is_some() {
                     stage(&shared, if stop_error.is_some() { Stage::Failed } else { Stage::Canceled }, stop_error);
                 } else if status.success() && pass && failure.is_none() && !overflow.load(Ordering::Acquire) {
-                    stage(&shared, Stage::Passed, None);
+                    if profile==Profile::RoutedPower&&host{
+                        let reviewed={let s=locked(&shared);if s.power_approved&&s.power_receipt.is_some()&&s.power_receipt==power_delivered&&s.power_review==power_delivered{s.power_receipt.clone()}else{None}};
+                        if stop.load(Ordering::Acquire)||!approved||reviewed.is_none(){stage(&shared,Stage::Failed,Some("Power action canceled or exact local receipt missing".into()));}
+                        else{
+                            let action=reviewed.expect("matched local review").action;
+                            match crate::power_local::submit(action,&stop){
+                                Ok(())=>{locked(&shared).power_os_submitted=true;stage(&shared,Stage::Passed,Some("OS accepted the local power request; actual completion unknown".into()));},
+                                Err(e)=>stage(&shared,Stage::Failed,Some(e)),
+                            }
+                        }
+                    }else{stage(&shared, Stage::Passed, None);}
                 } else {
                     stage(&shared, Stage::Failed, failure.or_else(|| Some("Native session exited unsuccessfully".into())));
                 }
@@ -542,7 +597,7 @@ impl SessionManager {
                 command.arg("--desktop-session");
             }
             p if p.routed()=>return Err("Use the routed connection entry point".into()),
-            Profile::RoutedTest|Profile::RoutedView|Profile::RoutedControl|Profile::RoutedFileHost|Profile::RoutedFileController|Profile::RoutedTextHost|Profile::RoutedTextController|Profile::RoutedPngHost|Profile::RoutedPngController|Profile::RoutedAudio|Profile::RoutedDirectoryHost|Profile::RoutedDirectoryController|Profile::RoutedClipboardSync|Profile::RoutedCatalog|Profile::RoutedCatalogBatch|Profile::RoutedAvView|Profile::RoutedAvControl|Profile::RoutedManage=>return Err("Use the routed connection entry point".into()),
+            Profile::RoutedTest|Profile::RoutedView|Profile::RoutedControl|Profile::RoutedFileHost|Profile::RoutedFileController|Profile::RoutedTextHost|Profile::RoutedTextController|Profile::RoutedPngHost|Profile::RoutedPngController|Profile::RoutedAudio|Profile::RoutedDirectoryHost|Profile::RoutedDirectoryController|Profile::RoutedClipboardSync|Profile::RoutedCatalog|Profile::RoutedCatalogBatch|Profile::RoutedAvView|Profile::RoutedAvControl|Profile::RoutedManage|Profile::RoutedPower=>return Err("Use the routed connection entry point".into()),
             Profile::Screen => {
                 if host {
                     let display = display_id.ok_or("Choose the specific display to share")?;
@@ -553,7 +608,7 @@ impl SessionManager {
         }
         self.spawn(command,profile,host,None,false,false,false,None,None)
     }
-    fn prepare_routed(&self,role:&str,url:&str,server_id:&str,profile:Profile,display_id:Option<u32>,relay_only:bool,persistent:bool,storage_consent:bool,ca_path:Option<String>,history_path:Option<PathBuf>,quality:&str,transfer_path:Option<String>,volume:u8,extra_displays:Vec<u32>,identity_slot:u8,resume_from:Option<String>,checkpoint_path:Option<String>,shared_identity:bool,secondary:bool,extended:bool,armed:bool,automatic:Option<AutoApproval>)->Result<Snapshot,String>{
+    fn prepare_routed(&self,role:&str,url:&str,server_id:&str,profile:Profile,display_id:Option<u32>,relay_only:bool,persistent:bool,storage_consent:bool,ca_path:Option<String>,history_path:Option<PathBuf>,quality:&str,transfer_path:Option<String>,volume:u8,extra_displays:Vec<u32>,identity_slot:u8,resume_from:Option<String>,checkpoint_path:Option<String>,shared_identity:bool,secondary:bool,extended:bool,armed:bool,automatic:Option<AutoApproval>,portal_source:Option<String>,power_action:Option<String>)->Result<Snapshot,String>{
         if !profile.routed()||url.len()>512{return Err("Invalid routed session configuration".into());}
         if persistent&&!storage_consent{return Err("Persistent routed identity requires explicit native storage consent".into());}
         if shared_identity&&(!persistent||role!="controller"||!matches!(profile,Profile::RoutedTest|Profile::RoutedView|Profile::RoutedControl|Profile::RoutedAvView|Profile::RoutedAvControl)){return Err("Shared identity requires an explicitly selected persistent outgoing desktop session".into());}
@@ -561,8 +616,25 @@ impl SessionManager {
         let _=remote_ex_rendezvous_client::Endpoint::secure(url,pin)?;
         let host=match role{"host"=>true,"controller"=>false,_=>return Err("Unknown routed role".into())};
         if armed&&(!host||!persistent||!matches!(profile,Profile::RoutedView|Profile::RoutedControl)){return Err("Armed host requires persistent identity and screen-only host mode".into());}
+        if profile==Profile::RoutedPower{
+            if armed||extended||secondary||shared_identity||automatic.is_some()||display_id.is_some()||!extra_displays.is_empty()||portal_source.is_some()||host==power_action.is_some(){return Err("Power requires an independent manual one-action session".into());}
+            if let Some(action)=&power_action{PowerAction::parse(action)?;}
+        }else if power_action.is_some(){return Err("Power action is only valid in its separate profile".into());}
+        let portal_source=portal_source.as_deref().map(remote_ex_desktop_features::platform::PortalSource::parse).transpose()?;
+        if portal_source.is_some()&&(!cfg!(target_os="linux")||!host||profile!=Profile::RoutedView||persistent||armed||secondary||display_id.is_some()||!extra_displays.is_empty()){return Err("Portal sharing is restricted to one locally selected, temporary Wayland view-only source".into());}
         #[cfg(target_os="linux")]
-        {if !matches!(profile,Profile::RoutedTest|Profile::RoutedView|Profile::RoutedControl)||persistent||armed||secondary{return Err("Linux candidate supports temporary X11 screen view/control or synthetic test only".into());}if matches!(profile,Profile::RoutedView|Profile::RoutedControl){remote_ex_desktop_features::platform::require_linux_x11()?;}}
+        {
+            use remote_ex_desktop_features::platform::{LinuxSession,linux_session};
+            if !matches!(profile,Profile::RoutedTest|Profile::RoutedView|Profile::RoutedControl|Profile::RoutedPower)||persistent||armed||secondary{return Err("Linux supports temporary supervised screen sessions only".into());}
+            if profile!=Profile::RoutedTest{
+                match linux_session(){
+                    LinuxSession::X11 if portal_source.is_none()=>{},
+                    LinuxSession::Wayland if profile==Profile::RoutedView&&(!host||portal_source.is_some())=>{},
+                    LinuxSession::Wayland if profile==Profile::RoutedPower=>{},
+                    _=>return Err("Wayland requires portal view-only mode, not XWayland capture".into()),
+                }
+            }
+        }
         if extended&&!matches!(profile,Profile::RoutedView|Profile::RoutedControl|Profile::RoutedAvView|Profile::RoutedAvControl){return Err("Extended lease is restricted to native display sessions".into());}
         if secondary&&(!cfg!(any(target_os="windows",target_os="macos"))||!host||!matches!(profile,Profile::RoutedControl|Profile::RoutedAvControl)){return Err("Experimental secondary display control requires Windows or macOS host control".into());}
         if (resume_from.is_some()||checkpoint_path.is_some())&&!profile.exchange().is_some_and(|(kind,sender)|kind=="file"&&sender!=host){return Err("Checkpoint options require the local file receiver".into());}
@@ -573,7 +645,7 @@ impl SessionManager {
             Profile::RoutedView|Profile::RoutedControl|Profile::RoutedAvView|Profile::RoutedAvControl=>{
                 command.arg(match profile{Profile::RoutedView=>"--view",Profile::RoutedControl=>"--control",Profile::RoutedAvView=>"--av-view",_=>"--av-control"});
                 if host{
-                    let main=display_id.ok_or("Choose a display")?;
+                    let main=if portal_source.is_some(){0}else{display_id.ok_or("Choose a display")?};
                     command.arg(main.to_string());
                     if !profile.view()&&!extra_displays.is_empty(){return Err("Control requires only the primary display".into());}
                     if extra_displays.len()>3||extra_displays.iter().enumerate().any(|(i,d)|*d==main||extra_displays[..i].contains(d)){return Err("Select up to four distinct displays".into());}
@@ -581,6 +653,7 @@ impl SessionManager {
                 }else if !extra_displays.is_empty(){return Err("Only the host can authorize additional displays".into());}
                 if profile.av(){if volume>100{return Err("Invalid audio volume".into());}command.arg("--volume").arg(volume.to_string());}
             },
+            Profile::RoutedPower=>{command.arg("--power");if let Some(action)=power_action{command.arg(PowerAction::parse(&action)?.name());}},
             Profile::RoutedManage=>{
                 command.arg("--manage");
                 if host{
@@ -643,6 +716,7 @@ impl SessionManager {
         command.arg("--desktop-session");
         let history=history_path.map(|path|(path,remote_ex_signaling::hex(&pin)));
         if armed{command.arg("--armed-host");}
+        if let Some(source)=portal_source{command.arg("--portal-source").arg(source.as_str());}
         if let Some(a)=&automatic{command.arg("--policy-display").arg(a.display_width.to_string()).arg(a.display_height.to_string()).arg(&a.display_name); }
         self.spawn(command,profile,host,history,secondary,extended,armed,Some(remote_ex_signaling::hex(&pin)),automatic)
     }
@@ -657,25 +731,45 @@ impl SessionManager {
         }
         let child = command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped())
             .spawn().map_err(|e| format!("Cannot start native media diagnostic: {e}"))?;
-        *locked(&self.shared) = Snapshot { stage: Stage::Starting, active: true, local_key: None, detail: None, profile, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, transfer_paused:false, checkpoint_saved:None, directory_entries:None, clipboard_sent:None, clipboard_received:None, catalog:Vec::new(), catalog_ready:false,catalog_selected:None,manage_review:None,manage_token:None,manage_submitted:false,manage_approved:false,manage_applied:None,secondary_control:secondary,armed,saved_policy:automatic.is_some(),server_scope,extended,stream_quality:None,stream_decoded:None,resume_offset:None, audio_volume:None, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None };
+        *locked(&self.shared) = Snapshot { stage: Stage::Starting, active: true, local_key: None, detail: None, profile, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, transfer_paused:false, checkpoint_saved:None, directory_entries:None, clipboard_sent:None, clipboard_received:None, catalog:Vec::new(), catalog_ready:false,catalog_selected:None,manage_review:None,manage_token:None,manage_submitted:false,manage_approved:false,manage_applied:None,power_review:None,power_approved:false,power_receipt:None,power_accepted:None,power_os_submitted:false,secondary_control:secondary,armed,saved_policy:automatic.is_some(),service_running:automatic.as_ref().is_some_and(|a|a.limit>1),service_limit:automatic.as_ref().map_or(0,|a|a.limit),service_completed:0,service_expires_at:automatic.as_ref().filter(|a|a.limit>1).map(|a|a.wall_deadline),server_scope,extended,stream_quality:None,stream_decoded:None,resume_offset:None, audio_volume:None, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None };
         let (tx, rx) = mpsc::sync_channel(4);
         let shared = self.shared.clone();
         let stop = Arc::new(AtomicBool::new(false));
         let worker_stop = stop.clone();
+        let initial=locked(&shared).clone();
         let join = thread::spawn(move || {
-            let started=Instant::now();
-            supervise(ChildGuard(child), rx, shared.clone(), profile, host, worker_stop,automatic);
-            if let Some((path,server))=history{
+            let mut child=child;
+            let mut completed=0u8;
+            loop{
+                let started=Instant::now();
+                supervise(ChildGuard(child), &rx, shared.clone(), profile, host, worker_stop.clone(),automatic.clone());
                 let snap=locked(&shared).clone();
-                let mode=match profile{Profile::RoutedTest=>"test",Profile::RoutedView|Profile::RoutedAvView=>"view",Profile::RoutedControl|Profile::RoutedAvControl=>"control",_=>return};
-                let outcome=match snap.stage{Stage::Passed=>"passed",Stage::Failed=>"failed",Stage::Canceled=>"canceled",_=>return};
-                if let Some(id)=snap.peer_id {
-                    // A history failure cannot change actual release confirmation.
-                    if crate::trust::record_history(&path,&server,&id,mode,outcome,started.elapsed().as_secs()).is_err(){
-                        let mut s=locked(&shared);if s.detail.is_none(){s.detail=Some("Local connection history could not be saved".into());}
+                if let Some((path,server))=&history{
+                    let mode=match profile{Profile::RoutedTest=>Some("test"),Profile::RoutedView|Profile::RoutedAvView=>Some("view"),Profile::RoutedControl|Profile::RoutedAvControl=>Some("control"),_=>None};
+                    let outcome=match snap.stage{Stage::Passed=>Some("passed"),Stage::Failed=>Some("failed"),Stage::Canceled=>Some("canceled"),_=>None};
+                    if let (Some(mode),Some(outcome),Some(id))=(mode,outcome,snap.peer_id.as_ref()){
+                        if crate::trust::record_history(path,server,id,mode,outcome,started.elapsed().as_secs()).is_err(){
+                            let mut s=locked(&shared);if s.detail.is_none(){s.detail=Some("Local connection history could not be saved".into());}
+                        }
                     }
                 }
+                if snap.stage==Stage::Passed{completed=completed.saturating_add(1);}
+                locked(&shared).service_completed=completed;
+                let Some(policy)=automatic.as_ref()else{break;};
+                if !may_rearm(policy.limit,completed,snap.stage==Stage::Passed,snap.input_released,worker_stop.load(Ordering::Acquire),policy.valid()){break;}
+                // Never retry a failure, cancellation or an unconfirmed input
+                // release. The local operator selected this bounded service.
+                for _ in 0..20{if worker_stop.load(Ordering::Acquire){break;}thread::sleep(Duration::from_millis(50));}
+                if worker_stop.load(Ordering::Acquire)||!policy.valid(){break;}
+                if let Err(e)=crate::policy::verify_display(&policy.policy){stage(&shared,Stage::Failed,Some(e));break;}
+                if worker_stop.load(Ordering::Acquire)||!policy.valid(){break;}
+                let mut next=initial.clone();next.service_completed=completed;*locked(&shared)=next;
+                match command.spawn(){
+                    Ok(c)=>child=c,
+                    Err(e)=>{stage(&shared,Stage::Failed,Some(format!("Cannot rearm visible host service: {e}")));break;}
+                }
             }
+            locked(&shared).service_running=false;
         });
         *worker = Some(Worker { tx, stop, join });
         Ok(self.snapshot())
@@ -740,7 +834,7 @@ impl RoutedManagers{
     pub(crate) fn stop_all(&self){for s in &locked(&self.slots).sessions{s.request_stop();}}
     pub(crate) fn revoke_pin(&self,server:&str,device:&str){
         let slots=locked(&self.slots);
-        for session in &slots.sessions{let s=session.snapshot();if s.active&&s.server_scope.as_deref()==Some(server)&&(s.armed||s.peer_id.as_deref()==Some(device)){session.request_stop();}}
+        for session in &slots.sessions{let s=session.snapshot();if (s.active||s.service_running)&&s.server_scope.as_deref()==Some(server)&&(s.armed||s.peer_id.as_deref()==Some(device)){session.request_stop();}}
     }
     pub fn shutdown(&self){
         let slots=locked(&self.slots);
@@ -815,6 +909,18 @@ pub fn routed_manage_approve(window:WebviewWindow,managers:State<'_,RoutedManage
     snap.manage_approved=true;Ok(snap.clone())
 }
 #[tauri::command]
+pub fn routed_power_approve(window:WebviewWindow,managers:State<'_,RoutedManagers>,slot:Option<u8>,token:String,action:PowerAction,confirmed:bool)->Result<Snapshot,String>{
+    require_main(&window)?;
+    if !confirmed{return Err("Explicitly confirm the exact local power request".into());}
+    let review=PowerReview{action,token};review.validate()?;
+    let slots=locked(&managers.slots);let manager=&slots.sessions[slot_index(slot)?];
+    let mut s=locked(&manager.shared);
+    if s.profile!=Profile::RoutedPower||s.stage!=Stage::Connected||s.power_approved||s.power_review.as_ref()!=Some(&review){return Err("No matching unapproved power review".into());}
+    let worker=locked(&manager.worker);
+    worker.as_ref().ok_or("No local power review process")?.tx.try_send(WorkerCommand::PowerApprove(review)).map_err(|_|"Local power approval unavailable".to_owned())?;
+    s.power_approved=true;Ok(s.clone())
+}
+#[tauri::command]
 pub fn routed_catalog_select(window:WebviewWindow,managers:State<'_,RoutedManagers>,slot:Option<u8>,index:usize,confirmed:bool)->Result<Snapshot,String>{
     require_main(&window)?;
     if !confirmed{return Err("Confirm the selected download".into());}
@@ -860,10 +966,10 @@ pub async fn select_transfer_file(window:WebviewWindow,receive:bool,directory:Op
     {let _=(receive,directory);Err("Native file selection unavailable".into())}
 }
 #[tauri::command]
-pub fn routed_prepare(window:WebviewWindow,manager:State<'_,SessionManager>,managers:State<'_,RoutedManagers>,slot:Option<u8>,role:String,url:String,server_id:String,mode:String,display_id:Option<u32>,relay_only:bool,persistent:bool,storage_consent:bool,ca_path:Option<String>,save_history:Option<bool>,quality:Option<String>,sender:Option<String>,transfer_path:Option<String>,volume:Option<u8>,extra_displays:Option<Vec<u32>>,resume_from:Option<String>,checkpoint_path:Option<String>,shared_identity:Option<bool>,secondary_control:Option<bool>,extended:Option<bool>,armed:Option<bool>)->Result<Snapshot,String>{
+pub fn routed_prepare(window:WebviewWindow,manager:State<'_,SessionManager>,managers:State<'_,RoutedManagers>,slot:Option<u8>,role:String,url:String,server_id:String,mode:String,display_id:Option<u32>,relay_only:bool,persistent:bool,storage_consent:bool,ca_path:Option<String>,save_history:Option<bool>,quality:Option<String>,sender:Option<String>,transfer_path:Option<String>,volume:Option<u8>,extra_displays:Option<Vec<u32>>,resume_from:Option<String>,checkpoint_path:Option<String>,shared_identity:Option<bool>,secondary_control:Option<bool>,extended:Option<bool>,armed:Option<bool>,portal_source:Option<String>,power_action:Option<String>)->Result<Snapshot,String>{
     require_main(&window)?;
     let profile=match (mode.as_str(),sender.as_deref()){
-        ("test",_)=>Profile::RoutedTest,("view",_)=>Profile::RoutedView,("control",_)=>Profile::RoutedControl,("av_view",_)=>Profile::RoutedAvView,("av_control",_)=>Profile::RoutedAvControl,("audio",_)=>Profile::RoutedAudio,("clipboard_sync",_)=>Profile::RoutedClipboardSync,("catalog",_)=>Profile::RoutedCatalog,("catalog_batch",_)=>Profile::RoutedCatalogBatch,("manage",_)=>Profile::RoutedManage,
+        ("test",_)=>Profile::RoutedTest,("view",_)=>Profile::RoutedView,("control",_)=>Profile::RoutedControl,("av_view",_)=>Profile::RoutedAvView,("av_control",_)=>Profile::RoutedAvControl,("audio",_)=>Profile::RoutedAudio,("clipboard_sync",_)=>Profile::RoutedClipboardSync,("catalog",_)=>Profile::RoutedCatalog,("catalog_batch",_)=>Profile::RoutedCatalogBatch,("manage",_)=>Profile::RoutedManage,("power",_)=>Profile::RoutedPower,
         ("file",Some("host"))=>Profile::RoutedFileHost,("file",Some("controller"))=>Profile::RoutedFileController,
         ("text",Some("host"))=>Profile::RoutedTextHost,("text",Some("controller"))=>Profile::RoutedTextController,
         ("png",Some("host"))=>Profile::RoutedPngHost,("png",Some("controller"))=>Profile::RoutedPngController,
@@ -874,7 +980,7 @@ pub fn routed_prepare(window:WebviewWindow,manager:State<'_,SessionManager>,mana
     let i=slot_index(slot)?;
     let mut slots=locked(&managers.slots);
     if manager.busy(){return Err("Finish the LAN session first".into());}
-    let exclusive=role=="host"||profile.exchange().is_some()||matches!(profile,Profile::RoutedAudio|Profile::RoutedClipboardSync|Profile::RoutedCatalog|Profile::RoutedCatalogBatch|Profile::RoutedManage);
+    let exclusive=role=="host"||profile.exchange().is_some()||matches!(profile,Profile::RoutedAudio|Profile::RoutedClipboardSync|Profile::RoutedCatalog|Profile::RoutedCatalogBatch|Profile::RoutedManage|Profile::RoutedPower);
     let shared=shared_identity.unwrap_or(false);
     if shared&&(!persistent||exclusive){return Err("Shared identity is only for persistent outgoing test/view/control sessions".into());}
     let identity=if shared{0}else{i as u8};
@@ -883,14 +989,15 @@ pub fn routed_prepare(window:WebviewWindow,manager:State<'_,SessionManager>,mana
         if exclusive||slots.exclusive[n]{return Err("Host and content-sharing sessions require exclusive access".into());}
         if persistent&&slots.identity_slot[n]==Some(identity)&&!(shared&&slots.shared[n]){return Err("Choose shared identity in all slots using the same device ID".into());}
     }
-    let result=slots.sessions[i].prepare_routed(&role,url.trim(),server_id.trim(),profile,display_id,relay_only,persistent,storage_consent,ca_path,history,quality.as_deref().unwrap_or("compat"),transfer_path,volume.unwrap_or(75),extra_displays.unwrap_or_default(),identity,resume_from,checkpoint_path,shared,secondary_control.unwrap_or(false),extended.unwrap_or(false),armed.unwrap_or(false),None)?;
+    let result=slots.sessions[i].prepare_routed(&role,url.trim(),server_id.trim(),profile,display_id,relay_only,persistent,storage_consent,ca_path,history,quality.as_deref().unwrap_or("compat"),transfer_path,volume.unwrap_or(75),extra_displays.unwrap_or_default(),identity,resume_from,checkpoint_path,shared,secondary_control.unwrap_or(false),extended.unwrap_or(false),armed.unwrap_or(false),None,portal_source,power_action)?;
     slots.exclusive[i]=exclusive;slots.identity_slot[i]=persistent.then_some(identity);slots.shared[i]=shared;Ok(result)
 }
 /// Locally activating a persisted, independently scoped policy arms exactly
-/// one visible session in slot zero. No automatic login or repeated rearming.
+/// one visible session or a bounded visible service in slot zero. No automatic login activation.
 #[tauri::command]
-pub async fn host_policy_activate(window:WebviewWindow,manager:State<'_,SessionManager>,managers:State<'_,RoutedManagers>,server_id:String,device_id:String,confirmed:bool)->Result<Snapshot,String>{
+pub async fn host_policy_activate(window:WebviewWindow,manager:State<'_,SessionManager>,managers:State<'_,RoutedManagers>,server_id:String,device_id:String,confirmed:bool,sessions:Option<u8>)->Result<Snapshot,String>{
     require_main(&window)?;
+    let limit=sessions.unwrap_or(1);if !matches!(limit,1|3){return Err("Choose one or three supervised sessions".into());}
     if !confirmed||!cfg!(any(target_os="windows",target_os="macos")){return Err("Explicit saved host policy activation is required on Windows/macOS".into());}
     let path=crate::trust::database_path(&window)?;
     let policy=crate::policy::get(&path,&server_id,&device_id)?;
@@ -902,8 +1009,9 @@ pub async fn host_policy_activate(window:WebviewWindow,manager:State<'_,SessionM
     // either prevents this start or subsequently stops the newly armed child.
     if crate::policy::get(&path,&server_id,&device_id)?!=policy{return Err("Saved host policy changed".into());}
     let profile=match policy.mode.as_str(){"view"=>Profile::RoutedView,"control"=>Profile::RoutedControl,_=>return Err("Invalid policy mode".into())};
-    let auto=AutoApproval{peer_key:policy.peer_key.clone(),local_key:policy.host_key.clone(),expires_at:policy.expires_at,display_width:policy.display_width,display_height:policy.display_height,display_name:policy.display_name.clone()};
-    let result=slots.sessions[0].prepare_routed("host",&policy.url,&policy.server_id,profile,Some(policy.display_id),policy.relay_only,true,true,None,Some(path),&policy.quality,None,75,Vec::new(),0,None,None,false,false,policy.extended,true,Some(auto))?;
+    let wall_deadline=crate::policy::now()?.checked_add(1800).ok_or("Host service clock overflow")?.min(policy.expires_at);
+    let auto=AutoApproval{peer_key:policy.peer_key.clone(),local_key:policy.host_key.clone(),expires_at:policy.expires_at,display_width:policy.display_width,display_height:policy.display_height,display_name:policy.display_name.clone(),policy_path:path.clone(),policy:policy.clone(),limit,deadline:Instant::now()+Duration::from_secs(1800),wall_deadline};
+    let result=slots.sessions[0].prepare_routed("host",&policy.url,&policy.server_id,profile,Some(policy.display_id),policy.relay_only,true,true,None,Some(path),&policy.quality,None,75,Vec::new(),0,None,None,false,false,policy.extended,true,Some(auto),None,None)?;
     slots.exclusive[0]=true;slots.identity_slot[0]=Some(0);slots.shared[0]=false;Ok(result)
 }
 #[tauri::command]
@@ -938,6 +1046,16 @@ pub fn lan_disconnect(window: WebviewWindow, manager: State<'_, SessionManager>)
 mod tests {
     use super::*;
     #[test]
+    fn service_never_rearms_a_failed_or_revoked_session(){
+        assert!(may_rearm(3,1,true,true,false,true));
+        assert!(!may_rearm(1,1,true,true,false,true));
+        assert!(!may_rearm(3,3,true,true,false,true));
+        assert!(!may_rearm(3,1,false,true,false,true));
+        assert!(!may_rearm(3,1,true,false,false,true));
+        assert!(!may_rearm(3,1,true,true,true,true));
+        assert!(!may_rearm(3,1,true,true,false,false));
+    }
+    #[test]
     fn only_specific_private_endpoints_and_valid_keys() {
         assert!(local_endpoint("127.0.0.1:47821").is_ok());
         assert!(local_endpoint("192.168.1.8:47821").is_ok());
@@ -956,7 +1074,7 @@ mod tests {
     fn control_requires_distinct_consent_and_release_marker() {
         assert_eq!(Profile::Control.consent(true), "ALLOW SCREEN AND INPUT");
         assert_eq!(Profile::Control.consent(false), "ALLOW REMOTE INPUT");
-        let shared = Mutex::new(Snapshot { stage: Stage::Connected, active: true, local_key: None, detail: None, profile: Profile::Control, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, transfer_paused:false, checkpoint_saved:None, directory_entries:None, clipboard_sent:None, clipboard_received:None, catalog:Vec::new(), catalog_ready:false,catalog_selected:None,manage_review:None,manage_token:None,manage_submitted:false,manage_approved:false,manage_applied:None,secondary_control:false,armed:false,saved_policy:false,server_scope:None,extended:false,stream_quality:None,stream_decoded:None,resume_offset:None, audio_volume:None, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None });
+        let shared = Mutex::new(Snapshot { stage: Stage::Connected, active: true, local_key: None, detail: None, profile: Profile::Control, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, transfer_paused:false, checkpoint_saved:None, directory_entries:None, clipboard_sent:None, clipboard_received:None, catalog:Vec::new(), catalog_ready:false,catalog_selected:None,manage_review:None,manage_token:None,manage_submitted:false,manage_approved:false,manage_applied:None,power_review:None,power_approved:false,power_receipt:None,power_accepted:None,power_os_submitted:false,secondary_control:false,armed:false,saved_policy:false,service_running:false,service_limit:0,service_completed:0,service_expires_at:None,server_scope:None,extended:false,stream_quality:None,stream_decoded:None,resume_offset:None, audio_volume:None, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None });
         let (mut pass, mut failure) = (false, None);
         stage(&shared, Stage::Stopping, None);
         assert!(locked(&shared).active);
@@ -966,7 +1084,7 @@ mod tests {
     }
     #[test]
     fn status_requires_valid_local_key_and_terminal_state() {
-        let shared = Mutex::new(Snapshot { stage: Stage::Starting, active: true, local_key: None, detail: None, profile: Profile::Diagnostic, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, transfer_paused:false, checkpoint_saved:None, directory_entries:None, clipboard_sent:None, clipboard_received:None, catalog:Vec::new(), catalog_ready:false,catalog_selected:None,manage_review:None,manage_token:None,manage_submitted:false,manage_approved:false,manage_applied:None,secondary_control:false,armed:false,saved_policy:false,server_scope:None,extended:false,stream_quality:None,stream_decoded:None,resume_offset:None, audio_volume:None, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None });
+        let shared = Mutex::new(Snapshot { stage: Stage::Starting, active: true, local_key: None, detail: None, profile: Profile::Diagnostic, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, transfer_paused:false, checkpoint_saved:None, directory_entries:None, clipboard_sent:None, clipboard_received:None, catalog:Vec::new(), catalog_ready:false,catalog_selected:None,manage_review:None,manage_token:None,manage_submitted:false,manage_approved:false,manage_applied:None,power_review:None,power_approved:false,power_receipt:None,power_accepted:None,power_os_submitted:false,secondary_control:false,armed:false,saved_policy:false,service_running:false,service_limit:0,service_completed:0,service_expires_at:None,server_scope:None,extended:false,stream_quality:None,stream_decoded:None,resume_offset:None, audio_volume:None, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None });
         let (mut pass, mut fail) = (false, None);
         handle_output(&shared, Output::Stdout(format!("KEY {}", "ab".repeat(32))), &mut pass, &mut fail);
         assert_eq!(locked(&shared).stage, Stage::AwaitingApproval);

@@ -9,3 +9,5 @@ pub mod checkpoint;
 pub mod directory;
 
 pub mod platform;
+
+pub mod power;
