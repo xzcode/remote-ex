@@ -43,7 +43,7 @@ pub(crate) fn setup_tray(app:&AppHandle){
 pub struct Capabilities{
     os:String,desktop_session:String,view_candidate:bool,input_candidate:bool,armed_candidate:bool,sidecar_present:bool,
     login_launch:bool,tray_ready:bool,wayland_portal:bool,remote_power:bool,virtual_display:bool,privacy_display:bool,
-    portal_sources:Vec<String>,portal_version:Option<u32>,portal_detail:Option<String>,
+    portal_sources:Vec<String>,portal_version:Option<u32>,portal_detail:Option<String>,portal_control:bool,local_privacy_pause:bool,
 }
 #[tauri::command]
 pub async fn platform_capabilities(window:WebviewWindow)->Result<Capabilities,String>{
@@ -63,13 +63,15 @@ pub async fn platform_capabilities(window:WebviewWindow)->Result<Capabilities,St
     let mut portal_version=None;
     #[allow(unused_mut)]
     let mut portal_detail=None;
+    #[allow(unused_mut)]
+    let mut portal_control=false;
     #[cfg(target_os="linux")]
     if desktop_session=="wayland"{
         use ashpd::desktop::screencast::{Screencast,SourceType,CursorMode};
         let result=tokio::time::timeout(Duration::from_secs(3),async{
             let proxy=Screencast::new().await.map_err(|_|"No ScreenCast portal available")?;
             let version=proxy.version();
-            if !(2..=5).contains(&version){return Ok((version,Vec::new(),Some("Portal version requires stable PipeWire serial support".to_owned())));}
+            if version<2{return Ok((version,Vec::new(),Some("ScreenCast portal v2 or newer is required".to_owned())));}
             let modes=proxy.available_cursor_modes().await.map_err(|_|"Cannot query portal cursor modes")?;
             let available=proxy.available_source_types().await.map_err(|_|"Cannot query portal source types")?;
             if !modes.contains(CursorMode::EMBEDDED){return Ok((version,Vec::new(),Some("Portal does not support embedded cursor".to_owned())));}
@@ -77,12 +79,21 @@ pub async fn platform_capabilities(window:WebviewWindow)->Result<Capabilities,St
             Ok::<_,&str>((version,sources,None))
         }).await;
         match result{Ok(Ok((version,sources,detail)))=>{portal_version=Some(version);portal_sources=sources;portal_detail=detail;},Ok(Err(e))=>portal_detail=Some(e.into()),Err(_)=>portal_detail=Some("ScreenCast capability query timed out".into())}
+        if portal_sources.iter().any(|s|s=="monitor"){
+            use ashpd::desktop::remote_desktop::{RemoteDesktop,DeviceType};
+            portal_control=tokio::time::timeout(Duration::from_secs(3),async{
+                let rd=RemoteDesktop::new().await.ok()?;
+                let devices=rd.available_device_types().await.ok()?;
+                Some(rd.version()>=2&&devices.contains(DeviceType::KEYBOARD|DeviceType::POINTER))
+            }).await.ok().flatten().unwrap_or(false);
+        }
     }
     let portal_ready=!portal_sources.is_empty()&&sidecar_present;
+    portal_control&=portal_ready;
     let virtual_display=portal_ready&&portal_sources.iter().any(|s|s=="virtual");
     Ok(Capabilities{os:os.into(),desktop_session:desktop_session.into(),view_candidate:desktop||desktop_session=="x11"||portal_ready,
-        input_candidate:desktop||desktop_session=="x11",armed_candidate:desktop,sidecar_present,login_launch:desktop||cfg!(target_os="linux"),tray_ready:TRAY_READY.load(Ordering::Acquire),
-        wayland_portal:portal_ready,remote_power:sidecar_present&&(desktop||matches!(desktop_session,"x11"|"wayland")),virtual_display,privacy_display:false,portal_sources,portal_version,portal_detail})
+        input_candidate:desktop||desktop_session=="x11"||portal_control,armed_candidate:desktop,sidecar_present,login_launch:desktop||cfg!(target_os="linux"),tray_ready:TRAY_READY.load(Ordering::Acquire),
+        wayland_portal:portal_ready,remote_power:sidecar_present&&(desktop||matches!(desktop_session,"x11"|"wayland")),virtual_display,privacy_display:false,portal_sources,portal_version,portal_detail,portal_control,local_privacy_pause:sidecar_present&&(desktop||desktop_session=="x11")})
 }
 #[tauri::command]
 pub fn startup_status(window:WebviewWindow)->Result<bool,String>{

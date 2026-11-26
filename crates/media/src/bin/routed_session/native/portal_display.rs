@@ -7,11 +7,23 @@ use futures_util::StreamExt;
 use gstreamer as gst;
 use gst::prelude::*;
 use gstreamer_app as app;
-use remote_ex_desktop_features::platform::PortalSource;
+use remote_ex_desktop_features::platform::{PortalSource,PortalTarget,portal_target};
 use std::{os::fd::AsRawFd,sync::mpsc::SyncSender};
 
 struct Pipeline(gst::Pipeline);
 impl Drop for Pipeline{fn drop(&mut self){let _=self.0.set_state(gst::State::Null);}}
+pub(super) fn source_spec(fd:i32,version:u32,stream:&ashpd::desktop::screencast::Stream)->MediaResult<String>{
+    if fd<0{return Err("Invalid portal remote fd".into());}
+    let target=portal_target(version,stream.pipe_wire_node_id(),stream.pipewire_serial())?;
+    let selector=match target{PortalTarget::Node(n)=>format!("path={n}"),PortalTarget::Serial(n)=>format!("target-object={n}")};
+    Ok(format!("pipewiresrc name=portal_source fd={fd} {selector} client-name=RemoteEX always-copy=true"))
+}
+pub(super) fn restrict_stream(p:&gst::Pipeline)->MediaResult<()>{
+    let src=p.by_name("portal_source").ok_or("Missing restricted PipeWire source")?;
+    let props=gst::Structure::builder("props").field("node.dont-reconnect",true).field("node.dont-fallback",true).field("node.dont-move",true).build();
+    if src.find_property("stream-properties").is_none(){return Err("PipeWire plugin cannot restrict source selection".into());}
+    src.set_property("stream-properties",&props);Ok(())
+}
 fn frame_pipeline(source:&str,config:VideoConfig)->MediaResult<(Pipeline,app::AppSink)>{
     config.validate()?;
     let p=gst::parse::launch(&format!("{source} ! queue max-size-buffers=2 max-size-bytes=0 max-size-time=0 leaky=downstream ! videoconvert ! videoscale add-borders=true ! videorate drop-only=true ! video/x-raw,format=RGBA,width={},height={},framerate={}/1,pixel-aspect-ratio=1/1 ! appsink name=portal_frames sync=false max-buffers=1 drop=true",config.width,config.height,config.fps)).map_err(error)?.downcast::<gst::Pipeline>().map_err(|_|"Invalid portal pipeline")?;
@@ -31,9 +43,7 @@ async fn wait_stop(stop:&AtomicBool){while !stopped(stop){tokio::time::sleep(Dur
 async fn run(source:PortalSource,config:VideoConfig,stop:Arc<AtomicBool>,tx:&SyncSender<MediaResult<Captured>>)->MediaResult<()>{
     remote_ex_desktop_features::platform::require_wayland()?;
     let proxy=tokio::time::timeout(Duration::from_secs(5),Screencast::new()).await.map_err(|_|"ScreenCast portal unavailable")?.map_err(error)?;
-    // Version six introduces stable PipeWire serial targeting. This initial
-    // adapter deliberately rejects it until serial selection is integrated.
-    if !(2..=5).contains(&proxy.version()){return Err("Unsupported ScreenCast portal version; node-ID capture supports versions 2–5 only".into());}
+    let version=proxy.version();if version<2{return Err("ScreenCast portal v2 or newer is required".into());}
     let types=match source{PortalSource::Monitor=>SourceType::MONITOR,PortalSource::Window=>SourceType::WINDOW,PortalSource::Virtual=>SourceType::VIRTUAL};
     let session=tokio::time::timeout(Duration::from_secs(5),proxy.create_session(Default::default())).await.map_err(|_|"Portal session creation timed out")?.map_err(error)?;
     let result:MediaResult<()>=async{
@@ -44,12 +54,12 @@ async fn run(source:PortalSource,config:VideoConfig,stop:Arc<AtomicBool>,tx:&Syn
             proxy.select_sources(&session,SelectSourcesOptions::default().set_sources(types).set_cursor_mode(CursorMode::EMBEDDED).set_multiple(false).set_persist_mode(PersistMode::DoNot)).await.map_err(error)?.response().map_err(error)?;
             let response=proxy.start(&session,None,Default::default()).await.map_err(error)?.response().map_err(error)?;
             let streams=response.streams();if streams.len()!=1{return Err("Select exactly one portal stream".into());}
-            let node=streams[0].pipe_wire_node_id();
-            if node==0||node==u32::MAX{return Err("Invalid portal stream node".into());}
+            if streams[0].source_type().is_some_and(|kind|kind!=types){return Err("Portal returned a different source type".into());}
+            let stream=streams[0].clone();
             let fd=proxy.open_pipe_wire_remote(&session,Default::default()).await.map_err(error)?;
-            Ok((node,fd))
+            Ok((stream,fd))
         };
-        let(node,fd)=tokio::select!{
+        let(stream,fd)=tokio::select!{
             _=wait_stop(&stop)=>return Err("Portal selection canceled".into()),
             _=closed.next()=>return Err("Portal session closed during selection".into()),
             result=tokio::time::timeout(Duration::from_secs(25),picker)=>result.map_err(|_|"Portal selection timed out")??,
@@ -57,7 +67,8 @@ async fn run(source:PortalSource,config:VideoConfig,stop:Arc<AtomicBool>,tx:&Syn
         if stopped(&stop){return Err("Portal sharing revoked".into());}
         // Only numeric fd and exact node from the portal response; no default
         // PipeWire server or remotely supplied source. Retain fd through stop.
-        let(p,sink)=frame_pipeline(&format!("pipewiresrc fd={} path={} client-name=RemoteEX always-copy=true",fd.as_raw_fd(),node),config)?;
+        let(p,sink)=frame_pipeline(&source_spec(fd.as_raw_fd(),version,&stream)?,config)?;
+        restrict_stream(&p.0)?;
         p.0.set_state(gst::State::Playing).map_err(error)?;
         let bus=p.0.bus().ok_or("Missing portal bus")?;
         let result=loop{
@@ -70,7 +81,7 @@ async fn run(source:PortalSource,config:VideoConfig,stop:Arc<AtomicBool>,tx:&Syn
             }
             if stopped(&stop){break Ok(());}
             if let Some(sample)=sink.try_pull_sample(gst::ClockTime::ZERO){
-                let frame=Captured{layout:0,pixels:pixels(&sample,config)?};
+                let frame=Captured{layout:0,pixels:pixels(&sample,config)?,epoch:0};
                 match tx.try_send(Ok(frame)){
                     Ok(())|Err(TrySendError::Full(_))=>{},
                     Err(TrySendError::Disconnected(_))=>break Ok(()),
@@ -94,7 +105,7 @@ pub(super) fn capture(source:PortalSource,config:VideoConfig)->Capture{
         if !stopped(&worker){if let Err(e)=result{let _=tx.try_send(Err(e));}}
         drop(tx);let _=done_tx.try_send(());
     });
-    Capture{rx,stop,layout:Arc::new(AtomicUsize::new(0)),count:1,first_wait:Duration::from_secs(40),done:Some(done)}
+    Capture{rx,stop,layout:Arc::new(AtomicUsize::new(0)),count:1,first_wait:Duration::from_secs(40),done:Some(done),portal:true}
 }
 #[cfg(test)]mod tests{
     use super::*;

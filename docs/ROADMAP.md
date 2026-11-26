@@ -89,3 +89,7 @@ Saved expiring per-device host policy with exact server, device, display and sco
 
 ### M4 third integrated batch
 374e77f four CI succeeded; a6a4065 dual native packages passed. New implementation: Wayland ScreenCast/PipeWire view-only portal (versions 2–5, one monitor/window/virtual source, compositor-provided virtual capability), independent host-reviewed power request, and locally activated bounded three-session/30-minute saved-policy service. CI only verifies portal compile/element/frame conversion and inert power fixtures; real compositor/OS power/long service acceptance pending. No hidden or automatic login access, no Wayland input, no physical-display privacy, no Windows/macOS virtual display driver. M4 not yet accepted.
+
+
+### M4 fourth integrated batch
+2bb2dc2: all six CI workflows passed. Candidate adds Portal v6+ stable serial targeting, native Wayland monitor+keyboard/pointer via explicit compositor RemoteDesktop grant, native console/desktop/sleep lifecycle checks and fail-closed suspend guard, continuous saved-policy verification, locally authorized 12 sequential sessions/2h option with 15-minute per-wait bound, and local native view-only sharing pause/fresh-frame resume. Physical privacy and Windows/macOS virtual display driver are not implemented; Wayland real compositor and OS lock/suspend behavior still need physical acceptance. New CI pending. M4 is not formally accepted.

@@ -43,6 +43,7 @@ fn main() {
             lan::routed_manage_submit,
             lan::routed_manage_approve,
             lan::routed_power_approve,
+            lan::routed_privacy_change,
             lan::select_transfer_file,
             lan::lan_status,
             lan::lan_confirm,

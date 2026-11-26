@@ -87,3 +87,6 @@ The current M4 batch adds one-time locally armed trusted-device connection, user
 M4 second batch adds locally activated, time-limited saved host policies and experimental Linux X11 native input. Linux debug archive build workflow added. Wayland, remote shutdown/restart, virtual display drivers, and physical privacy mode remain pending; no unattended startup access enabled. See [M4 handoff](docs/M4_FULL_HANDOFF.md).
 
 M4 third batch: experimental Wayland Portal read-only sharing (monitor/window/virtual where supported), separately reviewed shutdown/restart requests, and explicitly enabled bounded multi-session host service. No automatic login access or privileged service; real platform validation and native physical display privacy/virtual drivers remain open. See [M4 handoff](docs/M4_FULL_HANDOFF.md).
+
+
+M4 fourth batch adds experimental native Wayland input and stable portal stream targeting, local view-only sharing privacy pause, active desktop/suspend checks, policy revalidation, and a bounded two-hour visible host service. Physical display privacy and Windows/macOS virtual display drivers remain open. See [M4 handoff](docs/M4_FULL_HANDOFF.md) for exact scope and CI.

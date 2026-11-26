@@ -26,8 +26,9 @@ fn unhex(s:&str,max:usize)->Result<Vec<u8>>{
 async fn relay(conn:&mut Connection,session:&str,payload:Signal)->Result<()>{
     conn.send(Client::Signal{session:session.into(),payload}).await
 }
-async fn recv(conn:&mut Connection,session:&str)->Result<Signal>{
-    match conn.receive(Duration::from_secs(15)).await?{
+async fn recv(conn:&mut Connection,session:&str)->Result<Signal>{recv_limit(conn,session,Duration::from_secs(15)).await}
+async fn recv_limit(conn:&mut Connection,session:&str,limit:Duration)->Result<Signal>{
+    match conn.receive(limit).await?{
         Server::Signal{session:id,payload} if id==session=>Ok(payload),
         _=>Err("Unexpected routed record or closed session".into()),
     }
@@ -81,10 +82,11 @@ impl RouteCipher{
         }.await;
         if result.is_err(){self.failed=true;}result
     }
-    async fn open(&mut self,conn:&mut Connection)->Result<Zeroizing<Vec<u8>>>{
+    async fn open(&mut self,conn:&mut Connection)->Result<Zeroizing<Vec<u8>>>{self.open_limit(conn,Duration::from_secs(15)).await}
+    async fn open_limit(&mut self,conn:&mut Connection,limit:Duration)->Result<Zeroizing<Vec<u8>>>{
         if self.failed{return Err("Encrypted route closed".into());}
         let result=async{
-            let Signal::Sealed{packet}=recv(conn,&self.session).await? else{return Err("Plaintext downgrade refused".into());};
+            let Signal::Sealed{packet}=recv_limit(conn,&self.session,limit).await? else{return Err("Plaintext downgrade refused".into());};
             let bytes=unhex(&packet,MAX_CLEAR+16)?;
             if bytes.len()<16{return Err("Truncated encrypted record".into());}
             let mut clear=Zeroizing::new(vec![0;MAX_CLEAR]);
@@ -100,7 +102,11 @@ impl RouteCipher{
         self.seal(conn,&clear).await
     }
     pub async fn receive(&mut self,conn:&mut Connection)->Result<Signal>{
-        let clear=self.open(conn).await?;
+        self.receive_limit(conn,Duration::from_secs(15)).await
+    }
+    /// Bounded wait for a fresh local OS source picker, never indefinite.
+    pub async fn receive_limit(&mut self,conn:&mut Connection,limit:Duration)->Result<Signal>{
+        let clear=self.open_limit(conn,limit.min(Duration::from_secs(45))).await?;
         let result=(||{
             let payload:Signal=serde_json::from_slice(&clear).map_err(|_|"Invalid inner signal")?;
             if matches!(payload,Signal::NoiseHandshake{..}|Signal::Sealed{..}){return Err("Nested encryption record refused".into());}

@@ -56,7 +56,8 @@ def main():
     armed_cancel="--armed-cancel" in sys.argv[3:]
     armed_wrong="--armed-wrong-key" in sys.argv[3:]
     armed_test=armed_test or armed_cancel or armed_wrong
-    x11_test="--x11-view-test" in sys.argv[3:]
+    x11_privacy="--x11-privacy-test" in sys.argv[3:]
+    x11_test="--x11-view-test" in sys.argv[3:] or x11_privacy
     power_test="--power-test" in sys.argv[3:]
     power_wrong="--power-wrong-token" in sys.argv[3:]
     power_test=power_test or power_wrong
@@ -248,6 +249,12 @@ def main():
             elif x11_test:
                 for pair,key,consent in ((host,ck,"ALLOW ROUTED SCREEN"),(controller,hk,"ALLOW ROUTED VIEW")):
                     pair[0].stdin.write(key+"\n"+consent+"\n");pair[0].stdin.flush()
+                if x11_privacy:
+                    expect(host,"CONNECTED ROUTED VIEW",deadline)
+                    expect(controller,"CONNECTED ROUTED VIEW",deadline)
+                    host[0].stdin.write("SHARE_PAUSE\n");host[0].stdin.flush();expect(host,"SHARING_PAUSED",deadline)
+                    time.sleep(1)
+                    host[0].stdin.write("SHARE_RESUME\n");host[0].stdin.flush();expect(host,"SHARING_RESUMED",deadline)
             elif extended_test:
                 for pair,key in ((host,ck),(controller,hk)):
                     pair[0].stdin.write(key+"\nALLOW EXTENDED SYNTHETIC TEST\n");pair[0].stdin.flush()

@@ -200,9 +200,9 @@ async fn wait_data_limit(peer:&Peer,channel:&ControlChannel,conn:&mut Connection
 }
 async fn finish(conn:&mut Connection,session:&str)->MediaResult<()>{conn.finish_route(session).await}
 
-async fn host(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey,relay_only:bool,profile:Profile,display:Option<u32>,extra_displays:Vec<u32>,quality:&str,exchange_path:Option<&std::path::Path>,volume:u8,resume:&exchange::ResumeOptions,secondary:bool,armed:bool,policy_display:Option<(u32,u32,String)>,portal_source:Option<remote_ex_desktop_features::platform::PortalSource>)->MediaResult<()>{
+async fn host(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey,relay_only:bool,profile:Profile,display:Option<u32>,extra_displays:Vec<u32>,quality:&str,exchange_path:Option<&std::path::Path>,volume:u8,resume:&exchange::ResumeOptions,secondary:bool,armed:bool,armed_wait:u64,policy_display:Option<(u32,u32,String)>,portal_source:Option<remote_ex_desktop_features::platform::PortalSource>)->MediaResult<()>{
     let grant=profile.grant();
-    let event=if armed{out("LISTENING ARMED 300")?;conn.wait_armed_incoming(Duration::from_secs(300),canceled).await?}else{recv(conn).await?};
+    let event=if armed{out(&format!("LISTENING ARMED {armed_wait}"))?;conn.wait_armed_incoming(Duration::from_secs(armed_wait),canceled).await?}else{recv(conn).await?};
     if canceled(){return Err("Local consent revoked".into());}
     let Server::Incoming{session,controller,controller_key,requested,controller_nonce}=event
         else{return Err("Expected incoming device request".into());};
@@ -423,7 +423,7 @@ async fn controller(mut owned:Connection,id:&DeviceIdentity,expected:PublicKey,r
     if !profile.synthetic(){
         #[cfg(any(all(feature="native-control",any(target_os="windows",target_os="macos")),all(feature="native-x11-view",target_os="linux")))]
         {
-            let Signal::Geometry{x,y,width,height}=cipher.receive(conn).await? else{return Err("Missing authorized display geometry".into());};
+            let Signal::Geometry{x,y,width,height}=cipher.receive_limit(conn,Duration::from_secs(45)).await? else{return Err("Missing authorized display geometry".into());};
             let geometry=Geometry{x,y,width,height};
             if x.checked_add(width).is_none_or(|n|n>config.width)||y.checked_add(height).is_none_or(|n|n>config.height){return Err("Geometry exceeds negotiated canvas".into());}
             let screens=if profile.native_view(){
@@ -488,7 +488,7 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
     let url=a.next().ok_or("Missing WSS URL")?;
     let pin=decode_hex::<32>(&a.next().ok_or("Missing server ID")?).map_err(error)?;
     let endpoint=Endpoint::secure(&url,pin)?;
-    let mut ca=None;let mut relay_only=false;let mut profile=Profile::Test;let mut display=None;let mut supervised=false;let mut persistent=false;let mut defer_test_registration=false;let mut quality="compat".to_owned();let mut exchange_path=None;let mut volume=75u8;let mut extra_displays=Vec::new();let mut identity_slot=None;let mut resume=exchange::ResumeOptions::default();let mut shared_controller=false;let mut secondary=false;let mut extended=false;let mut armed=false;let mut armed_test=false;let mut policy_display=None;let mut portal_source=None;let mut power_action=None;
+    let mut ca=None;let mut relay_only=false;let mut profile=Profile::Test;let mut display=None;let mut supervised=false;let mut persistent=false;let mut defer_test_registration=false;let mut quality="compat".to_owned();let mut exchange_path=None;let mut volume=75u8;let mut extra_displays=Vec::new();let mut identity_slot=None;let mut resume=exchange::ResumeOptions::default();let mut shared_controller=false;let mut secondary=false;let mut extended=false;let mut armed=false;let mut armed_test=false;let mut armed_wait=300u64;let mut policy_display=None;let mut portal_source=None;let mut power_action=None;
     while let Some(arg)=a.next(){match arg.as_str(){
         "--ca" if ca.is_none()=>ca=Some(a.next().ok_or("Missing CA path")?),
         "--relay-only" if !relay_only=>relay_only=true,
@@ -500,6 +500,7 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
         "--secondary-control" if !secondary&&native_allowed&&host=>secondary=true,
         "--extended" if !extended&&native_allowed=>extended=true,
         "--armed-host" if !armed&&native_allowed&&host=>armed=true,
+        "--armed-wait" if armed_wait==300&&native_allowed&&host=>{if a.next().as_deref()!=Some("900"){return Err("Unsupported supervised wait duration".into());}armed_wait=900;},
         "--portal-source" if portal_source.is_none()&&native_allowed&&host=>portal_source=Some(remote_ex_desktop_features::platform::PortalSource::parse(&a.next().ok_or("Select local portal source")?)?),
         "--policy-display" if policy_display.is_none()&&native_allowed&&host=>{
             let w=a.next().ok_or("Missing policy display width")?.parse::<u32>().map_err(error)?;
@@ -548,19 +549,20 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
     }
     if armed&&(!supervised||!persistent||!host||!(profile.native_view()||profile.native_control())||profile.av()){return Err("Arming requires persistent identity, explicit visible supervision and a screen-only view/control profile".into());}
     if policy_display.is_some()&&(!armed||!extra_displays.is_empty()||secondary){return Err("Saved host policy requires one exact approved display".into());}
+    if armed_wait!=300&&(!armed||policy_display.is_none()||!supervised||!persistent){return Err("Long wait requires a locally activated saved host policy".into());}
     if armed_test&&(!supervised||persistent||profile!=Profile::Test){return Err("Armed test requires temporary supervised synthetic host".into());}
     if cfg!(target_os="linux")&&native_allowed&&(!(profile.native_view()||profile.native_control()||matches!(profile,Profile::Power(false)))||profile.av()||persistent||armed||secondary){return Err("Linux X11 candidate supports temporary supervised screen view/control only".into());}
-    if portal_source.is_some()&&(!cfg!(target_os="linux")||!host||!supervised||!profile.native_view()||profile.av()||persistent||armed||secondary||!extra_displays.is_empty()||display!=Some(0)){
-        return Err("Portal source requires a temporary, supervised Linux view-only host with one OS-selected source".into());
+    if portal_source.is_some()&&(!cfg!(target_os="linux")||!host||!supervised||!(profile.native_view()||profile.native_control())||profile.av()||persistent||armed||secondary||!extra_displays.is_empty()||display!=Some(0)||profile.native_control()&&portal_source!=Some(remote_ex_desktop_features::platform::PortalSource::Monitor)){
+        return Err("Portal source requires a temporary supervised Linux host and one OS-selected source; input requires a monitor".into());
     }
     if cfg!(target_os="linux")&&native_allowed{
         use remote_ex_desktop_features::platform::{LinuxSession,linux_session};
         if !supervised{return Err("Linux sessions require explicit desktop supervision".into());}
         match linux_session(){
             LinuxSession::X11 if portal_source.is_none()=>{},
-            LinuxSession::Wayland if profile.native_view()&&!profile.av()&&(!host||portal_source.is_some())=>{},
+            LinuxSession::Wayland if (profile.native_view()||profile.native_control())&&!profile.av()&&(!host||portal_source.is_some())=>{},
             LinuxSession::Wayland if matches!(profile,Profile::Power(false))=>{},
-            _=>return Err("Use an explicit Wayland portal view source; no XWayland capture/input fallback".into()),
+            _=>return Err("Use an explicit Wayland portal source; no XWayland capture/input fallback".into()),
         }
     }
     if profile==Profile::ExtendedTest&&!supervised{return Err("Extended test requires supervised synthetic mode".into());}
@@ -635,10 +637,12 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
     if let Profile::Exchange(mode)=profile{out(&format!("TRANSFER {} {:?}",if mode.sending(host){"SEND"}else{"RECEIVE"},mode.kind))?;}
     let consent=if secondary{if profile.av(){"ALLOW SELECTED DISPLAY AUDIO AND INPUT"}else{"ALLOW SELECTED DISPLAY AND INPUT"}}else{profile.consent(host)};
     let consent=if extended{format!("{consent} FOR UP TO 300 SECONDS")}else{consent.to_owned()};
-    let consent=if armed||armed_test{format!("{consent} ARMED FOR UP TO 300 SECONDS")}else{consent};
+    let consent=if armed||armed_test{format!("{consent} ARMED FOR UP TO {armed_wait} SECONDS")}else{consent};
     out(&format!("CONSENT (type {consent}; one-shot)"))?;
     if input()? !=consent||canceled(){return Err("Local consent denied".into());}
     audio::VOLUME.store(volume,Ordering::Release);
+    #[cfg(any(all(feature="native-control",any(target_os="windows",target_os="macos")),all(feature="native-x11-view",target_os="linux")))]
+    if host&&(profile.native_view()||profile.native_control()){native::start_session_watch()?;}
     if supervised{
         let allow_pause=matches!(profile,Profile::Exchange(m) if m.kind==remote_ex_desktop_features::exchange::Kind::File&&m.sending(host));
         let allow_volume=(profile==Profile::Audio(false)||profile.av())&&!host;
@@ -646,10 +650,11 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
         let allow_batch=profile==Profile::CatalogBatch&&!host;
         let allow_manage=profile==Profile::Manage;
         let allow_power=matches!(profile,Profile::Power(_))&&host;
+        let allow_privacy=host&&matches!(profile,Profile::View|Profile::ExtendedView)&&portal_source.is_none();
         std::thread::spawn(move||{
             use std::io::BufRead;
             let mut pipe=io::stdin().lock();
-            if allow_pause||allow_volume||allow_catalog||allow_batch||allow_manage||allow_power{
+            if allow_pause||allow_volume||allow_catalog||allow_batch||allow_manage||allow_power||allow_privacy{
                 loop{
                     let mut line=Vec::new();
                     match (&mut pipe).take(if allow_manage{1024}else if allow_power{128}else if allow_batch{32}else{16}).read_until(b'\n',&mut line){
@@ -661,6 +666,12 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
                             match command{
                                 b"PAUSE" if allow_pause=>exchange::PAUSED.store(true,Ordering::Release),
                                 b"RESUME" if allow_pause=>exchange::PAUSED.store(false,Ordering::Release),
+                                b"SHARE_PAUSE"|b"SHARE_RESUME" if allow_privacy=>{
+                                    #[cfg(any(all(feature="native-control",any(target_os="windows",target_os="macos")),all(feature="native-x11-view",target_os="linux")))]
+                                    if native::privacy_change(command==b"SHARE_PAUSE").is_err(){break;}
+                                    #[cfg(not(any(all(feature="native-control",any(target_os="windows",target_os="macos")),all(feature="native-x11-view",target_os="linux"))))]
+                                    break;
+                                },
                                 cmd if allow_volume&&cmd.starts_with(b"VOLUME ")=>{
                                     let value=std::str::from_utf8(&cmd[7..]).ok().filter(|s|!s.is_empty()&&s.len()<=3&&s.bytes().all(|b|b.is_ascii_digit())).and_then(|s|s.parse::<u8>().ok());
                                     if let Some(v)=value.filter(|v|*v<=100){audio::VOLUME.store(v,Ordering::Release);}else{break;}
@@ -690,7 +701,7 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
         });
     }
     if host{
-        let result=self::host(&mut conn,&id,expected,relay_only,profile,display,extra_displays,&quality,exchange_path.as_deref(),volume,&resume,secondary,armed||armed_test,policy_display,portal_source).await;
+        let result=self::host(&mut conn,&id,expected,relay_only,profile,display,extra_displays,&quality,exchange_path.as_deref(),volume,&resume,secondary,armed||armed_test,armed_wait,policy_display,portal_source).await;
         let close=conn.close().await;result?;close
     }else{controller(conn,&id,expected,relay_only,profile,&quality,exchange_path.as_deref(),volume,&resume,power_action).await}
 }

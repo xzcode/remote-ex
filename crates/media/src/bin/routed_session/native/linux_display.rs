@@ -50,7 +50,7 @@ pub(super) fn require_local_session()->MediaResult<()>{
     if !status.success()||data.len()>2048||!active_local_x11(&data,&display){return Err("X11 input requires an active, unlocked, local user session matching DISPLAY".into());}
     *cache=Some(Instant::now());Ok(())
 }
-fn physical(usage:u16)->Option<u8>{
+pub(super) fn physical(usage:u16)->Option<u8>{
     // Linux evdev + 8 Xorg keycodes, only with verified evdev XKB rules.
     const LETTERS:[u8;26]=[30,48,46,32,18,33,34,35,23,36,37,38,50,49,24,25,16,19,31,20,22,47,17,45,21,44];
     let evdev=match usage{

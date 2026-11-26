@@ -20,7 +20,32 @@ impl PortalSource{
     pub fn parse(s:&str)->Result<Self,String>{match s{"monitor"=>Ok(Self::Monitor),"window"=>Ok(Self::Window),"virtual"=>Ok(Self::Virtual),_=>Err("Unknown local portal source".into())}}
     pub fn as_str(self)->&'static str{match self{Self::Monitor=>"monitor",Self::Window=>"window",Self::Virtual=>"virtual"}}
 }
+/// Never select the default PipeWire source. Modern portals must provide
+/// an exact stable serial; legacy nodes are valid only inside their portal fd.
+#[derive(Clone,Copy,Debug,PartialEq,Eq)]
+pub enum PortalTarget{Node(u32),Serial(u64)}
+pub fn portal_target(version:u32,node:u32,serial:Option<u64>)->Result<PortalTarget,String>{
+    if version<2||node==0||node==u32::MAX{return Err("Invalid ScreenCast portal stream".into());}
+    if let Some(s)=serial.filter(|s|*s!=0&&*s!=u64::MAX){return Ok(PortalTarget::Serial(s));}
+    if version>=6{return Err("ScreenCast portal v6+ must supply a stable PipeWire serial".into());}
+    Ok(PortalTarget::Node(node))
+}
 pub fn require_wayland()->Result<(),String>{if linux_session()==LinuxSession::Wayland{Ok(())}else{Err("A native Wayland desktop session is required".into())}}
+/// Fail closed after suspend, prolonged supervisor starvation or a wall
+/// clock rollback; a new local approval is required instead of auto-resume.
+pub fn lifecycle_gap(mono:std::time::Duration,wall:Result<std::time::Duration,std::time::SystemTimeError>)->bool{
+    let ceiling=std::time::Duration::from_secs(6);
+    mono<=ceiling&&wall.is_ok_and(|d|d<=ceiling)
+}
+pub struct LifecycleWatch{mono:std::time::Instant,wall:std::time::SystemTime}
+impl Default for LifecycleWatch{fn default()->Self{Self{mono:std::time::Instant::now(),wall:std::time::SystemTime::now()}}}
+impl LifecycleWatch{
+    pub fn check(&mut self)->Result<(),String>{
+        let mono=std::time::Instant::now();let wall=std::time::SystemTime::now();
+        let ok=lifecycle_gap(mono.saturating_duration_since(self.mono),wall.duration_since(self.wall));self.mono=mono;self.wall=wall;
+        if !ok{return Err("Local session suspended or clock changed; authorize again".into());}Ok(())
+    }
+}
 pub fn wake_packet(mac:&str)->Result<[u8;102],String>{
     let normalized=mac.trim().replace(':',"").replace('-',"");
     if normalized.len()!=12||!normalized.bytes().all(|v|v.is_ascii_hexdigit()){return Err("Enter a six-byte network adapter MAC address".into());}
@@ -40,6 +65,19 @@ mod tests{
         assert_eq!(classify_linux(Some("x11"),Some(":0"),Some("wayland-0"),None),LinuxSession::Wayland);
         assert_eq!(classify_linux(None,Some(":0"),None,None),LinuxSession::Unavailable);
         assert_eq!(classify_linux(Some("x11"),None,None,None),LinuxSession::Unavailable);
+    }
+    #[test]fn lifecycle_gap_stops_instead_of_resuming(){
+        use std::time::{Duration,SystemTime};
+        assert!(lifecycle_gap(Duration::from_millis(500),Ok(Duration::from_millis(500))));
+        assert!(!lifecycle_gap(Duration::from_millis(500),Ok(Duration::from_secs(30))));
+        assert!(!lifecycle_gap(Duration::from_secs(30),Ok(Duration::from_millis(500))));
+        assert!(!lifecycle_gap(Duration::from_millis(500),SystemTime::UNIX_EPOCH.duration_since(SystemTime::UNIX_EPOCH+Duration::from_secs(1))));
+    }
+    #[test]fn exact_portal_target_never_falls_back(){
+        assert_eq!(portal_target(5,7,None).unwrap(),PortalTarget::Node(7));
+        assert_eq!(portal_target(6,7,Some(4294967300)).unwrap(),PortalTarget::Serial(4294967300));
+        assert!(portal_target(6,7,None).is_err());assert!(portal_target(6,7,Some(0)).is_err());
+        assert!(portal_target(5,0,None).is_err());assert!(portal_target(1,7,Some(3)).is_err());
     }
     #[test]fn portal_sources_are_explicit_and_finite(){
         assert_eq!(PortalSource::parse("virtual").unwrap(),PortalSource::Virtual);

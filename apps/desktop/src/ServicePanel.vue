@@ -7,7 +7,7 @@ const emit=defineEmits<{active:[boolean]}>();
 type Policy={server_id:string;device_id:string;peer_key:string;host_key:string;url:string;display_id:number;display_name:string;display_width:number;display_height:number;mode:"view"|"control";quality:string;relay_only:boolean;extended:boolean;expires_at:number};
 type Device={device_id:string;public_key:string;label:string};
 type Display={id:number;name:string;width:number;height:number;primary:boolean};
-type Session={stage:string;active:boolean;saved_policy?:boolean;service_running?:boolean;service_limit?:number;service_completed?:number;service_expires_at?:number|null;local_key:string|null;device_id:string|null;detail:string|null;input_released:boolean};
+type Session={stage:string;active:boolean;privacy_available?:boolean;privacy_paused?:boolean;privacy_pending?:boolean|null;saved_policy?:boolean;service_running?:boolean;armed_wait?:number;service_limit?:number;service_completed?:number;service_expires_at?:number|null;local_key:string|null;device_id:string|null;detail:string|null;input_released:boolean};
 const policies=ref<Policy[]>([]),devices=ref<Device[]>([]),displays=ref<Display[]>([]);
 const policyServer=ref(""),policyUrl=ref(""),policyDevice=ref(""),policyDisplay=ref<number|null>(null),policyMode=ref<"view"|"control">("view"),policyQuality=ref("compat"),policyRelay=ref(false),policyExtended=ref(false),policyDays=ref(7),policyConfirm=ref(false);
 const sessionLimit=ref(1);
@@ -33,12 +33,13 @@ function savePolicy(){if(!canSave.value)return;return task(async()=>{policies.va
 function activatePolicy(){const p=selectedPolicy.value;if(!p||expired(p)||!activateConfirm.value||ownedActive.value)return;return task(async()=>{session.value=await invoke<Session>("host_policy_activate",{serverId:p.server_id,deviceId:p.device_id,confirmed:true,sessions:sessionLimit.value});activateConfirm.value=false;});}
 function revokePolicy(){const p=selectedPolicy.value;if(!p||!revokeConfirm.value)return;return task(async()=>{policies.value=await invoke<Policy[]>("host_policy_revoke",{serverId:p.server_id,deviceId:p.device_id,confirmed:true});selectedPolicy.value=null;result.value=props.t("policyRevoked");});}
 
-type Caps={os:string;desktop_session:string;view_candidate:boolean;input_candidate:boolean;armed_candidate:boolean;sidecar_present:boolean;login_launch:boolean;tray_ready:boolean;wayland_portal:boolean;remote_power:boolean;virtual_display:boolean;privacy_display:boolean;portal_sources:string[];portal_version:number|null;portal_detail:string|null};
+type Caps={os:string;desktop_session:string;view_candidate:boolean;input_candidate:boolean;armed_candidate:boolean;sidecar_present:boolean;login_launch:boolean;tray_ready:boolean;wayland_portal:boolean;remote_power:boolean;virtual_display:boolean;privacy_display:boolean;portal_sources:string[];portal_version:number|null;portal_detail:string|null;portal_control:boolean};
 const caps=ref<Caps|null>(null),startup=ref<boolean|null>(null),busy=ref(false),error=ref(""),result=ref(""),mac=ref(""),startConfirm=ref(false),wakeConfirm=ref(false);
 const items=computed<{key:TextKey,value:boolean}[]>(()=>{const c=caps.value;if(!c)return [];return [{key:"serviceView",value:c.view_candidate},{key:"serviceInput",value:c.input_candidate},{key:"armedHost",value:c.armed_candidate},{key:"servicePortal",value:c.wayland_portal},{key:"servicePower",value:c.remote_power},{key:"serviceVirtual",value:c.virtual_display},{key:"servicePrivacy",value:c.privacy_display}];});
 async function task(fn:()=>Promise<void>){if(busy.value||!isTauri())return;busy.value=true;error.value="";result.value="";try{await fn();}catch(e){error.value=String(e);}finally{busy.value=false;}}
 function refresh(){return task(async()=>{caps.value=await invoke<Caps>("platform_capabilities");startup.value=await invoke<boolean>("startup_status");});}
 function changeStartup(){if(startup.value===null||!startConfirm.value)return;return task(async()=>{startup.value=await invoke<boolean>("startup_change",{enabled:!startup.value,confirmed:true});startConfirm.value=false;result.value=props.t("serviceUpdated");});}
+function privacyChange(){if(!session.value?.privacy_available||session.value.privacy_pending!=null)return;return task(async()=>{session.value=await invoke<Session>("routed_privacy_change",{slot:0,paused:!session.value?.privacy_paused,confirmed:true});});}
 function stop(){return task(async()=>{await invoke("stop_all");result.value=props.t("serviceStopRequested");});}
 function wake(){if(!wakeConfirm.value)return;return task(async()=>{await invoke("wake_lan",{mac:mac.value,confirmed:true});wakeConfirm.value=false;result.value=props.t("wakeSent");});}
 onMounted(()=>{if(isTauri()){void task(async()=>{caps.value=await invoke<Caps>("platform_capabilities");await reloadPolicies();startup.value=await invoke<boolean>("startup_status");});pollTimer=window.setInterval(pollSession,400);}});
@@ -64,6 +65,7 @@ onBeforeUnmount(()=>{disposed=true;if(pollTimer!==undefined)window.clearInterval
       <p>{{ caps.os }} / {{ caps.desktop_session }}</p>
       <div v-for="item in items" :key="item.key" class="preference-row"><label>{{ t(item.key) }}</label><span class="muted">{{ t(item.value?"serviceCandidate":"serviceUnsupported") }}</span></div>
       <p v-if="caps.desktop_session==='wayland'" class="muted">{{ t("portalSource") }}: {{ caps.portal_sources.map(s=>t(s==="monitor"?"portalMonitor":s==="window"?"portalWindow":"portalVirtual")).join(" / ")||t("serviceUnsupported") }} <span v-if="caps.portal_version!==null"> · Portal v{{ caps.portal_version }}</span></p>
+      <p v-if="caps.desktop_session==='wayland'" class="muted">{{ t("portalInputCapability") }}: {{ caps.portal_control?t("serviceCandidate"):t("serviceUnsupported") }}</p>
       <p v-if="caps.portal_detail" class="muted">{{ caps.portal_detail }}</p>
       <p class="muted">{{ t("sidecarTitle") }}: {{ caps.sidecar_present?t("serviceAvailable"):t("serviceUnsupported") }}</p>
     </template>
@@ -94,19 +96,20 @@ onBeforeUnmount(()=>{disposed=true;if(pollTimer!==undefined)window.clearInterval
       <p class="muted">{{ t("lanLocalKey") }}: {{ p.host_key }} · {{ t("lanPeerKey") }}: {{ p.peer_key }}</p>
     </div>
     <template v-if="selectedPolicy">
-      <label>{{ t("serviceRunLimit") }}</label><select v-model.number="sessionLimit" :disabled="busy||ownedActive"><option :value="1">{{ t("serviceOneSession") }}</option><option :value="3">{{ t("serviceThreeSessions") }}</option></select>
-      <p v-if="sessionLimit===3" class="muted">{{ t("serviceRunNotice") }}</p>
-      <label class="check-label"><input type="checkbox" v-model="activateConfirm" :disabled="busy||ownedActive||expired(selectedPolicy)"/>{{ t(sessionLimit===3?"serviceRunConfirm":"policyActivateConfirm") }}</label>
+      <label>{{ t("serviceRunLimit") }}</label><select v-model.number="sessionLimit" :disabled="busy||ownedActive"><option :value="1">{{ t("serviceOneSession") }}</option><option :value="3">{{ t("serviceThreeSessions") }}</option><option :value="12">{{ t("serviceTwelveSessions") }}</option></select>
+      <p v-if="sessionLimit>1" class="muted">{{ t("serviceRunNotice") }}</p><p v-if="sessionLimit===12" class="muted">{{ t("serviceLongNotice") }}</p>
+      <label class="check-label"><input type="checkbox" v-model="activateConfirm" :disabled="busy||ownedActive||expired(selectedPolicy)"/>{{ t(sessionLimit===12?"serviceLongConfirm":sessionLimit===3?"serviceRunConfirm":"policyActivateConfirm") }}</label>
       <button :disabled="busy||ownedActive||!activateConfirm||expired(selectedPolicy)||!caps?.armed_candidate" @click="activatePolicy">{{ t("policyActivate") }}</button>
       <label class="check-label"><input type="checkbox" v-model="revokeConfirm" :disabled="busy"/>{{ t("policyRevokeConfirm") }}</label>
       <button :disabled="busy||!revokeConfirm" @click="revokePolicy">{{ t("policyRevoke") }}</button>
     </template>
     <div v-if="session?.saved_policy" class="field">
       <p>{{ t("policyState") }}: {{ session.stage==="listening"?t("armedWaiting"):session.stage }}</p>
-      <p v-if="session.service_limit===3" class="muted">{{ t("serviceCompleted") }}: {{ session.service_completed??0 }}/3 · {{ t("policyExpires") }}: {{ session.service_expires_at?dateLabel(session.service_expires_at):"—" }} · {{ session.service_running?t("serviceRunning"):t("serviceEnded") }}</p>
+      <p v-if="(session.service_limit??0)>1" class="muted">{{ t("serviceCompleted") }}: {{ session.service_completed??0 }}/{{ session.service_limit }} · {{ t("policyExpires") }}: {{ session.service_expires_at?dateLabel(session.service_expires_at):"—" }} · {{ session.service_running?t("serviceRunning"):t("serviceEnded") }}</p>
       <p v-if="session.device_id">{{ t("presenceDeviceId") }}: {{ session.device_id }}</p>
       <p v-if="session.detail" role="alert" class="error">{{ session.detail }}</p>
       <p v-if="session.input_released" class="muted">{{ t("policyReleased") }}</p>
+      <template v-if="session.stage==='connected'&&session.privacy_available"><p class="muted">{{ t(session.privacy_pending!=null?"privacyPending":session.privacy_paused?"privacyPaused":"privacyPauseNotice") }}</p><button :disabled="busy||session.privacy_pending!=null" @click="privacyChange">{{ t(session.privacy_paused?"privacyResume":"privacyPause") }}</button></template>
       <button :disabled="busy||!ownedActive" @click="stop">{{ t("serviceStopAll") }}</button>
     </div>
   </section>

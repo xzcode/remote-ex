@@ -10,6 +10,11 @@ use xcap::{Monitor,image::{DynamicImage,RgbaImage,Rgba,imageops::{self,FilterTyp
 #[cfg(target_os="macos")] mod macos_display;
 #[cfg(target_os="linux")] mod linux_display;
 #[cfg(target_os="linux")] mod portal_display;
+#[cfg(target_os="linux")] mod portal_control;
+mod session_guard;
+mod privacy;
+pub(super) use privacy::change as privacy_change;
+pub(super) use session_guard::start as start_session_watch;
 
 fn monitor(display:u32,area:Option<DisplayArea>,input:bool,secondary:bool)->MediaResult<(Monitor,DisplayArea)>{
     #[cfg(target_os="windows")]
@@ -32,6 +37,7 @@ fn monitor(display:u32,area:Option<DisplayArea>,input:bool,secondary:bool)->Medi
     Ok((m,current))
 }
 fn permissions(input:bool)->MediaResult<()>{
+    session_guard::interactive()?;
     #[cfg(target_os="linux")]
     {remote_ex_desktop_features::platform::require_linux_x11()?;if input{linux_display::require_local_session()?;}}
     #[cfg(target_os="macos")]
@@ -44,14 +50,16 @@ fn permissions(input:bool)->MediaResult<()>{
     }
     let _=input;Ok(())
 }
-struct Captured{layout:usize,pixels:Vec<u8>}
-struct Capture{rx:std::sync::mpsc::Receiver<MediaResult<Captured>>,stop:Arc<AtomicBool>,layout:Arc<AtomicUsize>,count:usize,first_wait:Duration,done:Option<std::sync::mpsc::Receiver<()>>}
+struct Captured{layout:usize,pixels:Vec<u8>,epoch:usize}
+struct Capture{rx:std::sync::mpsc::Receiver<MediaResult<Captured>>,stop:Arc<AtomicBool>,layout:Arc<AtomicUsize>,count:usize,first_wait:Duration,done:Option<std::sync::mpsc::Receiver<()>>,portal:bool}
 impl Drop for Capture{fn drop(&mut self){self.stop.store(true,Ordering::Release);if let Some(done)=&self.done{let _=done.recv_timeout(Duration::from_secs(2));}}}
 fn capture(displays:Vec<(u32,DisplayArea)>,input:bool,config:VideoConfig,secondary:bool)->Capture{
     let(tx,rx)=sync_channel(1);let stop=Arc::new(AtomicBool::new(false));let worker=stop.clone();
     let layout=Arc::new(AtomicUsize::new(0));let selected=layout.clone();let count=displays.len();
     std::thread::spawn(move||{
         while !canceled()&&!worker.load(Ordering::Acquire){
+            let epoch=privacy::epoch();
+            if privacy::paused(epoch){std::thread::sleep(Duration::from_millis(50));continue;}
             let next=Instant::now()+Duration::from_millis(1000/u64::from(config.fps));
             let index=selected.load(Ordering::Acquire);
             let result=(||->MediaResult<Captured>{
@@ -74,16 +82,17 @@ fn capture(displays:Vec<(u32,DisplayArea)>,input:bool,config:VideoConfig,seconda
                     let scaled=DynamicImage::ImageRgba8(image).resize_exact(g.width,g.height,FilterType::Triangle).into_rgba8();
                     imageops::replace(&mut canvas,&scaled,i64::from(g.x),i64::from(g.y));
                 }
-                Ok(Captured{layout:index,pixels:canvas.into_raw()})
+                Ok(Captured{layout:index,pixels:canvas.into_raw(),epoch})
             })();
             if canceled()||worker.load(Ordering::Acquire){break;}
             let bad=result.is_err();
+            if !bad&&privacy::epoch()!=epoch{continue;}
             match tx.try_send(result){Ok(())=>{},Err(TrySendError::Full(_)) if !bad=>{},_=>break}
             if bad{break;}
             std::thread::sleep(next.saturating_duration_since(Instant::now()));
         }
     });
-    Capture{rx,stop,layout,count,first_wait:Duration::from_secs(3),done:None}
+    Capture{rx,stop,layout,count,first_wait:Duration::from_secs(3),done:None,portal:false}
 }
 async fn serve<B:Backend>(peer:&Peer,channel:&ControlChannel,conn:&mut Connection,session:&str,
     mut dispatcher:Dispatcher<B>,capture:Capture,input:bool,av:bool,extended:bool)->MediaResult<()>{
@@ -109,6 +118,7 @@ async fn serve<B:Backend>(peer:&Peer,channel:&ControlChannel,conn:&mut Connectio
     let started=Instant::now();let mut last=started;let mut last_frame=started;
     let mut stats=remote_ex_media::stats::Sampler::default();
     let mut last_audio=Instant::now();
+    let mut seen_epoch=0usize;let mut pause_ack=false;let mut resume_ack=false;let mut last_blank=Instant::now();
     let mut published=Some(initial.layout);let mut last_switch=Instant::now()-Duration::from_secs(1);
     let mut bitrate=peer.config().bitrate;let ceiling=bitrate;let floor=(ceiling/4).max(100_000);let mut good=0u8;
     let result:MediaResult<()> = async{
@@ -116,6 +126,17 @@ async fn serve<B:Backend>(peer:&Peer,channel:&ControlChannel,conn:&mut Connectio
             if canceled(){return Ok(());}
             connected(peer,channel)?;
             if started.elapsed()>=Duration::from_secs(limit){return Ok(());}
+            let current_epoch=privacy::epoch();
+            if current_epoch!=seen_epoch{
+                if input||av||capture.portal{return Err("Privacy pause only supports native screen-only view".into());}
+                seen_epoch=current_epoch;last_frame=Instant::now();
+                if privacy::paused(seen_epoch){pause_ack=true;resume_ack=false;last_blank=Instant::now()-Duration::from_secs(1);}
+                else{resume_ack=true;pause_ack=false;}
+            }
+            if privacy::paused(seen_epoch)&&last_blank.elapsed()>=Duration::from_millis(150){
+                peer.push_rgba(privacy::blank(peer.config()))?;last_blank=Instant::now();last_frame=last_blank;
+                if pause_ack{out("SHARING_PAUSED")?;pause_ack=false;}
+            }
             if last.elapsed()>Duration::from_secs(2)||last_frame.elapsed()>Duration::from_secs(2){return Err("Control heartbeat or video stalled".into());}
             for _ in 0..32{
                 if canceled(){return Ok(());}
@@ -128,7 +149,7 @@ async fn serve<B:Backend>(peer:&Peer,channel:&ControlChannel,conn:&mut Connectio
                     let next=(capture.layout.load(Ordering::Acquire)+1)%(capture.count+1);
                     capture.layout.store(next,Ordering::Release);last_switch=Instant::now();
                 }
-                else if input&&published.is_some(){permissions(true)?;dispatcher.dispatch(&bytes)?;}
+                else if input&&published.is_some(){if !capture.portal{permissions(true)?;}dispatcher.dispatch(&bytes)?;}
                 else if input{return Err("Input received before an actual captured frame".into());}
                 else{return Err("Input is not authorized in view-only mode".into());}
             }
@@ -136,8 +157,9 @@ async fn serve<B:Backend>(peer:&Peer,channel:&ControlChannel,conn:&mut Connectio
                 Ok(frame)=>{
                     if canceled(){return Ok(());}
                     let frame=frame?;
-                    if frame.layout==capture.layout.load(Ordering::Acquire){
+                    if !privacy::paused(seen_epoch)&&privacy::epoch()==seen_epoch&&frame.epoch==seen_epoch&&frame.layout==capture.layout.load(Ordering::Acquire){
                         peer.push_rgba(frame.pixels)?;last_frame=Instant::now();
+                        if resume_ack{out("SHARING_RESUMED")?;resume_ack=false;}
                         if published!=Some(frame.layout){
                             published=Some(frame.layout);
                             if !input{channel.send(&[VIEW_LAYOUT_ACK,frame.layout as u8,capture.count as u8])?;}
@@ -164,8 +186,10 @@ async fn serve<B:Backend>(peer:&Peer,channel:&ControlChannel,conn:&mut Connectio
             tick(conn).await?;
         }
     }.await;
-    drop(audio_capture);drop(capture);
-    dispatcher.close()?;
+    drop(audio_capture);
+    // Portal devices remain available for explicit releases until the owner
+    // closes the portal session. Never report a successful release on error.
+    let released=dispatcher.close();drop(capture);released?;
     out("INPUT_RELEASED")?;
     result?;
     channel.send(ACK)?;
@@ -179,9 +203,25 @@ pub(super) async fn host(peer:&Peer,channel:&ControlChannel,conn:&mut Connection
     if let Some(source)=portal_source{
         #[cfg(target_os="linux")]
         {
-            if input||profile.av()||secondary||policy_display.is_some()||!extra_displays.is_empty()||display!=0{return Err("Invalid portal view scope".into());}
+            if profile.av()||secondary||policy_display.is_some()||!extra_displays.is_empty()||display!=0{return Err("Invalid portal scope".into());}
+            if input&&source!=remote_ex_desktop_features::platform::PortalSource::Monitor{return Err("Wayland control requires an explicitly selected monitor".into());}
             remote_ex_desktop_features::platform::require_wayland()?;
             let config=peer.config();
+            if input{
+                out("LISTENING PORTAL")?;
+                let(capture,ready,backend)=portal_control::start(config);
+                let deadline=Instant::now()+Duration::from_secs(40);
+                let area=loop{
+                    if canceled()||Instant::now()>=deadline{return Err("RemoteDesktop portal authorization or first frame timed out".into());}
+                    connected(peer,channel)?;
+                    match ready.try_recv(){Ok(result)=>break result?,Err(TryRecvError::Empty)=>tick(conn).await?,Err(TryRecvError::Disconnected)=>return Err("RemoteDesktop portal stopped before readiness".into())}
+                };
+                cipher.send(conn,Geometry::from_area(area,config)?.signal()).await?;
+                wait_data(peer,channel,conn,READY).await?;
+                if canceled(){return Err("Portal authorization revoked".into());}
+                let d=Dispatcher::new(gate,backend.with_area(area),area)?;
+                return serve(peer,channel,conn,session,d,capture,true,false,profile.extended()).await;
+            }
             // Portal content is view only; the fixed canvas never implies
             // remote input coordinates or any unapproved physical display.
             let area=DisplayArea{x:0,y:0,width:config.width,height:config.height}.validate()?;

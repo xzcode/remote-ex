@@ -33,4 +33,4 @@ remote-ex-rendezvous-protocol = { path = "../../../crates/rendezvous-protocol" }
 rfd = { version = "0.15", default-features = false }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-ashpd = { version = "=0.14.0", default-features = false, features = ["async-io", "screencast"] }
+ashpd = { version = "=0.14.1", default-features = false, features = ["async-io", "screencast", "remote_desktop"] }

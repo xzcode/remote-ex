@@ -135,7 +135,7 @@ impl Connection {
     /// No authorization is granted here. The caller verifies the exact
     /// pinned controller, grant and authenticated media before sharing.
     pub async fn wait_armed_incoming(&mut self,limit:Duration,canceled:impl Fn()->bool)->Result<Server>{
-        let limit=limit.min(Duration::from_secs(300));
+        let limit=limit.min(Duration::from_secs(900));
         if limit.is_zero()||!self.pending.is_empty(){return Err("Invalid armed wait state".into());}
         let start=Instant::now();let mut incoming=None;
         // No pending pong is allowed to escape into subsequent handshake.

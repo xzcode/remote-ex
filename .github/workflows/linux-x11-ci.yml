@@ -36,6 +36,7 @@ jobs:
         run: |
           gst-inspect-1.0 pipewiresrc >/dev/null
           cargo test --manifest-path crates/media/Cargo.toml --features native-x11-view --bin routed_x11_view portal_display::tests
+          cargo test --manifest-path crates/media/Cargo.toml --features native-x11-view --bin routed_x11_view portal_control::tests
       - name: Reject Wayland even if an XWayland DISPLAY is present
         run: |
           if env XDG_SESSION_TYPE=wayland DISPLAY=:0 crates/media/target/debug/routed_x11_view --probe-x11; then exit 1; fi
@@ -43,6 +44,10 @@ jobs:
         run: |
           test "$RUNNER_ENVIRONMENT" = github-hosted
           xvfb-run -a -s '-screen 0 1024x768x24 +extension RANDR' env -u WAYLAND_DISPLAY -u WAYLAND_SOCKET XDG_SESSION_TYPE=x11 timeout 170s python3 scripts/test_routed_diagnostic.py target/debug/remote-ex-rendezvous crates/media/target/debug/routed_x11_view --x11-view-test
+      - name: Local sharing-pause and fresh-frame resume fixture
+        run: |
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          xvfb-run -a -s '-screen 0 1024x768x24 +extension RANDR' env -u WAYLAND_DISPLAY -u WAYLAND_SOCKET XDG_SESSION_TYPE=x11 timeout 170s python3 scripts/test_routed_diagnostic.py target/debug/remote-ex-rendezvous crates/media/target/debug/routed_x11_view --x11-privacy-test
       - name: XTEST native input fixture on disposable Xvfb
         run: |
           test "$RUNNER_ENVIRONMENT" = github-hosted
