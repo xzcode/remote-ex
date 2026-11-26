@@ -82,6 +82,33 @@ log="$(mktemp)"
 result="$(mktemp)"
 printf 'no\n' | bounded 60s avdmanager create avd --name remote-ex-offline --package "$image" --force
 
+mark provision-storage
+# Only the newly created disposable AVD; no changes to a physical phone,
+# installed application data or storage-security policy.
+if [[ "$expectation" = supported ]]; then
+    data_mb=6144
+    host_available="$(df -Pk "$avd" | awk 'NR==2 {print $4}')"
+    [[ "$host_available" =~ ^[0-9]+$ ]]
+    printf 'REMOTE EX ANDROID HOST STORAGE: %s KiB available\n' "$host_available"
+    if ((host_available< (data_mb+1024)*1024)); then
+        echo "Insufficient runner disk for reviewed modern data partition"
+        exit 1
+    fi
+    python3 - "$avd/remote-ex-offline.avd/config.ini" "$data_mb" <<'PY'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+assert p.is_file() and not p.is_symlink()
+size = int(sys.argv[2])
+assert size == 6144
+lines = p.read_text().splitlines()
+lines = [line for line in lines if not line.strip().startswith("disk.dataPartition.size=")]
+lines.append(f"disk.dataPartition.size={size}M")
+p.write_text("\n".join(lines) + "\n")
+PY
+    printf 'REMOTE EX ANDROID DATA PARTITION: %s MiB\n' "$data_mb"
+fi
+
 mark emulator-start
 # Modern images (especially the 16 KB page-size variant) can take longer
 # than the legacy image's 120-second ADB deadline. Allocate a bounded
@@ -89,7 +116,7 @@ mark emulator-start
 if [[ "$expectation" = supported ]]; then
     gpu=swiftshader
     boot_budget=420
-    emulator_resources=(-memory 4096 -cores 4)
+    emulator_resources=(-memory 4096 -cores 4 -partition-size "$data_mb")
 else
     gpu=swiftshader_indirect
     boot_budget=270
@@ -146,10 +173,35 @@ adb_run 12s shell settings put global window_animation_scale 0
 adb_run 12s shell settings put global transition_animation_scale 0
 adb_run 12s shell settings put global animator_duration_scale 0
 adb_run 15s shell dumpsys webviewupdate | grep -E "Current WebView package|Preferred WebView package|Minimum WebView version" || true
+# Boot completed is not sufficient for PackageInstaller: require the
+# package service and actual writable internal storage to be ready.
+mark package-storage-ready
+apk_bytes=$(( $(stat -c %s "$app") + $(stat -c %s "$testapk") ))
+needed_kib=$(( (apk_bytes*8+1023)/1024 + 512*1024 ))
+storage_end=$((SECONDS+60))
+storage_ok=0
+while ((SECONDS<storage_end)); do
+    storage="$(adb_run 10s shell df -k /data 2>/dev/null | tr -d '\r' || true)"
+    free_kib="$(printf '%s\n' "$storage" | awk '$NF=="/data" && $4 ~ /^[0-9]+$/ {print $4}')"
+    if [[ "$free_kib" =~ ^[0-9]+$ ]]; then
+        printf 'REMOTE EX ANDROID DATA AVAILABLE: %s KiB (required %s)\n' "$free_kib" "$needed_kib"
+        if ((free_kib>=needed_kib)) && adb_run 8s shell pm path android 2>/dev/null | grep -q '^package:'; then
+            storage_ok=1
+            break
+        fi
+    fi
+    sleep 3
+done
+if [[ "$storage_ok" != 1 ]]; then
+    adb_run 10s shell df -k /data || true
+    echo "Package service or internal storage is not ready"
+    exit 1
+fi
 mark install-client
 adb_run 60s install "$app"
 mark install-test
 adb_run 60s install "$testapk"
+adb_run 10s shell df -k /data
 mark instrumentation
 set +e
 adb_run 220s shell am instrument -w -r -e expectation "$expectation" com.remoteex.mobile.test/com.remoteex.mobile.OfflineSmoke | tee "$result"
