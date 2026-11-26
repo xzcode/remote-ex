@@ -182,13 +182,15 @@ storage_end=$((SECONDS+60))
 storage_ok=0
 while ((SECONDS<storage_end)); do
     storage="$(adb_run 10s shell df -k /data 2>/dev/null | tr -d '\r' || true)"
-    free_kib="$(printf '%s\n' "$storage" | awk '$NF=="/data" && $4 ~ /^[0-9]+$/ {print $4}')"
+    free_kib="$(printf '%s\n' "$storage" | python3 scripts/ci/android-storage-kib.py 2>/dev/null || true)"
     if [[ "$free_kib" =~ ^[0-9]+$ ]]; then
         printf 'REMOTE EX ANDROID DATA AVAILABLE: %s KiB (required %s)\n' "$free_kib" "$needed_kib"
         if ((free_kib>=needed_kib)) && adb_run 8s shell pm path android 2>/dev/null | grep -q '^package:'; then
             storage_ok=1
             break
         fi
+    else
+        printf '%s\n' 'REMOTE EX ANDROID DATA: waiting for a valid internal-storage row'
     fi
     sleep 3
 done

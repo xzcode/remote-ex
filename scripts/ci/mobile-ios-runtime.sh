@@ -6,7 +6,24 @@ test "$(uname -s)" = Darwin
 app="build/ios-derived/Build/Products/Debug-iphonesimulator/RemoteEX.app"
 test -f "$app/RemoteEX"
 bundle=com.remoteex.mobile
-device="$(xcrun simctl list devices available -j | python3 -c '
+phase=list-devices
+mark() { phase="$1"; printf 'REMOTE EX IOS PHASE: %s\n' "$phase"; }
+# macOS does not ship GNU timeout. Python bounds each simctl child and
+# reaps it on timeout. No boot/cleanup operation may hang indefinitely.
+simctl() {
+    local seconds="$1"; shift
+    python3 - "$seconds" "$@" <<'PY'
+import subprocess,sys
+try:
+    r=subprocess.run(["xcrun","simctl",*sys.argv[2:]],timeout=int(sys.argv[1]))
+    sys.exit(r.returncode)
+except subprocess.TimeoutExpired:
+    print("simctl phase deadline exceeded",file=sys.stderr)
+    sys.exit(124)
+PY
+}
+mark list-devices
+device="$(simctl 45 list devices available -j | python3 -c '
 import json,sys
 d=json.load(sys.stdin)["devices"]
 def version(k):
@@ -19,17 +36,27 @@ raise SystemExit("No available shutdown iPhone simulator")
 ')"
 test -n "$device"
 cleanup() {
-    xcrun simctl terminate "$device" "$bundle" >/dev/null 2>&1 || true
-    xcrun simctl uninstall "$device" "$bundle" >/dev/null 2>&1 || true
-    xcrun simctl shutdown "$device" >/dev/null 2>&1 || true
+    local rc=$?
+    trap - EXIT INT TERM
+    set +e
+    if [[ "$rc" != 0 ]]; then printf 'FAIL REMOTE EX IOS PHASE: %s (exit %s)\n' "$phase" "$rc"; fi
+    simctl 15 terminate "$device" "$bundle" >/dev/null 2>&1 || true
+    simctl 20 uninstall "$device" "$bundle" >/dev/null 2>&1 || true
+    simctl 45 shutdown "$device" >/dev/null 2>&1 || true
+    exit "$rc"
 }
 trap cleanup EXIT
-xcrun simctl boot "$device"
-xcrun simctl bootstatus "$device" -b
-xcrun simctl install "$device" "$app"
+trap 'exit 130' INT
+trap 'exit 143' TERM
+mark boot
+simctl 90 boot "$device"
+mark bootstatus
+simctl 600 bootstatus "$device" -b
+mark install
+simctl 90 install "$device" "$app"
 launch_check() {
     local result pid
-    result="$(xcrun simctl launch "$device" "$bundle")"
+    result="$(simctl 45 launch "$device" "$bundle")"
     pid="$(printf '%s\n' "$result" | awk -v app="$bundle:" '$1 == app && $2 ~ /^[0-9]+$/ {print $2}')"
     test -n "$pid"
     for _ in 1 2 3; do
@@ -38,7 +65,11 @@ launch_check() {
         ps -p "$pid" -o comm= | grep -Fq 'RemoteEX'
     done
 }
+mark first-launch
 launch_check
-xcrun simctl terminate "$device" "$bundle"
+mark terminate
+simctl 30 terminate "$device" "$bundle"
+mark relaunch
 launch_check
+mark verified
 printf '%s\n' 'PASS REMOTE EX IOS OFFLINE RUNTIME: installed simulator app, process alive, terminated and relaunched (launch smoke only)'

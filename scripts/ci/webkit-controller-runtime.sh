@@ -48,7 +48,15 @@ case "$*" in
         timeout --kill-after=10s 150s node scripts/ci/test-webkit-controller.mjs
         ;;
     --native-receiver)
-        xvfb-run -a -s '-screen 0 1024x768x24 +extension RANDR' env -u WAYLAND_DISPLAY -u WAYLAND_SOCKET XDG_SESSION_TYPE=x11 timeout --kill-after=10s 180s node apps/web/test-view-x11.mjs --webkit
+        # Two private X displays, each with its own temporary Xauthority.
+        # Outer Xvfb is the visible WebKit renderer, inner is the native
+        # source desktop. Neither can be captured by the other.
+        xvfb-run -a -s '-screen 0 1280x1024x24 +extension RANDR -nolisten tcp' bash -c '
+            export REMOTE_EX_WEBKIT_DISPLAY="$DISPLAY" REMOTE_EX_WEBKIT_XAUTHORITY="$XAUTHORITY"
+            xvfb-run -a -s "-screen 0 1024x768x24 +extension RANDR -nolisten tcp" \
+                env -u WAYLAND_DISPLAY -u WAYLAND_SOCKET XDG_SESSION_TYPE=x11 \
+                timeout --kill-after=10s 180s node apps/web/test-view-x11.mjs --webkit
+        '
         ;;
     --local-media)
         timeout --kill-after=10s 240s node scripts/ci/test-webkit-controller.mjs --local-media

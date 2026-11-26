@@ -12,6 +12,7 @@ on:
       - 'scripts/test-mobile-verify.mjs'
       - 'scripts/configure-ios-controller.py'
       - 'scripts/ci/mobile-android-runtime.sh'
+      - 'scripts/ci/android-storage-kib.py'
       - 'scripts/ci/select-android-image.py'
       - 'scripts/ci/mobile-ios-runtime.sh'
       - '.github/workflows/mobile-controller-ci.yml'
@@ -144,6 +145,7 @@ jobs:
           REMOTE_EX_ANDROID_EXPECTATION: ${{ matrix.expectation }}
         run: |
           python3 scripts/ci/select-android-image.py --self-test
+          python3 scripts/ci/android-storage-kib.py --self-test
           bash scripts/ci/mobile-android-runtime.sh
 
   ios:
@@ -201,5 +203,5 @@ jobs:
           retention-days: 14
 
       - name: iOS actual offline install and launch on disposable simulator
-        timeout-minutes: 12
+        timeout-minutes: 18
         run: bash scripts/ci/mobile-ios-runtime.sh

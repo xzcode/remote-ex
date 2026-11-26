@@ -77,10 +77,16 @@ try{
         await stage(dir,{endpoint,ice:{stun:null,turn:[],relayOnly:false},control:false,extended:false});
         const reviewed=await prepare(dir,{REMOTE_EX_SITE_HOST:"localhost",REMOTE_EX_SITE_PORT:String(sitePort),REMOTE_EX_SITE_TLS_CERT:certs.cert,REMOTE_EX_SITE_TLS_KEY:certs.key});
         web={server:await listen(reviewed),url:"https://localhost:"+sitePort};
-        // WebKit headless already works without DISPLAY in the identity CI.
-        // Do not allow its renderer to share the native sender's Xvfb.
+        // Headless WebKit decoded frames but rendered black on Linux.
+        // Exercise normal windowed compositing on a separate private Xvfb.
+        const rendererDisplay=process.env.REMOTE_EX_WEBKIT_DISPLAY;
+        const rendererAuth=process.env.REMOTE_EX_WEBKIT_XAUTHORITY;
+        assert.match(rendererDisplay??"",/^:\d+$/);
+        assert(rendererDisplay!==process.env.DISPLAY&&path.isAbsolute(rendererAuth??"")&&rendererAuth!==process.env.XAUTHORITY,
+            "Receiver display must be independent of the native sender");
         const browserEnv=Object.fromEntries(Object.entries(process.env).filter(([name])=>!["DISPLAY","XAUTHORITY","WAYLAND_DISPLAY","WAYLAND_SOCKET"].includes(name)));
-        browser=await webkit.launch({headless:true,env:browserEnv});
+        browser=await webkit.launch({headless:false,env:{...browserEnv,DISPLAY:rendererDisplay,XAUTHORITY:rendererAuth,GDK_BACKEND:"x11",LIBGL_ALWAYS_SOFTWARE:"1"}});
+        console.log("WEBKIT_RENDERER: windowed X11 software compositing on isolated display");
     }else{
         web=await serve(0,null,endpoint,{stun:relay?.stun??null,turn:relay?[relay.turn]:[],relayOnly,control:false,extended});
         browser=await chromium.launch({headless:true,env:{...process.env,HOME:home,XDG_CONFIG_HOME:path.join(home,".config"),XDG_DATA_HOME:path.join(home,".local/share")},args:["--disable-background-networking","--disable-features=WebRtcHideLocalIpsWithMdns","--autoplay-policy=no-user-gesture-required"]});
@@ -137,6 +143,7 @@ try{
     assert.equal(await page.locator("#view-resolution").textContent(),"960 × 540");
     if(relayOnly)assert.equal(await page.locator("#view-route").textContent(),"Transport: TURN relay");
     if(useWebKit){
+        await page.bringToFront();
         await verifyWebKitPixels(page);
     }else{
         const green=await page.evaluate(()=>{const v=document.querySelector("#view-video");const c=document.createElement("canvas");c.width=v.videoWidth;c.height=v.videoHeight;const ctx=c.getContext("2d");ctx.drawImage(v,0,0);const pixel=ctx.getImageData(480,270,1,1).data;return pixel[1]>120&&pixel[1]>pixel[0]+50&&pixel[1]>pixel[2]+25;});
