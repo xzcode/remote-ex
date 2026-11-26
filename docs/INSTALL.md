@@ -74,3 +74,12 @@ Before registering, click Check WSS connection on the server or routed connectio
 In Version and updates, explicitly check releases first, then choose Verify downloaded file next to an asset with an official SHA-256 digest. Select the exact matching filename in the native file dialog. The application compares bounded file size and hash against recently fetched official metadata without unpacking or running the file. No private file path or content is uploaded. Matching digest does not establish publisher signature. Linux dialog requires a functional XDG file chooser portal; it does not imply Linux content-exchange modes are supported.
 
 New native routed view/control windows wrap local toolbar buttons when narrow, preserving the separate picture/input rectangle. Desktop language is propagated to new viewer processes. European language toolbar labels use compact bitmap-safe ASCII; Chinese/Japanese/Korean use English bitmap labels with localized native window title/legend until CJK text rendering is implemented. Legacy LAN viewer, native errors and OS dialogs remain partially localized.
+
+
+## 9. Complete UI dictionaries, native fonts and exact CA scope
+
+The eight application dictionaries contain all 423 current keys. A dictionary coverage check runs in desktop CI; translation accuracy, native dialogs, OS errors and legacy LAN viewer still need review. Routed viewer renders its fixed translated toolbar labels with installed fonts in a background worker; a cached bitmap fallback remains available if fonts are missing. Install an appropriate system CJK font through your normal OS package manager if Chinese, Japanese or Korean labels remain in English. No fonts are included or downloaded by Remote EX. Native viewer acceptance is still pending.
+
+Private CA selection is now consistent across server registration, WSS preflight, routed sessions and registration CLI: an explicitly selected certificate-only PEM replaces public trust roots for that connection. Use an absolute local path, no symlink/private key, at most 256 KiB and 32 certificates; hostname and validity checks remain mandatory. No fallback to public roots after a custom CA validation failure. Server profiles do not save CA paths.
+
+Package DEPENDENCIES.json adds declared-license evidence and triage flags; see [third-party review](THIRD_PARTY_REVIEW.md). External GStreamer and WebView2 setup still require the official runtime.

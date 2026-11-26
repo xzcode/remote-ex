@@ -104,3 +104,6 @@ M5 second candidate adds [self-host configuration preflight and container setup]
 
 
 M5 third candidate: check WSS server identity without registering, verify a downloaded release file against official metadata, and use a responsive localized routed-viewer toolbar. See [installation and usage](docs/INSTALL.md). New build acceptance pending.
+
+
+M5 fourth candidate covers all 423 UI dictionary keys in eight languages, adds system-font rendering for the routed toolbar, consistent private-CA validation, and [dependency license review evidence](docs/THIRD_PARTY_REVIEW.md). New CI and physical acceptance pending; no new release authorized.

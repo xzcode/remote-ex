@@ -18,6 +18,14 @@ impl Locale{
         Self::Ja=>"Remote EX — Esc 切断 · F11 全画面 · Pause input 入力停止 · Next screen 次の画面 · Quality 画質",
         Self::Ko=>"Remote EX — Esc 연결 해제 · F11 전체 화면 · Pause input 입력 중지 · Next screen 다음 화면 · Quality 화질",
     }}
+    pub fn localized_labels(self)->[&'static str;12]{match self{
+        Self::Zh=>["断开连接","全屏","仅查看","暂停输入","启用输入","下一屏","切换中…","画质 自动","画质 高","画质 中","画质 低","调整中…"],
+        Self::Ja=>["切断","全画面","閲覧のみ","入力停止","入力開始","次の画面","切替中…","画質 自動","画質 高","画質 中","画質 低","変更中…"],
+        Self::Ko=>["연결 해제","전체 화면","보기 전용","입력 중지","입력 활성화","다음 화면","전환 중…","화질 자동","화질 높음","화질 중간","화질 낮음","변경 중…"],
+        Self::Fr=>["Déconnecter","Plein écran","Vue seule","Pause saisie","Activer","Écran suivant","Changement","Qual. Auto","Qual. Haute","Qual. Moyen","Qual. Basse","Changement"],
+        Self::Pt=>["Desconectar","Tela cheia","Só ver","Pausar entrada","Ativar","Próxima tela","Mudando","Qual. Auto","Qual. Alta","Qual. Média","Qual. Baixa","Mudando"],
+        _=>self.labels(),
+    }}
     /// Compact ASCII toolbar strings for the existing public-domain bitmap
     /// font. CJK keeps the English labels legible and uses the Unicode OS title
     /// for the translated legend; native CJK glyph rendering is still pending.
@@ -79,6 +87,7 @@ mod tests{
         let t=toolbar(0,0,1,true,true);assert_eq!(t.height,0);
     }
     #[test]fn locales_are_closed_and_bitmap_safe(){
+        assert_eq!(Locale::Zh.localized_labels()[0],"断开连接");assert_eq!(Locale::Ja.localized_labels()[2],"閲覧のみ");assert_eq!(Locale::Ko.localized_labels()[0],"연결 해제");
         for i in 0..8{let l=Locale::from_index(i);assert_eq!(Locale::parse(l.code()),Some(l));assert!(l.labels().iter().all(|s|s.is_ascii()&&s.len()<=15));}
         assert!(Locale::parse("remote-string").is_none());
     }

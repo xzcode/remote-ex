@@ -3,6 +3,7 @@
 //! and a separately configured application server ID. The only plaintext
 //! option is explicitly selected numeric IPv4 loopback development.
 pub mod secure_route;
+pub mod tls_roots;
 use futures_util::{SinkExt,StreamExt};
 use remote_ex_rendezvous_protocol::{Client,ClientFrame,Server,ServerFrame,VERSION,MAX_MESSAGE};
 use remote_ex_security::{DeviceIdentity,Fingerprint};
@@ -332,6 +333,13 @@ pub async fn online_with_queries(
     endpoint:Endpoint,identity:&DeviceIdentity,mut stop:tokio::sync::watch::Receiver<bool>,
     duration:Duration,retry:bool,mut queries:Option<&mut tokio::sync::mpsc::Receiver<Vec<String>>>,mut event:impl FnMut(PresenceLifecycle),
 )->Result<()>{
+    online_with_queries_and_roots(endpoint,identity,stop,duration,retry,queries,tls_roots::public(),event).await
+}
+pub async fn online_with_queries_and_roots(
+    endpoint:Endpoint,identity:&DeviceIdentity,mut stop:tokio::sync::watch::Receiver<bool>,
+    duration:Duration,retry:bool,mut queries:Option<&mut tokio::sync::mpsc::Receiver<Vec<String>>>,
+    roots:rustls::RootCertStore,mut event:impl FnMut(PresenceLifecycle),
+)->Result<()>{
     use tokio::time::Instant;
     let deadline=Instant::now()+duration.min(Duration::from_secs(300));
     let mut attempts=0u8;
@@ -341,7 +349,7 @@ pub async fn online_with_queries(
             biased;
             _=stop.changed()=>return Ok(()),
             _=tokio::time::sleep_until(deadline)=>return Ok(()),
-            result=Connection::register(endpoint.clone(),identity)=>result?,
+            result=Connection::register_with_roots(endpoint.clone(),identity,roots.clone())=>result?,
         };
         event(PresenceLifecycle::Online(conn.device_id().to_owned()));
         let remaining=deadline.saturating_duration_since(Instant::now());

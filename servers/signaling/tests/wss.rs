@@ -241,3 +241,15 @@ async fn preflight_closes_without_sending_device_registration(){
     assert_eq!(tokio::time::timeout(Duration::from_secs(4),rx.recv()).await.unwrap(),Some(true));
     handle.graceful_shutdown(Some(Duration::from_secs(1)));tokio::time::timeout(Duration::from_secs(3),task).await.unwrap().unwrap();
 }
+
+#[test]
+fn private_ca_file_is_exclusive_certificate_only_and_bounded(){
+    use remote_ex_rendezvous_client::tls_roots;
+    let d=tempfile::tempdir().unwrap();let path=d.path().join("ca.pem");
+    let rcgen::CertifiedKey{cert,key_pair}=rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+    std::fs::write(&path,cert.pem()).unwrap();
+    assert_eq!(tls_roots::private(path.to_str().unwrap()).unwrap().len(),1);
+    assert!(tls_roots::public().len()>1);
+    std::fs::write(&path,format!("{}{}",cert.pem(),key_pair.serialize_pem())).unwrap();assert!(tls_roots::private(path.to_str().unwrap()).is_err());
+    std::fs::write(&path,cert.pem().repeat(33)).unwrap();assert!(tls_roots::private(path.to_str().unwrap()).is_err());
+}

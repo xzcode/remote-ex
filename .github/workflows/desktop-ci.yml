@@ -24,6 +24,9 @@ jobs:
         working-directory: apps/desktop
     steps:
       - uses: actions/checkout@v4
+      - name: Verify eight complete UI dictionaries
+        shell: bash
+        run: python3 scripts/ci/check_locales.py
       - uses: actions/setup-node@v4
         with:
           node-version: '22'

@@ -1,5 +1,5 @@
 //! Explicit server registration preview. Does not accept remote requests.
-use remote_ex_rendezvous_client::{Endpoint,PresenceLifecycle,online_with_queries};
+use remote_ex_rendezvous_client::{Endpoint,PresenceLifecycle,online_with_queries_and_roots,tls_roots};
 use remote_ex_security::DeviceIdentity;
 use remote_ex_signaling::{decode_hex,hex};
 use serde::Serialize;
@@ -41,7 +41,9 @@ fn identity(persistent:bool)->Result<DeviceIdentity,String>{
     #[cfg(not(any(target_os="windows",target_os="macos")))]
     {Err("Persistent device identity is not available on this platform yet".into())}
 }
-async fn worker(inner:Arc<Mutex<Inner>>,endpoint:Endpoint,persistent:bool,reconnect:bool,mut stop:watch::Receiver<bool>,mut queries:mpsc::Receiver<Vec<String>>)->Result<(),String>{
+async fn worker(inner:Arc<Mutex<Inner>>,endpoint:Endpoint,persistent:bool,reconnect:bool,ca_path:Option<String>,mut stop:watch::Receiver<bool>,mut queries:mpsc::Receiver<Vec<String>>)->Result<(),String>{
+    // Resolve explicitly selected CA before requesting any identity.
+    let roots=tokio::select!{biased;_=stop.changed()=>return Ok(()),r=tauri::async_runtime::spawn_blocking(move||match ca_path.as_deref(){Some(p)=>tls_roots::private(p),None=>Ok(tls_roots::public())})=>r.map_err(|_|"CA loading interrupted")??};
     // Key store operations may prompt or block. They never run on the UI
     // thread; cancellation prevents any later network registration.
     let id=tokio::select!{
@@ -51,7 +53,7 @@ async fn worker(inner:Arc<Mutex<Inner>>,endpoint:Endpoint,persistent:bool,reconn
     };
     if *stop.borrow(){return Ok(());}
     let public_key=hex(&id.public_key());
-    online_with_queries(endpoint,&id,stop,Duration::from_secs(300),reconnect,Some(&mut queries),|event|{
+    online_with_queries_and_roots(endpoint,&id,stop,Duration::from_secs(300),reconnect,Some(&mut queries),roots,|event|{
         let mut state=locked(&inner);
         if state.snapshot.stage==Stage::Stopping{return;}
         match event{
@@ -68,7 +70,8 @@ async fn worker(inner:Arc<Mutex<Inner>>,endpoint:Endpoint,persistent:bool,reconn
 }
 impl PresenceManager{
     fn snapshot(&self)->Snapshot{locked(&self.inner).snapshot.clone()}
-    fn start(&self,url:&str,server_id:&str,development:bool,persistent:bool,storage_consent:bool,reconnect:bool)->Result<Snapshot,String>{
+    fn start(&self,url:&str,server_id:&str,development:bool,persistent:bool,storage_consent:bool,reconnect:bool,ca_path:Option<String>)->Result<Snapshot,String>{
+        if development&&ca_path.is_some(){return Err("Private CA requires WSS".into());}
         if url.len()>512||server_id.len()>64{return Err("Server configuration exceeds limits".into());}
         if persistent&&(!storage_consent||development){return Err("Persistent identity requires explicit consent and WSS".into());}
         let endpoint=if development{
@@ -85,7 +88,7 @@ impl PresenceManager{
         state.snapshot=Snapshot{stage:Stage::Connecting,active:true,persistent,..Snapshot::default()};
         let inner=self.inner.clone();
         tauri::async_runtime::spawn(async move{
-            let result=worker(inner.clone(),endpoint,persistent,reconnect,rx,query_rx).await;
+            let result=worker(inner.clone(),endpoint,persistent,reconnect,ca_path,rx,query_rx).await;
             let mut state=locked(&inner);
             state.snapshot.stage=if result.is_ok(){Stage::Offline}else{Stage::Failed};
             state.snapshot.active=false;
@@ -108,9 +111,9 @@ fn main_window(window:&WebviewWindow)->Result<(),String>{
     if window.label()=="main"{Ok(())}else{Err("Local main window required".into())}
 }
 #[tauri::command]
-pub fn presence_start(window:WebviewWindow,manager:State<'_,PresenceManager>,url:String,server_id:String,development:bool,persistent:bool,storage_consent:bool,reconnect:bool)->Result<Snapshot,String>{
+pub fn presence_start(window:WebviewWindow,manager:State<'_,PresenceManager>,url:String,server_id:String,development:bool,persistent:bool,storage_consent:bool,reconnect:bool,ca_path:Option<String>)->Result<Snapshot,String>{
     main_window(&window)?;
-    manager.start(url.trim(),server_id.trim(),development,persistent,storage_consent,reconnect)
+    manager.start(url.trim(),server_id.trim(),development,persistent,storage_consent,reconnect,ca_path.filter(|s|!s.is_empty()))
 }
 #[tauri::command]
 pub fn presence_status(window:WebviewWindow,manager:State<'_,PresenceManager>)->Result<Snapshot,String>{
@@ -126,10 +129,10 @@ mod tests{
     #[test]
     fn rejects_untrusted_endpoints_and_implicit_persistence_before_starting(){
         let m=PresenceManager::default();
-        assert!(m.start("ws://192.168.1.2/v1/ws","",true,false,false,false).is_err());
-        assert!(m.start("ws://127.0.0.1/v1/ws","",true,true,true,false).is_err());
-        assert!(m.start("wss://example.com/v1/ws",&"01".repeat(32),false,true,false,false).is_err());
-        assert!(m.start("wss://example.com/v1/ws","",false,false,false,false).is_err());
+        assert!(m.start("ws://192.168.1.2/v1/ws","",true,false,false,false,None).is_err());
+        assert!(m.start("ws://127.0.0.1/v1/ws","",true,true,true,false,None).is_err());
+        assert!(m.start("wss://example.com/v1/ws",&"01".repeat(32),false,true,false,false,None).is_err());
+        assert!(m.start("wss://example.com/v1/ws","",false,false,false,false,None).is_err());
         assert!(!m.snapshot().active);
     }
 }

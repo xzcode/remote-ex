@@ -9,6 +9,7 @@ on:
       - 'crates/rendezvous-protocol/**'
       - 'crates/security/**'
       - '.github/workflows/container-ci.yml'
+      - '.github/preview-release.json'
   workflow_dispatch:
 permissions:
   contents: read

@@ -1,5 +1,5 @@
 //! Explicit connection diagnosis without device registration or authorization.
-use std::{io::{BufReader,Read},path::Path,sync::Mutex,time::{Duration,Instant}};
+use std::{sync::Mutex,time::{Duration,Instant}};
 use tauri::{Manager,WebviewWindow};
 use remote_ex_rendezvous_client::{Connection,Endpoint};
 use serde::Serialize;
@@ -26,25 +26,5 @@ pub async fn server_preflight(window:WebviewWindow,url:String,server_id:String,c
     Ok(Report{verified:true,elapsed_ms:start.elapsed().as_millis().min(u64::MAX as u128)as u64,custom_ca:custom})
 }
 fn load_roots(ca:Option<&str>)->Result<rustls::RootCertStore,String>{
-    let mut roots=rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-    if let Some(value)=ca{
-        if value.len()>2048||!Path::new(value).is_absolute(){return Err("Select an absolute local CA certificate path".into());}
-        let path=Path::new(value);
-        let meta=std::fs::symlink_metadata(path).map_err(|_|"Cannot inspect private CA file")?;
-        if !meta.file_type().is_file()||meta.len()==0||meta.len()>256*1024{return Err("Invalid private CA certificate file".into());}
-        let f=std::fs::File::open(path).map_err(|_|"Cannot open private CA file")?;
-        let mut data=Vec::new();
-        f.take(256*1024+1).read_to_end(&mut data).map_err(|_|"Cannot read private CA file")?;
-        if data.len()>256*1024{return Err("Private CA certificate file exceeds limit".into());}
-        let mut reader=BufReader::new(data.as_slice());
-        let mut count=0;
-        for item in rustls_pemfile::read_all(&mut reader){
-            match item.map_err(|_|"Invalid CA PEM")?{
-                rustls_pemfile::Item::X509Certificate(cert)=>{count+=1;if count>32{return Err("Too many CA certificates".into());}roots.add(cert).map_err(|_|"Invalid CA certificate")?;}
-                _=>return Err("Select a certificate-only PEM, not a private key".into()),
-            }
-        }
-        if count==0{return Err("No CA certificate found".into());}
-    }
-    Ok(roots)
+    match ca{Some(p)=>remote_ex_rendezvous_client::tls_roots::private(p),None=>Ok(remote_ex_rendezvous_client::tls_roots::public())}
 }

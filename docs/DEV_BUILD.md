@@ -95,3 +95,8 @@ Previous 89ba615 native builds succeeded on all three platforms, including NSIS 
 ## M5 third integration
 
 Adds WSS challenge preflight with no registration, official-metadata-bound file verification, Linux native portal file picker, localized responsive routed viewer toolbar, and 287 translated entries per additional locale. Core/container checks of e98ef583 succeeded; remaining prior/native and current CI must be verified. This is not a signed updater, actual installation acceptance or full native localization. The published alpha.1 is unchanged.
+
+
+## M5 fourth integration
+
+Core, desktop, media, Linux and signaling-container checks for 98cd04a succeeded. Current changes provide complete eight-language UI dictionary coverage, fixed local system-font rendered routed toolbar with CJK fallback, consistent certificate-only private CA scope in presence/preflight/routed CLI, and dependency-license declaration evidence. Actual CJK rendering fixture and native packages still await new CI. No runtime or font redistribution; signing and legal review incomplete. Published alpha.1 unchanged.

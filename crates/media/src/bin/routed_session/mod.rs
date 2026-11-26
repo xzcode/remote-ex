@@ -472,16 +472,7 @@ async fn negotiate_quality(conn:&mut Connection,cipher:&mut RouteCipher,name:&st
     match cipher.receive(conn).await?{Signal::Quality{preset} if preset==name=>{},_=>return Err("Both peers must approve the same quality preset".into())}
     VideoConfig{width:q.width,height:q.height,fps:q.fps,bitrate:q.bitrate}.validate()
 }
-fn roots(path:&str)->MediaResult<rustls::RootCertStore>{
-    let file=std::fs::File::open(path).map_err(error)?;
-    let mut data=Vec::new();
-    file.take(256*1024+1).read_to_end(&mut data).map_err(error)?;
-    if data.len()>256*1024{return Err("CA file exceeds limit".into());}
-    let mut roots=rustls::RootCertStore::empty();
-    for cert in rustls_pemfile::certs(&mut data.as_slice()){roots.add(cert.map_err(error)?).map_err(error)?;}
-    if roots.is_empty(){return Err("Missing CA certificates".into());}
-    Ok(roots)
-}
+fn roots(path:&str)->MediaResult<rustls::RootCertStore>{remote_ex_rendezvous_client::tls_roots::private(path)}
 pub async fn run(native_allowed:bool)->MediaResult<()>{
     let mut a=std::env::args().skip(1);
     let host=match a.next().as_deref(){Some("--host")=>true,Some("--controller")=>false,_=>return Err("Choose --host or --controller".into())};

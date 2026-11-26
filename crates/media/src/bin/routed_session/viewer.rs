@@ -5,6 +5,7 @@ use font8x8::{BASIC_FONTS,UnicodeFonts};
 use prost::Message as _;
 use remote_ex_desktop_features::viewport::{self,Rect};
 use remote_ex_desktop_features::viewer_ui::{self,Locale,Toolbar};
+mod native_text;
 use remote_ex_protocol::{InputEnvelope,VERSION,input_envelope::Event,Key,PointerButton,PointerMove,Scroll,ReleaseAll};
 use softbuffer::Surface;
 use std::{collections::BTreeSet,num::NonZeroU32,rc::Rc};
@@ -25,7 +26,7 @@ struct Viewer<'a>{
     peer:&'a Peer,channel:&'a ControlChannel,session:[u8;16],geometry:Rect,
     allow_input:bool,input_enabled:bool,av:bool,volume:u8,screens:u8,view_index:Option<u8>,switch_pending:bool,
     window:Option<Rc<Window>>,surface:Option<Surface<Rc<Window>,Rc<Window>>>,
-    size:PhysicalSize<u32>,toolbar:Toolbar,locale:Locale,scale:u32,fit:Option<Rect>,last_cursor:Option<(f64,f64)>,
+    size:PhysicalSize<u32>,toolbar:Toolbar,locale:Locale,labels:Option<native_text::Text>,font_rx:Option<std::sync::mpsc::Receiver<Option<native_text::Text>>>,scale:u32,fit:Option<Rect>,last_cursor:Option<(f64,f64)>,
     focused:bool,armed:bool,physical_keys:BTreeSet<u16>,physical_buttons:BTreeSet<u8>,
     sent_keys:BTreeSet<u16>,sent_buttons:BTreeSet<u8>,previous:Option<(u32,u32)>,seq:u64,
     pixels:Vec<u32>,frames:u32,metric_frames:u32,metric_bytes:u64,last_metric:Instant,last_frame:Instant,
@@ -94,6 +95,7 @@ impl Viewer<'_>{
         Ok(())
     }
     fn poll(&mut self,el:&ActiveEventLoop)->MediaResult<()>{
+        if let Some(rx)=&self.font_rx{match rx.try_recv(){Ok(labels)=>{self.labels=labels;self.font_rx=None;},Err(std::sync::mpsc::TryRecvError::Disconnected)=>self.font_rx=None,Err(std::sync::mpsc::TryRecvError::Empty)=>{}}}
         if canceled()||self.started.elapsed()>=Duration::from_secs(if self.extended{runtime_quality::NATIVE_SECONDS-2}else{28}){el.exit();return Ok(());}
         for _ in 0..4{
             match self.channel.receive()?{
@@ -151,11 +153,13 @@ impl Viewer<'_>{
             }
         }
         let l=self.locale.labels();
-        let labels=[l[0],l[1],if !self.allow_input{l[2]}else if self.input_enabled{l[3]}else{l[4]},if self.switch_pending{l[6]}else{l[5]},if self.quality_pending.is_some(){l[11]}else{match self.quality_mode{0=>l[7],1=>l[8],2=>l[9],_=>l[10]}}];
+        let indices=[0,1,if !self.allow_input{2}else if self.input_enabled{3}else{4},if self.switch_pending{6}else{5},if self.quality_pending.is_some(){11}else{match self.quality_mode{0=>7,1=>8,2=>9,_=>10}}];
+        let labels=indices.map(|i|l[i]);
         for(i,rect)in self.toolbar.actions.iter().enumerate(){
             let Some(r)=rect else{continue;};
             let color=if i==0{0x742d32}else if i==2&&self.allow_input&&self.input_enabled{0x2d5141}else{0x263441};
             for y in r.y..r.y+r.height.saturating_sub(1){for x in r.x..r.x+r.width.saturating_sub(1){buffer[(y*w+x)as usize]=color;}}
+            if self.labels.as_ref().is_some_and(|text|text.draw(&mut buffer,w,h,*r,indices[i],scale)){continue;}
             let text_width=(labels[i].len()as u32)*8*scale;
             let x=r.x+(r.width.saturating_sub(text_width))/2;
             let y=r.y+(r.height.saturating_sub(8*scale))/2;
@@ -265,10 +269,12 @@ impl ApplicationHandler for Viewer<'_>{
 }
 pub(super) fn run(peer:&Peer,channel:&ControlChannel,session:[u8;16],geometry:Geometry,allow_input:bool,screens:u8,av:bool,extended:bool)->MediaResult<(u32,bool)>{
     let c=peer.config();let now=Instant::now();
+    let locale=std::env::var("REMOTE_EX_VIEWER_LOCALE").ok().as_deref().and_then(Locale::parse).unwrap_or(Locale::En);
+    let font_rx=Some(native_text::start(locale));
     let event_loop:EventLoop<()>=EventLoop::new().map_err(error)?;
     let mut v=Viewer{peer,channel,session,geometry:Rect{x:geometry.x,y:geometry.y,width:geometry.width,height:geometry.height},
         allow_input,input_enabled:allow_input,av,volume:audio::VOLUME.load(Ordering::Acquire),screens,view_index:None,switch_pending:false,window:None,surface:None,size:PhysicalSize::new(0,0),
-        toolbar:viewer_ui::toolbar(0,0,1,false,false),locale:std::env::var("REMOTE_EX_VIEWER_LOCALE").ok().as_deref().and_then(Locale::parse).unwrap_or(Locale::En),scale:1,fit:None,last_cursor:None,focused:false,armed:false,physical_keys:BTreeSet::new(),physical_buttons:BTreeSet::new(),
+        toolbar:viewer_ui::toolbar(0,0,1,false,false),locale,labels:None,font_rx,scale:1,fit:None,last_cursor:None,focused:false,armed:false,physical_keys:BTreeSet::new(),physical_buttons:BTreeSet::new(),
         sent_keys:BTreeSet::new(),sent_buttons:BTreeSet::new(),previous:None,seq:0,pixels:vec![0;(c.width*c.height)as usize],
         frames:0,metric_frames:0,metric_bytes:0,last_metric:now,last_frame:now,stats:Default::default(),started:now,
         heartbeat:now-Duration::from_secs(1),released:false,error:None,next_frame:now,fps:0.,extended,quality_mode:0,quality_pending:None,actual_stream:None};

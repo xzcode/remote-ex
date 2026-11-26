@@ -8,6 +8,7 @@ on:
       - Native media engine
       - Desktop development builds
       - Linux X11 development candidate
+      - Signaling container preflight
     types: [completed]
     branches: [master]
   workflow_dispatch:
@@ -66,7 +67,7 @@ jobs:
             echo 'This commit does not explicitly request a preview.'
             exit 0
           fi
-          for workflow in core-ci.yml desktop-ci.yml input-ci.yml media-engine-ci.yml development-build.yml linux-x11-ci.yml; do
+          for workflow in core-ci.yml desktop-ci.yml input-ci.yml media-engine-ci.yml development-build.yml linux-x11-ci.yml container-ci.yml; do
             runs="$(gh api --method GET "repos/$REPO/actions/workflows/$workflow/runs" -f head_sha="$HEAD_SHA" -f branch=master -f event=push -F per_page=10)"
             row="$(jq -c --arg sha "$HEAD_SHA" '[.workflow_runs[] | select(.head_sha == $sha and .head_branch == "master" and .event == "push")] | sort_by(.id) | last // empty' <<< "$runs")"
             if [[ -z "$row" ]] || ! jq -e '.status == "completed" and .conclusion == "success"' <<< "$row" >/dev/null; then
@@ -145,6 +146,12 @@ jobs:
               assert inventory['schema'] == 1 and inventory['commit'] == sha and inventory['platform'] == platform
               assert 0 < len(inventory['packages']) <= 10000
               assert {'workspace','media','desktop','frontend'} <= {p['scope'] for p in inventory['packages']}
+              summary = inventory['license_evidence_summary']
+              assert inventory['license_review'] == 'incomplete'
+              assert summary['total'] == len(inventory['packages'])
+              assert summary['declared'] == sum('declared_license' in p for p in inventory['packages'])
+              assert sum(summary['review_flags'].values()) == summary['total']
+              assert all(p.get('license_evidence') and p.get('license_review_flag') for p in inventory['packages'])
           def inspect(path, required):
               if path.suffix == '.zip':
                   with zipfile.ZipFile(path) as archive:

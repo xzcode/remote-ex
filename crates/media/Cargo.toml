@@ -10,8 +10,8 @@ publish = false
 [features]
 default = []
 local-screen = ["dep:xcap"]
-native-x11-view = ["local-screen", "dep:winit", "dep:softbuffer", "dep:font8x8", "dep:x11rb", "dep:ashpd", "dep:futures-util"]
-native-control = ["local-screen", "remote-ex-input/native", "remote-ex-security/native-vault", "dep:minifb", "dep:arboard", "dep:winit", "dep:softbuffer", "dep:font8x8", "dep:windows-sys"]
+native-x11-view = ["local-screen", "dep:fontdb", "dep:ab_glyph", "dep:winit", "dep:softbuffer", "dep:font8x8", "dep:x11rb", "dep:ashpd", "dep:futures-util"]
+native-control = ["local-screen", "dep:fontdb", "dep:ab_glyph", "remote-ex-input/native", "remote-ex-security/native-vault", "dep:minifb", "dep:arboard", "dep:winit", "dep:softbuffer", "dep:font8x8", "dep:windows-sys"]
 
 [dependencies]
 gstreamer = { version = "0.23", features = ["v1_20"] }
@@ -44,6 +44,9 @@ percent-encoding = "2"
 zeroize = "1"
 serde_json = "1"
 tempfile = "3"
+# System-installed fonts are read locally; no font binaries are redistributed.
+fontdb = { version = "=0.23.0", optional = true }
+ab_glyph = { version = "=0.2.32", optional = true }
 
 [target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
 minifb = { version = "=0.28.0", optional = true, default-features = false }

@@ -27,3 +27,7 @@ Publication is complete only when the Release page contains the tagged prereleas
 
 ## Next-release package gate
 Future explicitly approved previews require six platform formats (three portable archives plus Windows Setup.exe, macOS DMG and Linux DEB), checked component manifests, exact release-tag and revision stamps, dependency input inventory, and SHA256SUMS.txt covering all six packages. Installer smoke steps run in native build jobs. No existing release assets are modified. New gate has not yet been verified by a subsequent release. External GStreamer remains separate and publisher signing/license audit remain incomplete.
+
+
+## Expanded preview gate
+Future explicitly approved previews must also pass Signaling container preflight on the exact candidate revision. Package inventory must include internally consistent declared-license evidence and review flags (not an approval of the licenses). Existing alpha.1 remains immutable. See [third-party review](THIRD_PARTY_REVIEW.md).

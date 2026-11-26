@@ -3,7 +3,7 @@
 use remote_ex_rendezvous_client::{Connection,Endpoint,Result,PresenceEvent,presence};
 use remote_ex_security::DeviceIdentity;
 use remote_ex_signaling::decode_hex;
-use std::{io::Read,time::Duration};
+use std::time::Duration;
 #[cfg(all(feature="persistent",any(target_os="windows",target_os="macos")))]
 use std::io::{self,IsTerminal,Write};
 
@@ -22,18 +22,7 @@ fn local_identity(persistent:bool)->Result<DeviceIdentity>{
     #[cfg(not(all(feature="persistent",any(target_os="windows",target_os="macos"))))]
     {Err("Persistent identity is not compiled for this platform".into())}
 }
-fn roots(path:&str)->Result<rustls::RootCertStore>{
-    let file=std::fs::File::open(path).map_err(|_|"Cannot open explicitly selected CA file")?;
-    let mut data=Vec::new();
-    file.take(256*1024+1).read_to_end(&mut data).map_err(|_|"Cannot read CA file")?;
-    if data.len()>256*1024{return Err("CA file exceeds limit".into());}
-    let mut roots=rustls::RootCertStore::empty();
-    for cert in rustls_pemfile::certs(&mut data.as_slice()){
-        roots.add(cert.map_err(|_|"Invalid CA certificate")?).map_err(|_|"Invalid CA certificate")?;
-    }
-    if roots.is_empty(){return Err("No CA certificates in file".into());}
-    Ok(roots)
-}
+fn roots(path:&str)->Result<rustls::RootCertStore>{remote_ex_rendezvous_client::tls_roots::private(path)}
 async fn run()->Result<()>{
     let mut args=std::env::args().skip(1);
     let mode=args.next().ok_or("Use --dev URL or --wss URL SERVER_ID [--ca PEM] [--persistent]")?;

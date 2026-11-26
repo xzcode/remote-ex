@@ -1,4 +1,5 @@
 export const en = {
+  privateCaNotice:"Optional private CA: the selected certificate-only PEM replaces public trust roots for this connection. Certificate and hostname checks remain required.",
   serverCheck:"Check WSS connection",serverCheckNotice:"Contacts the entered server only to verify its TLS certificate and expected server ID. Does not register a device, request a session, or check TURN or media.",serverCheckPassed:"TLS and expected server ID verified (no registration)",
   updatesVerifyArchive:"Verify downloaded file",updatesVerifyPassed:"File matches the official SHA-256 digest. This is not publisher-signature verification.",updatesVerifyFailed:"SHA-256 mismatch — do not install this file.",
   updatesOfficialDigest:"Official release metadata",updatesDigestUnavailable:"No SHA-256 digest reported; check the published SHA256SUMS file.",
@@ -79,7 +80,7 @@ export const en = {
   lanFailed: "Diagnostic failed", lanCanceled: "Disconnected", lanActive: "Diagnostic active",
   remote: "Remote control", diagnostics: "Local diagnostics", preferences: "Preferences",
   development: "Development build", unavailable: "Not connected", localOnly: "Local network development",
-  remoteHeading: "Connect to a remote device", remoteDescription: "The network session and remote input are not implemented yet. Local display diagnostics are available.",
+  remoteHeading: "Connect to a remote device", remoteDescription: "Remote EX connects verified devices via LAN or a self-hosted signaling server. Platform features are experimental.",
   openDiagnostics: "Open local diagnostics", incoming: "Incoming connections", incomingOff: "Disabled — no network listener is running.",
   diagTitle: "Screen capture diagnostics", diagDescription: "Select a display and take one local preview. No capture is started automatically, saved to disk or sent over the network.",
   permission: "Screen recording permission", checkPermission: "Check permission", requestPermission: "Request permission",
@@ -92,6 +93,7 @@ export const en = {
 } as const;
 export type TextKey = keyof typeof en;
 export const zh: Record<TextKey, string> = {
+  privateCaNotice:"可选私有 CA：选定的纯证书 PEM 将替代本次连接的公共信任根，仍必须验证证书及主机名。",
   serverCheck:"检查 WSS 连接",serverCheckNotice:"仅连接所填服务器，验证 TLS 证书及预期服务器 ID。不注册设备、不申请会话，也不检测 TURN 或媒体。",serverCheckPassed:"TLS 和预期服务器 ID 已核对（未注册）",
   updatesVerifyArchive:"校验已下载文件",updatesVerifyPassed:"文件与官方 SHA-256 值一致；不等同发布者签名验证。",updatesVerifyFailed:"SHA-256 不一致，请勿安装此文件。",
   updatesOfficialDigest:"官方发布元数据",updatesDigestUnavailable:"未提供 SHA-256 值，请核对发布页的 SHA256SUMS 文件。",
@@ -172,7 +174,7 @@ export const zh: Record<TextKey, string> = {
   lanFailed: "诊断失败", lanCanceled: "已断开", lanActive: "诊断进行中",
   remote: "远程控制", diagnostics: "本地诊断", preferences: "偏好设置",
   development: "开发版本", unavailable: "未连接", localOnly: "局域网开发版本",
-  remoteHeading: "连接远程设备", remoteDescription: "网络会话及远程输入尚未实现，当前可以使用本地屏幕诊断。",
+  remoteHeading: "连接远程设备", remoteDescription: "Remote EX 通过局域网或自建信令服务器连接已核验设备，各平台功能仍为实验性。 ",
   openDiagnostics: "打开本地诊断", incoming: "接受远程连接", incomingOff: "已关闭：没有运行网络监听服务。",
   diagTitle: "屏幕采集诊断", diagDescription: "选择显示器后手动采集单张预览。不会自动采集、保存到磁盘或通过网络发送。",
   permission: "屏幕录制权限", checkPermission: "检查权限", requestPermission: "申请权限",

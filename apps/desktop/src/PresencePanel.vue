@@ -13,6 +13,7 @@ const emit = defineEmits<{active:[value:boolean]}>();
 const development = ref(false);
 const url = ref("");
 const serverId = ref("");
+const ca = ref("");
 const persistent = ref(false);
 const reconnect = ref(false);
 const enrollment=ref<{device_id:string;public_key:string}|null>(null);
@@ -30,7 +31,7 @@ const canStart=computed(()=>native&&!busy.value&&!snapshot.value.active&&url.val
   &&(development.value||/^[a-fA-F0-9]{64}$/.test(serverId.value.trim())));
 watch(development, value=>{
   persistent.value=false;
-  serverId.value="";
+  serverId.value="";ca.value="";
   url.value=value?"ws://127.0.0.1:47822/v1/ws":"";
 });
 watch(()=>busy.value||snapshot.value.active,value=>emit("active",value),{immediate:true});
@@ -54,7 +55,7 @@ async function action(name:string,args:Record<string,unknown>={}){
 function start(){
   return action("presence_start",{
     url:url.value.trim(),serverId:development.value?"":serverId.value.trim(),
-    development:development.value,persistent:persistent.value,storageConsent:persistent.value,reconnect:reconnect.value
+    development:development.value,persistent:persistent.value,storageConsent:persistent.value,reconnect:reconnect.value,caPath:development.value?null:ca.value.trim()||null
   });
 }
 async function prepareIdentity(){
@@ -86,8 +87,10 @@ onBeforeUnmount(()=>{
         <label for="presence-pin">{{ t("presenceServerId") }}</label>
         <input id="presence-pin" v-model="serverId" maxlength="64" spellcheck="false" autocomplete="off" class="key-input" :disabled="busy||snapshot.active"/>
         <p class="muted">{{ t("presencePinHelp") }}</p>
-        <ServerProfiles :t="t" :url="url" :server-id="serverId" :disabled="busy||snapshot.active" @apply="p=>{url=p.url;serverId=p.server_id;}"/>
-        <ServerPreflight :t="t" :url="url" :server-id="serverId" :disabled="busy||snapshot.active" @active="busy=$event"/>
+        <ServerProfiles :t="t" :url="url" :server-id="serverId" :disabled="busy||snapshot.active" @apply="p=>{url=p.url;serverId=p.server_id;ca='';}"/>
+        <label>{{ t("routedCa") }}</label><input v-model="ca" maxlength="2048" :disabled="busy||snapshot.active" autocomplete="off" spellcheck="false"/>
+        <p class="muted">{{ t("privateCaNotice") }}</p>
+        <ServerPreflight :t="t" :url="url" :server-id="serverId" :ca-path="ca" :disabled="busy||snapshot.active" @active="busy=$event"/>
         <label class="check-label">
           <input type="checkbox" v-model="persistent" :disabled="busy||snapshot.active"/>
           {{ t("presenceStorageConsent") }}
