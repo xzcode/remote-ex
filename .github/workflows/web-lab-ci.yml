@@ -70,6 +70,8 @@ jobs:
           node --check ice-policy.js
           node --check input.js
           npm run test:policy-input
+          node --check test-input-browser.mjs
+          npm run test:input-browser
           node --check view-session.js
           node --check view-page.js
           node --check test-view-x11.mjs
@@ -93,7 +95,7 @@ jobs:
         if: ${{ !cancelled() && steps.native_host.outcome == 'success' }}
         id: x11_host
         run: |
-          sudo apt-get install -y build-essential libclang-dev clang libpipewire-0.3-dev libspa-0.2-dev libxcb1-dev libxcb-randr0-dev libx11-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libegl1-mesa-dev libdbus-1-dev xvfb xauth x11-xserver-utils gstreamer1.0-pipewire
+          sudo apt-get install -y build-essential libclang-dev clang libpipewire-0.3-dev libspa-0.2-dev libxcb1-dev libxcb-randr0-dev libx11-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libegl1-mesa-dev libdbus-1-dev xvfb xauth x11-xserver-utils gstreamer1.0-pipewire coturn iproute2
           cargo build --manifest-path crates/media/Cargo.toml --features native-x11-view --bin routed_x11_view
       - name: Read-only Web UI with actual isolated X11 capture
         if: ${{ !cancelled() && steps.x11_host.outcome == 'success' }}
@@ -101,6 +103,12 @@ jobs:
         run: |
           test "$RUNNER_ENVIRONMENT" = github-hosted
           xvfb-run -a -s '-screen 0 1024x768x24 +extension RANDR' env -u WAYLAND_DISPLAY -u WAYLAND_SOCKET XDG_SESSION_TYPE=x11 timeout 150s npm run test:view-x11
+      - name: Forced TURN read-only Web UI capture
+        if: ${{ !cancelled() && steps.x11_host.outcome == 'success' }}
+        working-directory: apps/web
+        run: |
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          xvfb-run -a -s '-screen 0 1024x768x24 +extension RANDR' env -u WAYLAND_DISPLAY -u WAYLAND_SOCKET XDG_SESSION_TYPE=x11 timeout 160s npm run test:view-x11 -- --relay-only
       - name: Stage private local-only diagnostic bundle
         run: |
           mkdir -p apps/web/dist/pkg

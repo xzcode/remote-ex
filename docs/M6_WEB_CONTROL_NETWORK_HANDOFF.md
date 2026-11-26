@@ -7,3 +7,7 @@
 - 已实现纯 v1 Protobuf 编码、序号、物理键码、授权画面内坐标/letterbox、滚轮范围、三键鼠标及 release-all。只有双方已认证、收到 host readiness 且解码帧后才可点击显式启用输入；焦点离开/窗口失焦/鼠标拖出边界/异常时释放并禁用；断线由 host dispatcher 清理。没有全局键盘捕获、剪贴板、OS 输入权限绕过、隐蔽控制或自动重连。移动触控尚未实现。
 - 增加纯 Node 协议/ICE 测试与 CI；真实 profile2 远端验收、强制 TURN 跨网测试仍待，禁止声称通过。
 - 本批源码模式：node apps/web/serve.mjs 8080 --view wss://your-server/v1/ws [--stun stun://host:port] [--turn turn://host:port] [--relay-only] [--allow-control]。强制 relay 需要 host 同样明确 --relay-only；host 画质 compat。控制端仍需要独立 host 的 profile 2 授权。普通 lab 无连接入口，现有 alpha.2 不变。
+
+## 补充验证批次
+25c8be4 的原生 media host 构建实际成功，但原始 harness 失败于 “Test registration barrier requires synthetic temporary supervised mode”；48733f2 已补 --desktop-session，错误未发生到媒体阶段。9a27bba 的 7 个 JS 模块语法及 test-policy-input.mjs 在首尔授权主机临时目录运行通过（仅 Node，无实际远程输入/部署；临时文件已清理）。
+新增 CI-only Chromium 本地 inert byte sink 测试：实际可信鼠标/键盘事件、合成 DOM key 拒绝、失焦时 ReleaseAll、禁用后不再发送、无 WebSocket/OS 输入。真实 Xvfb view harness 新增独立私有 coturn runner fixture，临时 REST secret、匹配 native --relay-only 与 Web allowlist、实际双 relay selected pair 和真实捕获画面；不暴露公网或持久化凭据。两个新增集成测试待 CI，真实物理机控制与两个独立网络仍未验收。
