@@ -5,6 +5,7 @@ import {readFile} from "node:fs/promises";
 import {existsSync} from "node:fs";
 import {fileURLToPath,pathToFileURL} from "node:url";
 import path from "node:path";
+// Source-only optional policy module is loaded only when viewer enabled.
 const root=path.dirname(fileURLToPath(import.meta.url));
 const routes=new Map([
  ["/",["index.html","text/html; charset=utf-8"]],
@@ -36,9 +37,9 @@ export function viewEndpoint(value){
  if(typeof value!=="string"||value.length>512||u.protocol!=="wss:"||u.pathname!=="/v1/ws"||!u.hostname||u.username||u.password||u.search||u.hash||u.href!==value||!/^[a-zA-Z0-9.:\[\]-]+$/.test(u.host))throw Error("Use exact WSS endpoint /v1/ws, no credentials or parameters");
  return u;
 }
-export async function serve(port=0,fixtureEndpoint=null,viewer=null){
+export async function serve(port=0,fixtureEndpoint=null,viewer=null,options={stun:null,turn:[],relayOnly:false,control:false}){
  if(!Number.isInteger(port)||port<0||port>65535)throw Error("Invalid local port");
- const table=new Map(routes);
+ const table=new Map(routes);let viewConfig=null;
  const policy={...headers};
  if(fixtureEndpoint!==null){
     const endpoint=new URL(fixtureEndpoint);
@@ -49,8 +50,14 @@ export async function serve(port=0,fixtureEndpoint=null,viewer=null){
  }
  if(viewer!==null){
     const ep=viewEndpoint(viewer);
-    if(!["view.html","view-page.js","view-session.js"].every(file=>existsSync(path.join(root,file))))throw Error("Source-only viewer assets unavailable; use the repository checkout");
+    if(!["view.html","view-page.js","view-session.js","ice-policy.js","input.js"].every(file=>existsSync(path.join(root,file))))throw Error("Source-only viewer assets unavailable; use the repository checkout");
     if(fixtureEndpoint!==null&&fixtureEndpoint!==viewer)throw Error("Only one WSS endpoint allowed");
+    const {normalizePolicy}=await import("./ice-policy.js");
+    const {stun,turn,relayOnly,control}=options;
+    if(typeof control!=="boolean")throw Error("Invalid control policy");
+    viewConfig={schema:1,mode:"direct-read-only",endpoint:viewer,ice:normalizePolicy({stun,turn,relayOnly}),control};
+    table.set("/ice-policy.js",["ice-policy.js","text/javascript; charset=utf-8"]);
+    table.set("/input.js",["input.js","text/javascript; charset=utf-8"]);
     table.set("/view.html",["view.html","text/html; charset=utf-8"]);
     table.set("/view-page.js",["view-page.js","text/javascript; charset=utf-8"]);
     table.set("/view-session.js",["view-session.js","text/javascript; charset=utf-8"]);
@@ -64,7 +71,7 @@ export async function serve(port=0,fixtureEndpoint=null,viewer=null){
     }
     const [file,type]=table.get(req.url);
     try{
-      const data=file===null?Buffer.from(JSON.stringify({schema:1,mode:"direct-read-only",endpoint:viewer})):await readFile(path.resolve(root,file));
+      const data=file===null?Buffer.from(JSON.stringify(viewConfig)):await readFile(path.resolve(root,file));
       if(data.length>16*1024*1024)throw Error("Fixture asset exceeds bound");
       res.writeHead(200,{"Content-Type":type,"Content-Length":data.length,...policy});res.end(data);
     }catch{res.writeHead(503,{"Content-Type":"text/plain",...policy});res.end("Build the local WASM fixture first.");}
@@ -76,8 +83,19 @@ export async function serve(port=0,fixtureEndpoint=null,viewer=null){
 if(process.argv[1]&&import.meta.url===pathToFileURL(path.resolve(process.argv[1])).href){
  const port=Number(process.argv[2]??8080);
  const args=process.argv.slice(3);
- if(args.length!==0&&(args.length!==2||args[0]!=="--view"))throw Error("Usage: node serve.mjs [port] [--view wss://host/v1/ws]");
- const viewer=args.length===2?args[1]:null;
- const {server,url}=await serve(port,null,viewer);console.log(viewer?"Local read-only viewer: "+url+"/view.html":"Local synthetic-only lab: "+url);
+ let viewer=null;const options={stun:null,turn:[],relayOnly:false,control:false};
+ if(args.length){
+    if(args.shift()!=="--view"||!args.length)throw Error("Usage: node serve.mjs [port] [--view wss://host/v1/ws [--stun URI] [--turn URI] [--relay-only] [--allow-control]]");
+    viewer=args.shift();
+    while(args.length){
+        const flag=args.shift();
+        if(flag==="--stun"&&options.stun===null&&args.length)options.stun=args.shift();
+        else if(flag==="--turn"&&args.length&&options.turn.length<4)options.turn.push(args.shift());
+        else if(flag==="--relay-only"&&!options.relayOnly)options.relayOnly=true;
+        else if(flag==="--allow-control"&&!options.control)options.control=true;
+        else throw Error("Invalid viewer option");
+    }
+ }
+ const {server,url}=await serve(port,null,viewer,options);console.log(viewer?"Local read-only viewer: "+url+"/view.html":"Local synthetic-only lab: "+url);
  for(const sig of ["SIGINT","SIGTERM"])process.once(sig,()=>server.close(()=>process.exit(0)));
 }

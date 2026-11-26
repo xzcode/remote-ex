@@ -67,6 +67,9 @@ jobs:
           node --check native-wss-fixture.js
           node --check test-native-wss.mjs
           node --check wss-test-support.mjs
+          node --check ice-policy.js
+          node --check input.js
+          npm run test:policy-input
           node --check view-session.js
           node --check view-page.js
           node --check test-view-x11.mjs

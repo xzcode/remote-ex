@@ -158,3 +158,8 @@ c757557 Web CI Rust tests passed; full browser result pending when work started.
 ### M6 sixth candidate — explicit browser read-only controller and actual X11 fixture
 
 c757557 Web CI passed in full; 25c8be4 Rust/WASM and two-browser WSS passed at integration time; native build pending. Corrected missing supervised flag for independent synthetic host fixture. New source-only opt-in view UI, controller-only profile-1 WASM, full key/pin and one-shot approval, compat VP8, signed encrypted ICE and view metadata, host readiness/DTLS gate, read-only layout switching, bounded heartbeat/stop/closure; native temporary supervised view enrollment barrier. CI adds actual authorized Xvfb capture test. Direct ICE only, no real input or external deployment, not in alpha.2. See [handoff](M6_WEB_VIEW_HANDOFF.md).
+
+
+### M6 seventh candidate — approved ICE policy and explicit Web input
+
+48733f2 Core passed; full native browser integration still pending at start. Added operator allowlisted STUN/TURN, short-lived credential checks, native URI conversion, signed forced-relay policy and selected pair verification; separate explicit profile-2 input candidate gated by operator option, exact host grant and locally focused activation after decoded media. Bounded protobuf, physical keys, geometry/letterbox, wheel and release handling; pure Node tests. Direct read-only remains default, no unattended or automatic reconnect. Real control and cross-network relay acceptance pending. See [handoff](M6_WEB_CONTROL_NETWORK_HANDOFF.md).

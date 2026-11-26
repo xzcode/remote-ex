@@ -1,7 +1,9 @@
-// Explicit outgoing profile-1 controller. No host, input, clipboard, files,
-// screen capture, audio, recording, unattended access or automatic reconnect.
+// Outgoing read-only or explicitly enabled screen/input controller. No host,
+// clipboard, files, local capture, audio, recording or automatic reconnect.
 import init,{ViewPeer} from "./pkg/noise.js";
 import {readIdentity} from "./identity.js";
+import {directPolicy,normalizePolicy,iceMode,rtcIce,candidateRoute} from "./ice-policy.js";
+import {InputEncoder,SurfaceInput} from "./input.js";
 import {text,concat,hex,sha,random,unhex,equal,sdpFingerprint,dtlsFingerprint} from "./crypto.js";
 const MAX=96*1024,READY=text("remote-ex-routed-test/ready/v1"),READY_ACK=text("remote-ex-routed-test/ready-ack/v1");
 const STOP=text("remote-ex-routed-test/stop/v1"),ACK=text("remote-ex-routed-test/released/v1"),HEARTBEAT=text("remote-ex-routed/heartbeat/v1"),NEXT=text("remote-ex-view/next/v1");
@@ -46,31 +48,39 @@ function sdpShape(sdp,answer=false){
     if(answer)need(lines.includes("a=recvonly")&&!lines.includes("a=sendrecv")&&!lines.includes("a=sendonly"),"Controller must be receive-only");
 }
 async function sign(identity,data){return new Uint8Array(await crypto.subtle.sign("Ed25519",identity.key.privateKey,data));}
-async function proof(identity,sid,host,cn,hn,offer,answer){
-    return sign(identity,concat(text("Remote EX/session-transcript/v1\0"),Uint8Array.of(1),sid,identity.pub,host,cn,hn,Uint8Array.of(1,1),await sha(text(offer)),await sha(text(answer))));
+async function proof(identity,sid,host,cn,hn,offer,answer,grant){
+    return sign(identity,concat(text("Remote EX/session-transcript/v1\0"),Uint8Array.of(1),sid,identity.pub,host,cn,hn,Uint8Array.of(grant,grant),await sha(text(offer)),await sha(text(answer))));
 }
 export class ViewSession{
-    constructor({url,serverId,hostKey,identityId,video,onState,onMetrics}){
+    constructor({url,serverId,hostKey,identityId,video,onState,onMetrics,onInput=()=>{},policy=directPolicy(),control=false}){
         this.url=endpoint(url).href;this.serverId=pin(serverId);this.hostKey=pin(hostKey);this.identityId=pin(identityId);
-        this.video=video;this.onState=onState;this.onMetrics=onMetrics;
+        this.video=video;this.onState=onState;this.onMetrics=onMetrics;this.onInput=onInput;
+        this.policy=normalizePolicy(policy);this.control=control===true;this.grant=this.control?3:1;this.route="unknown";this.input=null;
         this.abort=new AbortController();this.phase="new";this.stopRequested=false;this.nextRequested=false;
         this.channelMessages=[];this.count=0;this.layout=0;this.frames=0;this.lastSwitch=0;
-        this.hidden=()=>{if(document.hidden)this.cancel("Tab hidden — session stopped");};
-        this.pagehide=()=>this.cancel("Page left — session stopped");
+        this.hidden=()=>{if(document.hidden){this.releaseInput();this.cancel("Tab hidden — session stopped");}};
+        this.pagehide=()=>{this.releaseInput();this.cancel("Page left — session stopped");};
         this.abort.signal.addEventListener("abort",()=>this.cleanup(),{once:true});
     }
     state(phase,label){this.phase=phase;this.onState(phase,label);}
     blank(){this.video.pause();this.video.srcObject=null;this.video.hidden=true;}
-    cleanup(){this.blank();this.received?.getTracks().forEach(t=>t.stop());try{this.dc?.close();}catch{}try{this.pc?.close();}catch{}this.socket?.close();}
+    cleanup(){this.input?.dispose();this.onInput(false);this.blank();this.received?.getTracks().forEach(t=>t.stop());try{this.dc?.close();}catch{}try{this.pc?.close();}catch{}this.socket?.close();}
     cancel(reason="Disconnected"){if(!this.abort.signal.aborted)this.abort.abort(Error(reason));}
-    stop(){this.blank();if(this.phase==="viewing"){this.stopRequested=true;}else this.cancel();}
-    next(){if(this.phase==="viewing"&&!this.stopRequested&&this.count>1&&performance.now()-this.lastSwitch>=500)this.nextRequested=true;}
+    stop(){this.releaseInput();this.blank();if(this.phase==="viewing"){this.stopRequested=true;}else this.cancel();}
+    next(){if(!this.control&&this.phase==="viewing"&&!this.stopRequested&&this.count>1&&performance.now()-this.lastSwitch>=500)this.nextRequested=true;}
+    releaseInput(){this.input?.disable();}
+    enableInput(){
+        if(!this.control||this.phase!=="viewing"||this.stopRequested||this.frames===0||!this.geometry||!this.inputEncoder)return false;
+        if(this.input?.active)return true;
+        this.input=new SurfaceInput({video:this.video,geometry:this.geometry,encoder:this.inputEncoder,send:bytes=>this.channel(bytes,true),onFailure:()=>this.cancel("Input transport failed"),onDisabled:()=>this.onInput(false)});
+        this.input.enable();this.onInput(this.input.active);return this.input.active;
+    }
     guard(){if(this.abort.signal.aborted)throw this.abort.signal.reason;need(!document.hidden,"Tab hidden");}
     async wait(pred,ms,error){const end=performance.now()+ms;while(performance.now()<end){this.guard();if(await pred())return;await sleep(30);}throw Error(error);}
     sendSignal(p){this.socket.send({type:"signal",session:this.session,payload:p});}
     sealed(bytes){this.sendSignal({type:"sealed",packet:hex(bytes)});}
     async incoming(ms=20000){return this.pending.length?this.pending.shift():cipherPacket(await this.socket.receive(ms),this.session);}
-    channel(bytes){this.guard();need(this.dc?.readyState==="open"&&this.dc.bufferedAmount+bytes.length<=65536,"View transport unavailable");this.dc.send(bytes);}
+    channel(bytes,input=false){if(!input)this.guard();else need(!this.abort.signal.aborted,"Input session closed");need(this.dc?.readyState==="open"&&this.dc.bufferedAmount+bytes.length<=65536,"View transport unavailable");this.dc.send(bytes);}
     async reply(expected,ms){await this.wait(()=>this.channelMessages.length>0,ms,"Host readiness/stop timeout");need(equal(this.channelMessages.shift(),expected),"Unexpected host readiness/stop message");}
     layoutRecord(v){need(v.length===3&&v[0]===0xD1&&v[2]===this.count&&v[1]<this.count+(this.count>1?1:0),"Unexpected authorized display layout");this.layout=v[1];}
     async closeRoute(){
@@ -100,14 +110,15 @@ export class ViewSession{
             const signature=await sign(identity,concat(text("Remote EX/register-controller-only/v1\0"),key(ch.server,32),key(ch.nonce,32)));
             socket.send({type:"register_controller",public_key:hex(identity.pub),signature:hex(signature)});
             need(message(await socket.receive(),"registered",["device_id"]).device_id===identity.id,"Registration identity mismatch");
-            this.state("approval","Waiting for host read-only approval");
+            this.state("approval",this.control?"Waiting for explicit host screen and input approval":"Waiting for host read-only approval");
             const cn=random(32);
-            socket.send({type:"request",target,requested:1,controller_nonce:hex(cn)});
+            socket.send({type:"request",target,requested:this.grant,controller_nonce:hex(cn)});
             const requested=message(await socket.receive(),"requested",["session","target"]);
             this.session=requested.session;const sid=key(this.session,16);need(requested.target===target,"Target substitution refused");
             const decision=message(await socket.receive(20000),"decision",["session","grant","host_key","host_nonce"]);
-            need(decision.session===this.session&&decision.grant===1&&decision.host_key===this.hostKey,"Host rejected view-only grant or key mismatch");
-            const hn=key(decision.host_nonce,32),peer=this.peer=new ViewPeer(sid,identity.pub,host,cn,hn);
+            need(decision.session===this.session&&decision.grant===this.grant&&decision.host_key===this.hostKey,"Host rejected exact requested grant or key mismatch");
+            const hn=key(decision.host_nonce,32),peer=this.peer=new ViewPeer(sid,identity.pub,host,cn,hn,iceMode(this.policy),this.control);
+            if(this.control)this.inputEncoder=new InputEncoder(sid);
             this.state("authenticating","Authenticating encrypted route");
             this.sendSignal({type:"noise_handshake",step:1,packet:hex(peer.write_handshake())});
             const hs=message(routed(await socket.receive(),this.session),"noise_handshake",["step","packet"]);need(hs.step===2,"Invalid Noise step");peer.read_handshake(unhex(hs.packet,48));
@@ -115,12 +126,12 @@ export class ViewSession{
             this.pending=[];peer.receive_proof(await this.incoming());need(peer.ready(),"Route authentication failed");
             this.sealed(peer.send_quality());peer.receive_quality(await this.incoming());
             socket.send({type:"ice_config",session:this.session});
-            let gotIce=false;
+            let gotIce=false,rtcConfig=null;
             for(let i=0;i<5;i++){
                 const m=await socket.receive();
                 if(m?.type==="ice_config"){
                     const v=message(m,"ice_config",["session","config"]);
-                    need(v.session===this.session&&fields(v.config,["stun","turn"])&&v.config.stun===null&&v.config.turn===null,"This view candidate supports direct host ICE only; disable STUN/TURN for the test server");
+                    need(v.session===this.session,"Wrong ICE configuration session");rtcConfig=rtcIce(v.config,this.policy);
                     gotIce=true;break;
                 }
                 need(this.pending.length<4,"ICE configuration race limit");this.pending.push(cipherPacket(m,this.session));
@@ -128,7 +139,7 @@ export class ViewSession{
             need(gotIce,"ICE configuration missing");
             const offer=peer.receive_sdp(await this.incoming());sdpShape(offer);
             const hf=sdpFingerprint(offer);
-            const pc=this.pc=new RTCPeerConnection({iceServers:[],bundlePolicy:"max-bundle"});
+            const pc=this.pc=new RTCPeerConnection(rtcConfig);rtcConfig=null;
             const dc=this.dc=pc.createDataChannel("remote-ex-control",{negotiated:true,id:0,ordered:true,protocol:"remote-ex-input-v1"});
             dc.binaryType="arraybuffer";dc.onerror=()=>this.cancel("Data transport failed");
             dc.onmessage=e=>{if(!(e.data instanceof ArrayBuffer)||!e.data.byteLength||e.data.byteLength>1024||this.channelMessages.length>=8)this.cancel("Invalid view response");else this.channelMessages.push(new Uint8Array(e.data));};
@@ -143,7 +154,7 @@ export class ViewSession{
             const cf=sdpFingerprint(answer.sdp);need(cf!==hf,"DTLS identity collision");
             await pc.setLocalDescription(answer);this.guard();
             this.sealed(peer.send_sdp(answer.sdp));peer.receive_sdp_proof(await this.incoming());
-            this.sealed(peer.send_sdp_proof(await proof(identity,sid,host,cn,hn,offer,answer.sdp)));
+            this.sealed(peer.send_sdp_proof(await proof(identity,sid,host,cn,hn,offer,answer.sdp,this.grant)));
             need(peer.sdp_verified(),"Exact SDP signatures failed");
             this.state("transport","Negotiating authenticated video transport");
             await this.wait(()=>pc.iceGatheringState==="complete",15000,"ICE gathering timed out");
@@ -154,18 +165,19 @@ export class ViewSession{
             need(peer.native_ice_verified()&&this.pending.length===0,"Encrypted ICE failed");
             await this.wait(()=>pc.connectionState==="connected"&&dc.readyState==="open",15000,"Media connection timed out");
             await this.wait(()=>dtlsFingerprint(pc,cf,hf),5000,"DTLS certificate verification unavailable");
+            if(this.policy.relayOnly)await this.wait(async()=>candidateRoute(await pc.getStats())==="relay-both",5000,"Forced relay pair not verified");
             this.state("capture","Waiting for approved host screen");
             this.geometry=JSON.parse(peer.receive_geometry(await this.incoming(45000)));
-            this.count=peer.receive_layout(await this.incoming());need(peer.view_metadata_verified(),"View metadata not verified");
+            this.count=this.control?1:peer.receive_layout(await this.incoming());need(peer.view_metadata_verified(),"View metadata not verified");
             this.channel(READY);await this.reply(READY_ACK,42000);
-            await this.wait(()=>this.channelMessages.length>0,3000,"Host layout unavailable");this.layoutRecord(this.channelMessages.shift());
+            if(!this.control){await this.wait(()=>this.channelMessages.length>0,3000,"Host layout unavailable");this.layoutRecord(this.channelMessages.shift());}
             // Keep the host alive immediately after its READY_ACK; do not attach
             // any track until signed route, DTLS and approved capture readiness.
             this.channel(HEARTBEAT);
             await this.wait(()=>!!this.received,1000,"Approved video track missing");
             this.video.muted=true;this.video.playsInline=true;this.video.srcObject=this.received;
             await this.video.play();this.guard();this.video.hidden=false;
-            this.state("viewing","Connected — read only");
+            this.state("viewing",this.control?"Connected — input disabled until explicitly enabled":"Connected — read only");
             let lastHeartbeat=performance.now(),lastPing=performance.now(),ping=0,lastStats=0,lastFrame=performance.now(),lastDecoded=0,started=performance.now();
             while(!this.stopRequested){
                 this.guard();const now=performance.now();
@@ -180,25 +192,26 @@ export class ViewSession{
                 }
                 while(this.channelMessages.length){
                     const v=this.channelMessages.shift();
-                    if(equal(v,ACK)){this.blank();await this.closeRoute();normal=true;return;}
-                    this.layoutRecord(v);
+                    if(equal(v,ACK)){this.input?.dispose();this.blank();await this.closeRoute();normal=true;return;}
+                    need(!this.control,"Unexpected control response");this.layoutRecord(v);
                 }
                 if(now-lastStats>=300){
                     const stats=await pc.getStats();this.guard();
                     const v=[...stats.values()].find(x=>x.type==="inbound-rtp"&&(x.kind==="video"||x.mediaType==="video"));
                     const decoded=v?.framesDecoded??0;
                     if(decoded>lastDecoded){lastDecoded=decoded;lastFrame=now;}
-                    this.frames=decoded;lastStats=now;
-                    this.onMetrics({frames:decoded,width:this.video.videoWidth,height:this.video.videoHeight,count:this.count,layout:this.layout,seconds:Math.max(0,Math.ceil((30000-(now-started))/1000))});
+                    this.frames=decoded;lastStats=now;this.route=candidateRoute(stats);
+                    if(this.policy.relayOnly&&this.route!=="relay-both")throw Error("Forced relay route changed");
+                    this.onMetrics({frames:decoded,width:this.video.videoWidth,height:this.video.videoHeight,count:this.count,layout:this.layout,route:this.route,seconds:Math.max(0,Math.ceil((30000-(now-started))/1000))});
                 }
                 if(now-lastFrame>2500)throw Error("Approved video stalled");
                 if(now-started>=30000){this.stopRequested=true;break;}
                 await sleep(30);
             }
-            this.blank();this.state("closing","Disconnecting");
+            this.releaseInput();this.blank();this.state("closing","Disconnecting");
             this.channel(STOP);
             await this.wait(()=>{
-                while(this.channelMessages.length){const v=this.channelMessages.shift();if(equal(v,ACK))return true;this.layoutRecord(v);}
+                while(this.channelMessages.length){const v=this.channelMessages.shift();if(equal(v,ACK))return true;need(!this.control,"Unexpected close response");this.layoutRecord(v);}
                 return false;
             },3000,"Host stop acknowledgement not received");
             await this.closeRoute();normal=true;

@@ -16,24 +16,25 @@ fn decode(data:&[u8])->Result<Record>{
     if data.is_empty()||data.len()>MAX_SEALED_CLEAR{return Err("Native fixture record too large".into());}
     serde_json::from_slice(data).map_err(|_|"Invalid native fixture record".into())
 }
-fn valid(items:&[IceItem])->bool{
+fn valid(items:&[IceItem],mode:u8)->bool{
+    if mode>2{return false;}
     !items.is_empty()&&items.len()<=128&&items.iter().map(|x|x.candidate.len()).sum::<usize>()<=16*1024
         &&items.iter().any(|x|!x.candidate.is_empty())
         &&items.iter().all(|x|x.mline<=1&&x.candidate.len()<=4096&&!x.candidate.contains(['\r','\n','\0'])
-            &&(x.candidate.is_empty()||(x.candidate.starts_with("candidate:")&&x.candidate.split_ascii_whitespace().collect::<Vec<_>>().windows(2).any(|w|w==["typ","host"]))))
+            &&(x.candidate.is_empty()||(x.candidate.starts_with("candidate:")&&x.candidate.split_ascii_whitespace().collect::<Vec<_>>().windows(2).any(|w|w[0]=="typ"&&match mode{0=>w[1]=="host",1=>matches!(w[1],"host"|"srflx"|"prflx"|"relay"),2=>w[1]=="relay",_=>false}))))
 }
 pub(super) fn quality()->Result<Vec<u8>>{encode(&Record::Quality{preset:"compat".into()})}
 pub(super) fn check_quality(data:&[u8])->Result<()>{
     match decode(data)?{Record::Quality{preset} if preset=="compat"=>Ok(()),_=>Err("Unexpected native fixture quality".into())}
 }
-pub(super) fn ice(json:&str)->Result<Vec<u8>>{
+pub(super) fn ice(json:&str,mode:u8)->Result<Vec<u8>>{
     if json.len()>MAX_SEALED_CLEAR{return Err("ICE input too large".into());}
     let items:Vec<IceItem>=serde_json::from_str(json).map_err(|_|"Invalid ICE fixture items")?;
-    if !valid(&items){return Err("Only bounded host candidates permitted in native fixture".into());}
+    if !valid(&items,mode){return Err("ICE candidates exceed selected transport policy".into());}
     encode(&Record::IceBatch{items})
 }
-pub(super) fn check_ice(data:&[u8])->Result<String>{
-    match decode(data)?{Record::IceBatch{items} if valid(&items)=>serde_json::to_string(&items).map_err(|_|"Invalid ICE fixture items".into()),
+pub(super) fn check_ice(data:&[u8],mode:u8)->Result<String>{
+    match decode(data)?{Record::IceBatch{items} if valid(&items,mode)=>serde_json::to_string(&items).map_err(|_|"Invalid ICE fixture items".into()),
         _=>Err("Unexpected native fixture ICE".into())}
 }
 pub(super) fn check_geometry(data:&[u8])->Result<String>{
@@ -60,11 +61,12 @@ pub(super) fn check_layout(data:&[u8])->Result<u8>{
         assert_eq!(quality().unwrap(),br#"{"type":"quality","preset":"compat"}"#);
         assert!(check_quality(br#"{"type":"quality","preset":"high"}"#).is_err());
         let item=r#"[{"mline":0,"candidate":"candidate:1 1 UDP 123 127.0.0.1 1234 typ host"}]"#;
-        let b=ice(item).unwrap();assert_eq!(check_ice(&b).unwrap(),item);
-        for bad in ["[]",r#"[{"mline":2,"candidate":"candidate:1 1 UDP 123 127.0.0.1 1234 typ host"}]"#,r#"[{"mline":0,"candidate":"candidate:1 1 UDP 123 127.0.0.1 1234 typ relay"}]"#,r#"[{"mline":0,"candidate":"candidate:1 1 UDP 123 127.0.0.1 1234 typ host\n"}]"#]{assert!(ice(bad).is_err());}
-        assert!(check_ice(&quality().unwrap()).is_err());
+        let b=ice(item,0).unwrap();assert_eq!(check_ice(&b,0).unwrap(),item);
+        for bad in ["[]",r#"[{"mline":2,"candidate":"candidate:1 1 UDP 123 127.0.0.1 1234 typ host"}]"#,r#"[{"mline":0,"candidate":"candidate:1 1 UDP 123 127.0.0.1 1234 typ relay"}]"#,r#"[{"mline":0,"candidate":"candidate:1 1 UDP 123 127.0.0.1 1234 typ host\n"}]"#]{assert!(ice(bad,0).is_err());}
+        assert!(check_ice(&quality().unwrap(),0).is_err());
         let eoc=r#"[{"mline":0,"candidate":"candidate:1 1 UDP 123 127.0.0.1 1234 typ host"},{"mline":0,"candidate":""}]"#;
-        assert_eq!(check_ice(&ice(eoc).unwrap()).unwrap(),eoc);
-        assert!(ice(r#"[{"mline":0,"candidate":""}]"#).is_err());
+        assert_eq!(check_ice(&ice(eoc,0).unwrap(),0).unwrap(),eoc);
+        assert!(ice(r#"[{"mline":0,"candidate":""}]"#,0).is_err());
+        let relay=item.replace("typ host","typ relay");assert!(ice(&relay,0).is_err());assert!(ice(&relay,1).is_ok());assert!(ice(&relay,2).is_ok());assert!(ice(item,2).is_err());
     }
 }

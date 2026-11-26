@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 //! Bounded Web Noise and exact SDP verification. No sockets, arbitrary
 //! application encryption, device registration or input authority here.
-//! FixturePeer is profile 0; ViewPeer is an outgoing profile-1-only owner.
+//! FixturePeer is profile 0; ViewPeer accepts only explicitly selected outgoing profile 1 or 2.
 use remote_ex_security::{Role,route_binding::RouteBinding,profiles::NOISE_PATTERN};
 use snow::{Builder,HandshakeState,TransportState};
 use wasm_bindgen::prelude::*;
@@ -18,22 +18,23 @@ struct Peer{
     hash:Option<[u8;32]>,step:u8,proof_sent:bool,proof_received:bool,failed:bool,
     sdp:SdpState,fixture_used:bool,
     native_order:bool,quality_sent:bool,quality_received:bool,ice_sent:bool,ice_received:bool,
-    geometry_received:bool,layout_received:bool,
+    geometry_received:bool,layout_received:bool,ice_mode:u8,
 }
 impl Peer{
     fn new(role:Role,session:&[u8],controller:&[u8],host:&[u8],cn:&[u8],hn:&[u8])->Result<Self>{
-        Self::new_bound(role,session,controller,host,cn,hn,0)
+        Self::new_bound(role,session,controller,host,cn,hn,0,0)
     }
-    fn new_bound(role:Role,session:&[u8],controller:&[u8],host:&[u8],cn:&[u8],hn:&[u8],profile:u8)->Result<Self>{
-        let grant=match profile{0=>3,1=>1,_=>return Err("Unsupported browser profile".into())};
+    fn new_bound(role:Role,session:&[u8],controller:&[u8],host:&[u8],cn:&[u8],hn:&[u8],profile:u8,ice_mode:u8)->Result<Self>{
+        let grant=match profile{0|2=>3,1=>1,_=>return Err("Unsupported browser profile".into())};
+        if ice_mode>2||(profile==0&&ice_mode!=0){return Err("Unsupported ICE policy".into());}
         let binding=RouteBinding{session:exact(session)?,controller:exact(controller)?,host:exact(host)?,
-            controller_nonce:exact(cn)?,host_nonce:exact(hn)?,requested:grant,granted:grant,profile,relay_only:false};
+            controller_nonce:exact(cn)?,host_nonce:exact(hn)?,requested:grant,granted:grant,profile,relay_only:ice_mode==2};
         let context=binding.context().map_err(|_|"Invalid fixture binding")?;
         if !remote_ex_security::valid_public_key(&binding.controller)||!remote_ex_security::valid_public_key(&binding.host){return Err("Invalid fixture public key".into());}
         let b=Builder::new(NOISE_PATTERN.parse().map_err(|_|"Noise pattern unavailable")?);
         let b=noise(b.prologue(&context))?;
         let hs=if role==Role::Controller{noise(b.build_initiator())?}else{noise(b.build_responder())?};
-        Ok(Self{binding,role,handshake:Some(hs),transport:None,hash:None,step:0,proof_sent:false,proof_received:false,failed:false,sdp:SdpState::default(),fixture_used:false,native_order:false,quality_sent:false,quality_received:false,ice_sent:false,ice_received:false,geometry_received:false,layout_received:false})
+        Ok(Self{binding,role,handshake:Some(hs),transport:None,hash:None,step:0,proof_sent:false,proof_received:false,failed:false,sdp:SdpState::default(),fixture_used:false,native_order:false,quality_sent:false,quality_received:false,ice_sent:false,ice_received:false,geometry_received:false,layout_received:false,ice_mode})
     }
     fn run<T>(&mut self,f:impl FnOnce(&mut Self)->Result<T>)->Result<T>{
         if self.failed{return Err("Fixture closed".into());}
@@ -133,14 +134,14 @@ impl Peer{
     })}
     fn send_ice_batch(&mut self,json:&str)->Result<Vec<u8>>{self.run(|s|{
         if !s.native_order||!s.ready()||!s.sdp.verified()||s.ice_sent{return Err("Native ICE requires mutual exact SDP proofs".into());}
-        let record=Zeroizing::new(native_records::ice(json)?);let packet=s.seal_sdp(&record)?;s.ice_sent=true;Ok(packet)
+        let record=Zeroizing::new(native_records::ice(json,s.ice_mode)?);let packet=s.seal_sdp(&record)?;s.ice_sent=true;Ok(packet)
     })}
     fn receive_ice_batch(&mut self,packet:&[u8])->Result<String>{self.run(|s|{
         if !s.native_order||!s.ready()||!s.sdp.verified()||!s.ice_sent||s.ice_received{return Err("Unexpected native ICE state".into());}
-        let clear=s.open_sdp(packet)?;let items=native_records::check_ice(&clear)?;s.ice_received=true;Ok(items)
+        let clear=s.open_sdp(packet)?;let items=native_records::check_ice(&clear,s.ice_mode)?;s.ice_received=true;Ok(items)
     })}
     fn receive_geometry(&mut self,packet:&[u8])->Result<String>{self.run(|s|{
-        if s.binding.profile!=1||s.role!=Role::Controller||!s.ready()||!s.sdp.verified()
+        if !matches!(s.binding.profile,1|2)||s.role!=Role::Controller||!s.ready()||!s.sdp.verified()
             ||!s.ice_sent||!s.ice_received||s.geometry_received{return Err("Unexpected view geometry state".into());}
         let clear=s.open_sdp(packet)?;let geometry=native_records::check_geometry(&clear)?;
         s.geometry_received=true;Ok(geometry)
@@ -193,15 +194,15 @@ impl FixturePeer{
     pub fn sdp_verified(&self)->bool{self.inner.ready()&&self.inner.sdp.verified()}
     pub fn close(&mut self){self.inner.close();}
 }
-/// Deliberately no host role, synthetic data method, raw encrypt/decrypt,
-/// arbitrary grant, relay selection or real input in this exported class.
+/// Deliberately no host role, synthetic data method or raw encrypt/decrypt.
+/// Fixed read-only/control scopes and bounded ICE policy; no input injection here.
 #[wasm_bindgen]
 pub struct ViewPeer{inner:Peer}
 #[wasm_bindgen]
 impl ViewPeer{
     #[wasm_bindgen(constructor)]
-    pub fn new(session:&[u8],controller:&[u8],host:&[u8],cn:&[u8],hn:&[u8])->std::result::Result<ViewPeer,JsValue>{
-        js(Peer::new_bound(Role::Controller,session,controller,host,cn,hn,1).and_then(|mut inner|{
+    pub fn new(session:&[u8],controller:&[u8],host:&[u8],cn:&[u8],hn:&[u8],ice_mode:u8,control:bool)->std::result::Result<ViewPeer,JsValue>{
+        js(Peer::new_bound(Role::Controller,session,controller,host,cn,hn,if control{2}else{1},ice_mode).and_then(|mut inner|{
             inner.enable_native_order()?;Ok(Self{inner})
         }))
     }
@@ -223,7 +224,7 @@ impl ViewPeer{
     pub fn native_ice_verified(&self)->bool{self.inner.ready()&&self.inner.sdp.verified()&&self.inner.ice_sent&&self.inner.ice_received}
     pub fn receive_geometry(&mut self,p:&[u8])->std::result::Result<String,JsValue>{js(self.inner.receive_geometry(p))}
     pub fn receive_layout(&mut self,p:&[u8])->std::result::Result<u8,JsValue>{js(self.inner.receive_layout(p))}
-    pub fn view_metadata_verified(&self)->bool{self.inner.ready()&&self.inner.geometry_received&&self.inner.layout_received}
+    pub fn view_metadata_verified(&self)->bool{self.inner.ready()&&self.inner.geometry_received&&(self.inner.binding.profile==2||self.inner.layout_received)}
     pub fn close(&mut self){self.inner.close();}
 }
 #[cfg(test)]
@@ -264,7 +265,7 @@ mod tests{
     }
     #[test]fn view_scope_cannot_authenticate_as_fixture_or_accept_early_geometry(){
         let c=DeviceIdentity::generate();let h=DeviceIdentity::generate();
-        let make=|role,profile|Peer::new_bound(role,&[7;16],&c.public_key(),&h.public_key(),&[8;32],&[9;32],profile).unwrap();
+        let make=|role,profile|Peer::new_bound(role,&[7;16],&c.public_key(),&h.public_key(),&[8;32],&[9;32],profile,0).unwrap();
         let mut view=make(Role::Controller,1);let mut fixture=make(Role::Host,0);
         assert_eq!(view.binding.requested,1);assert_eq!(view.binding.granted,1);
         fixture.read(&view.write().unwrap()).unwrap();
