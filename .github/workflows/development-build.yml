@@ -7,6 +7,7 @@ on:
       - '.github/workflows/development-build.yml'
       - '.github/preview-release.json'
       - 'scripts/ci/install-gstreamer.*'
+      - 'scripts/ci/check_bundle.py'
       - 'docs/DEV_BUILD.md'
       - 'scripts/ci/macos-development-info.plist'
       - 'crates/media/macos/SystemAudio.swift'
@@ -138,6 +139,13 @@ jobs:
           }
           Copy-Item target/release/remote-ex-rendezvous.exe stage/
           Copy-Item docs/DEV_BUILD.md stage/README.md
+          Copy-Item docs/INSTALL.md stage/INSTALL.md
+          python scripts/ci/check_bundle.py stamp --dir stage --platform windows
+          if ($LASTEXITCODE -ne 0) { throw 'Component manifest generation failed' }
+          python scripts/ci/check_bundle.py verify --dir stage --platform windows
+          if ($LASTEXITCODE -ne 0) { throw 'Component manifest check failed' }
+          python scripts/ci/check_bundle.py probe --dir stage --platform windows
+          if ($LASTEXITCODE -ne 0) { throw 'Packaged media probe failed' }
           @("commit=$env:GITHUB_SHA", "runtime=$env:GST_VERSION", "architecture=$env:RUNNER_ARCH") | Set-Content stage/BUILD_INFO.txt
           Compress-Archive -Path stage/* -DestinationPath artifacts/Remote-EX-dev-Windows-x64.zip -Force
       - name: Collect macOS development package
@@ -155,11 +163,15 @@ jobs:
           done
           cp crates/media/target/release/remote-ex-mac-audio "$app/Contents/MacOS/"
           codesign --force --sign - "$app/Contents/MacOS/remote-ex-mac-audio"
+          python3 scripts/ci/check_bundle.py stamp --dir "$app/Contents/MacOS" --platform macos
           codesign --force --sign - "$app"
           codesign --verify --deep --strict "$app"
+          python3 scripts/ci/check_bundle.py verify --dir "$app/Contents/MacOS" --platform macos
+          python3 scripts/ci/check_bundle.py probe --dir "$app/Contents/MacOS" --platform macos
           cp target/release/remote-ex-rendezvous stage/
           codesign --force --sign - stage/remote-ex-rendezvous
           cp docs/DEV_BUILD.md stage/README.md
+          cp docs/INSTALL.md stage/INSTALL.md
           printf 'commit=%s\nruntime=%s\narchitecture=%s\n' "$GITHUB_SHA" "$GST_VERSION" "$RUNNER_ARCH" > stage/BUILD_INFO.txt
           tar -czf "artifacts/Remote-EX-dev-macOS-$(uname -m).tar.gz" -C stage .
       - uses: actions/upload-artifact@v4

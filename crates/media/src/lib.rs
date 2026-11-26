@@ -9,6 +9,7 @@ use gstreamer_sdp as sdp;
 use gstreamer_webrtc as rtc;
 pub mod certificate;
 pub mod stats;
+pub mod runtime_probe;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     mpsc::{self, Receiver, SyncSender, TrySendError},

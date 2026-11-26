@@ -7,6 +7,7 @@ mod trust;
 mod service;
 mod policy;
 mod power_local;
+mod runtime_check;
 use tauri::Manager;
 
 fn main() {
@@ -18,6 +19,7 @@ fn main() {
         .manage(presence::PresenceManager::default())
         .invoke_handler(tauri::generate_handler![
             service::platform_capabilities,
+            runtime_check::runtime_check,
             service::startup_status,
             service::startup_change,
             service::stop_all,

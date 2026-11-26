@@ -76,3 +76,7 @@ For Wayland control choose Control and a monitor on the host; both current clien
 ## First three-platform preview publication
 
 The owner approved `v0.1.0-alpha.1` as a GitHub pre-release. All three platform archives must come from the same source commit with six successful workflow runs. Windows/macOS now also carry the independently built rendezvous server; external GStreamer remains separately installed. Windows is unsigned, macOS ad-hoc signed and not notarized, Linux is a debug development archive with distro dependencies. See [preview release process](PREVIEW_RELEASE.md). New builds and publication are pending at this entry; do not mistake temporary Actions artifacts for a published release.
+
+## After alpha.1: package/runtime preflight candidate
+
+See [INSTALL.md](INSTALL.md). New builds include a fixed sidecar checksum manifest, offline local plugin and synthetic VP8 checks, and a bounded diagnostic report. The Windows launcher can discover supported locally installed runtime directory hints without modifying system PATH. Linux packages add the missing LAN diagnostic sidecars and strip debug metadata from staged copies only. All packaged sidecars are verified in CI; subsequent approved preview releases verify their manifest against archive contents. The existing published alpha.1 is unchanged and does not contain these new diagnostics. No physical platform acceptance or installer/signing claim; current CI pending.

@@ -8,8 +8,8 @@
 | M1 | 桌面骨架、局域网采集/编码/传输/解码/输入 | 开发中：核心、桌面 CI、同进程 WebRTC 和 RGBA 回环通过；LAN 信令与独立进程媒体/数据通道集成通过；桌面 LAN 会话管理与加密只读 CLI 集成 CI 通过；只读 GUI 与原生输入适配 CI 已通过；加密控制模拟输入集成测试通过；桌面实验控制、正常撤销和独立采集线程已编写，增量桌面 CI、双向撤销测试通过；Windows x64 / macOS ARM64 开发包均通过完整 CI 并生成；真实设备验收未完成 | 两台真实设备端到端授权控制；权限拒绝和断开释放验证 |
 | M2 | 信令、设备 ID、认证、ICE、TURN、重连 | 实现待验：M2.1/2 本地信令/WSS 通过历史 CI；本批完成端到端 Noise 路由、可信设备/上线、原生 view/control UI、ICE/STUN/TURN、短期凭据、TLS 准入配置与重新注册代码；最新完整媒体/桌面/native-build、物理跨网及生产评审待验证 | 两个网络下直连与强制中继测试，身份、权限与撤销安全检查 |
 | M3 | 设备、音频、多屏、文件、剪贴板、统计、多会话 | 功能候选：10个工作包均有代码，部分子功能未完成；最新自动化与实机验证待办，详见 M3_FULL_HANDOFF.md | 功能端到端操作和权限测试 |
-| M4 | 无人值守、后台服务、Linux、高级能力 | 未开始 | 分平台验证权限、服务生命周期和明确限制 |
-| M5 | 多语言/主题、安装包、更新、安全与部署、Release | 未开始 | 正式发布清单及三平台验证；未支持能力明示 |
+| M4 | 无人值守、后台服务、Linux、高级能力 | 四批实现候选；alpha.1 自动验收通过，物理设备与未支持平台能力待验 | 分平台验证权限、服务生命周期和明确限制 |
+| M5 | 多语言/主题、安装包、更新、安全与部署、Release | 预览发布已完成；安装诊断、包校验与运行环境改进开发中 | 正式发布清单及三平台验证；未支持能力明示 |
 | M6 | Web、移动主控、管理端及多中继 | 未开始 | 各平台独立验收 |
 
 ## M0 执行顺序
@@ -96,3 +96,7 @@ Saved expiring per-device host policy with exact server, device, display and sco
 
 ### Alpha preview publication gate
 Owner approved v0.1.0-alpha.1 after Linux portal compilation repair and successful same-commit CI across three platforms. Six checks, exact-source package manifest and SHA256SUMS required. Publication does not imply M4 completion or real-device acceptance. Release completed on 2026-11-26: [v0.1.0-alpha.1](https://github.com/xzcode/remote-ex/releases/tag/v0.1.0-alpha.1) is a published prerelease at `303163c`, with all six CI checks successful and all three platform archives plus SHA256SUMS.txt uploaded. [Publication record](PREVIEW_RELEASE.md#first-publication-record--2026-11-26).
+
+### M4/M5 发布后的安装与环境诊断批次
+
+新增本机运行环境诊断、固定组件清单 SHA-256 校验、离线 VP8 合成编解码、GStreamer 元素缺失列表、Windows 官方运行库路径候选、Linux LAN 合成诊断组件补包、Linux 打包副本移除调试信息、各平台打包后自检及后续发布时归档内组件核验。代码待本轮 CI；已有 alpha.1 标签和文件保持不变。无正式安装器、物理隐私屏、Windows/macOS 虚拟显示驱动或跨重启无人值守新实现；实机验收仍是 M4 退出条件。

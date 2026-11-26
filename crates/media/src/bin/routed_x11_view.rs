@@ -1,9 +1,10 @@
-//! Linux native screen view/control sidecar; Wayland is portal-view only.
+//! Linux native screen view/control sidecar, with explicitly authorized Wayland portal.
 #[cfg(target_os="linux")]
 mod routed_session;
 #[cfg(target_os="linux")]
 #[tokio::main(flavor="multi_thread")]
 async fn main(){
+    if remote_ex_media::runtime_probe::handle_cli(){return;}
     if let Err(e)=run().await{eprintln!("FAIL: {e}");std::process::exit(1);}
 }
 #[cfg(target_os="linux")]

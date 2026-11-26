@@ -8,6 +8,8 @@ on:
       - 'crates/desktop-features/**'
       - 'crates/rendezvous-client/**'
       - 'scripts/test_routed_diagnostic.py'
+      - 'scripts/ci/check_bundle.py'
+      - 'docs/INSTALL.md'
       - '.github/workflows/linux-x11-ci.yml'
       - '.github/preview-release.json'
   workflow_dispatch:
@@ -66,10 +68,16 @@ jobs:
           mkdir -p dist/linux-dev
           cp apps/desktop/src-tauri/target/debug/remote-ex-desktop dist/linux-dev/
           cp crates/media/target/debug/routed_x11_view dist/linux-dev/
-          cargo build --manifest-path crates/media/Cargo.toml --bin routed_diagnostic
-          cp crates/media/target/debug/routed_diagnostic dist/linux-dev/
+          cargo build --manifest-path crates/media/Cargo.toml --bin routed_diagnostic --bin lan_view --bin lan_diagnostic
+          cp crates/media/target/debug/{routed_diagnostic,lan_view,lan_diagnostic} dist/linux-dev/
           cp target/debug/remote-ex-rendezvous dist/linux-dev/
           cp docs/DEV_BUILD.md dist/linux-dev/
+          cp docs/INSTALL.md dist/linux-dev/
+          # Strip debug metadata on staging copies only, then test the package.
+          strip --strip-debug dist/linux-dev/remote-ex-desktop dist/linux-dev/routed_x11_view dist/linux-dev/routed_diagnostic dist/linux-dev/lan_view dist/linux-dev/lan_diagnostic dist/linux-dev/remote-ex-rendezvous
+          python3 scripts/ci/check_bundle.py stamp --dir dist/linux-dev --platform linux
+          python3 scripts/ci/check_bundle.py verify --dir dist/linux-dev --platform linux
+          python3 scripts/ci/check_bundle.py probe --dir dist/linux-dev --platform linux
           printf 'commit=%s\narchitecture=%s\nbuild=debug\n' "$GITHUB_SHA" "$RUNNER_ARCH" > dist/linux-dev/BUILD_INFO.txt
           tar -C dist/linux-dev -czf dist/Remote-EX-dev-Linux-x64.tar.gz .
       - uses: actions/upload-artifact@v4

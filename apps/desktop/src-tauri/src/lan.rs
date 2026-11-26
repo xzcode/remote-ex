@@ -192,6 +192,11 @@ fn sidecar_path(profile: Profile) -> Result<PathBuf, String> {
     if !path.is_file() {
         return Err("Native media diagnostic is not installed next to the application executable. See the development setup instructions.".into());
     }
+    crate::runtime_check::verify_component(parent,name)?;
+    if profile.av()||profile==Profile::RoutedAudio{
+        #[cfg(target_os="macos")]
+        crate::runtime_check::verify_component(parent,"remote-ex-mac-audio")?;
+    }
     Ok(path)
 }
 
@@ -611,7 +616,7 @@ impl SessionManager {
         let addr = local_endpoint(address)?;
         let flag = match role { "host" => "--listen", "controller" => "--connect", _ => return Err("Unknown diagnostic role".into()) };
         let host = role == "host";
-        let mut command = Command::new(sidecar_path(profile)?);
+        let mut command = crate::runtime_check::media_command(&sidecar_path(profile)?);
         command.arg(flag).arg(addr.to_string());
         match profile {
             Profile::Diagnostic => {
@@ -665,7 +670,7 @@ impl SessionManager {
         if extended&&!matches!(profile,Profile::RoutedView|Profile::RoutedControl|Profile::RoutedAvView|Profile::RoutedAvControl){return Err("Extended lease is restricted to native display sessions".into());}
         if secondary&&(!cfg!(any(target_os="windows",target_os="macos"))||!host||!matches!(profile,Profile::RoutedControl|Profile::RoutedAvControl)){return Err("Experimental secondary display control requires Windows or macOS host control".into());}
         if (resume_from.is_some()||checkpoint_path.is_some())&&!profile.exchange().is_some_and(|(kind,sender)|kind=="file"&&sender!=host){return Err("Checkpoint options require the local file receiver".into());}
-        let mut command=Command::new(sidecar_path(profile)?);
+        let mut command=crate::runtime_check::media_command(&sidecar_path(profile)?);
         command.arg(if host{"--host"}else{"--controller"}).arg(url).arg(remote_ex_signaling::hex(&pin));
         match profile{
             Profile::RoutedTest=>{},

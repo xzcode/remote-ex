@@ -6,6 +6,7 @@ import LanPanel from "./LanPanel.vue";
 import PresencePanel from "./PresencePanel.vue";
 import RoutedPanel from "./RoutedPanel.vue";
 import ServicePanel from "./ServicePanel.vue";
+import RuntimePanel from "./RuntimePanel.vue";
 
 type Language = "system" | "en" | "zh";
 type Theme = "system" | "light" | "dark" | "black";
@@ -132,6 +133,7 @@ const pages: { key: Page; symbol: string }[] = [
           <PresencePanel :t="t" @active="presenceActive = $event" />
         </template>
         <template v-else-if="active === 'diagnostics'">
+          <RuntimePanel :t="t" :blocked="busy" @active="busy=$event" />
           <section class="panel">
             <h2>{{ t("diagTitle") }}</h2><p>{{ t("diagDescription") }}</p>
             <div class="field">

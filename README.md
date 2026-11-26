@@ -2,7 +2,7 @@
 
 跨平台、可私有化部署的远程桌面工具。Remote EX 自主研发客户端、服务端和业务协议，使用成熟底层库，不基于 RustDesk 等完整产品进行 fork。
 
-**当前状态：M3 第五批 1463dfb 核心、双平台桌面、原生输入、完整媒体及 Windows/macOS 开发包均通过，联合 VP8/Opus 合成测试有实际结果；真实设备验收仍待。第六批新增独立审批式远程文件变更（新建空文件/目录、普通文件改名、移入恢复目录、最多四项），核心测试已通过，最新桌面、媒体和原生打包待验。无正式 Release。**
+**当前状态：已发布 [v0.1.0-alpha.1](https://github.com/xzcode/remote-ex/releases/tag/v0.1.0-alpha.1)，三平台构建及六项 CI 通过（303163c）。M4 仍有实机验收及原生平台能力缺口。M5 安装环境与打包质量工作并行推进；新代码不等同已发布二进制。**
 
 ## 目标
 
@@ -41,7 +41,9 @@
 - [自建部署候选](deploy/README.md)
 - [M2.1 信令服务](servers/signaling/README.md)
 - [物理设备验收清单](docs/M1_DEVICE_ACCEPTANCE.md)
+- [安装、首次使用与排错](docs/INSTALL.md)
 - [开发测试包说明](docs/DEV_BUILD.md)
+- [发布与验收记录](docs/PREVIEW_RELEASE.md)
 - [输入适配说明](crates/input/README.md)
 - [LAN 信令诊断](crates/signaling/README.md)
 - [原生媒体模块说明](crates/media/README.md)
