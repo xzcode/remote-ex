@@ -22,12 +22,12 @@ permissions:
   contents: read
 concurrency:
   group: web-lab-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 jobs:
   lab:
     # Playwright 1.56.1 cannot install Chromium on the new 26.04 runner.
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -64,11 +64,25 @@ jobs:
           node --check identity.js
           node --check identity-page.js
           node --check wss-fixture.js
+          node --check native-wss-fixture.js
+          node --check test-native-wss.mjs
+          node --check wss-test-support.mjs
           npm test
       - name: Real enrolled WSS and encrypted synthetic media fixture
         if: ${{ !cancelled() && steps.browser_tooling.outcome == 'success' && steps.wss_fixture.outcome == 'success' }}
         working-directory: apps/web
         run: npm run test:wss
+      - name: Build native inert media host
+        if: ${{ !cancelled() && steps.browser_tooling.outcome == 'success' && steps.wss_fixture.outcome == 'success' }}
+        id: native_host
+        run: |
+          test "$RUNNER_ENVIRONMENT" = "github-hosted"
+          sudo apt-get install -y pkg-config libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libgstreamer-plugins-bad1.0-dev gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-nice
+          cargo build --manifest-path crates/media/Cargo.toml --no-default-features --bin routed_diagnostic
+      - name: Independent native GStreamer to browser WSS integration
+        if: ${{ !cancelled() && steps.native_host.outcome == 'success' }}
+        working-directory: apps/web
+        run: timeout 110s npm run test:native-wss
       - name: Stage private local-only diagnostic bundle
         run: |
           mkdir -p apps/web/dist/pkg

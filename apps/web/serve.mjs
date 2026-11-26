@@ -37,6 +37,7 @@ export async function serve(port=0,fixtureEndpoint=null){
     const endpoint=new URL(fixtureEndpoint);
     if(endpoint.protocol!=="wss:"||endpoint.hostname!=="127.0.0.1"||!endpoint.port||endpoint.pathname!=="/v1/ws"||endpoint.username||endpoint.password||endpoint.search||endpoint.hash||endpoint.href!==fixtureEndpoint)throw Error("Only the exact local WSS fixture is allowed");
     table.set("/wss-fixture.js",["wss-fixture.js","text/javascript; charset=utf-8"]);
+    table.set("/native-wss-fixture.js",["native-wss-fixture.js","text/javascript; charset=utf-8"]);
     policy["Content-Security-Policy"]=policy["Content-Security-Policy"].replace("connect-src 'self'","connect-src 'self' "+endpoint.origin);
  }
  const server=http.createServer(async(req,res)=>{

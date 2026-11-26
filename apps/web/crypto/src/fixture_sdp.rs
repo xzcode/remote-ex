@@ -20,7 +20,7 @@ fn decode(data:&[u8])->Result<Record>{
 }
 fn valid(sdp:&str)->bool{
     !sdp.is_empty()&&sdp.len()<=MAX_SEALED_CLEAR&&!sdp.contains('\0')
-        &&sdp.starts_with("v=0\r\n")&&sdp.lines().filter(|l|l.starts_with("m=")).count()<=2
+        &&(sdp.starts_with("v=0\r\n")||sdp.starts_with("v=0\n"))&&sdp.lines().filter(|l|l.starts_with("m=")).count()<=2
         &&sdp.lines().filter(|l|l.starts_with("m=video ")).count()==1
         &&sdp.lines().filter(|l|l.starts_with("m=application ")).count()<=1
         &&sdp.lines().all(|l|!l.starts_with("m=")||l.starts_with("m=video ")||l.starts_with("m=application "))

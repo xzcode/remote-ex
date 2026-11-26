@@ -18,8 +18,9 @@ fn decode(data:&[u8])->Result<Record>{
 }
 fn valid(items:&[IceItem])->bool{
     !items.is_empty()&&items.len()<=128&&items.iter().map(|x|x.candidate.len()).sum::<usize>()<=16*1024
+        &&items.iter().any(|x|!x.candidate.is_empty())
         &&items.iter().all(|x|x.mline<=1&&x.candidate.len()<=4096&&!x.candidate.contains(['\r','\n','\0'])
-            &&x.candidate.starts_with("candidate:")&&x.candidate.split_ascii_whitespace().collect::<Vec<_>>().windows(2).any(|w|w==["typ","host"]))
+            &&(x.candidate.is_empty()||(x.candidate.starts_with("candidate:")&&x.candidate.split_ascii_whitespace().collect::<Vec<_>>().windows(2).any(|w|w==["typ","host"]))))
 }
 pub(super) fn quality()->Result<Vec<u8>>{encode(&Record::Quality{preset:"compat".into()})}
 pub(super) fn check_quality(data:&[u8])->Result<()>{
@@ -44,5 +45,8 @@ pub(super) fn check_ice(data:&[u8])->Result<String>{
         let b=ice(item).unwrap();assert_eq!(check_ice(&b).unwrap(),item);
         for bad in ["[]",r#"[{"mline":2,"candidate":"candidate:1 1 UDP 123 127.0.0.1 1234 typ host"}]"#,r#"[{"mline":0,"candidate":"candidate:1 1 UDP 123 127.0.0.1 1234 typ relay"}]"#,r#"[{"mline":0,"candidate":"candidate:1 1 UDP 123 127.0.0.1 1234 typ host\n"}]"#]{assert!(ice(bad).is_err());}
         assert!(check_ice(&quality().unwrap()).is_err());
+        let eoc=r#"[{"mline":0,"candidate":"candidate:1 1 UDP 123 127.0.0.1 1234 typ host"},{"mline":0,"candidate":""}]"#;
+        assert_eq!(check_ice(&ice(eoc).unwrap()).unwrap(),eoc);
+        assert!(ice(r#"[{"mline":0,"candidate":""}]"#).is_err());
     }
 }

@@ -32,3 +32,7 @@ The next lab workflow is pinned to Ubuntu 24.04 because Playwright 1.56.1 cannot
 ## Local controller identity candidate
 
 Open `/identity.html` on the same local origin to create and manage a non-extractable Ed25519 controller identity stored in IndexedDB. Public key and device ID can be manually recorded for future enrollment; no server registration or remote connection is possible. Local removal does not revoke server enrollment. Retain the same profile and origin (including port); no private-key backup/export. The separate CI-only WSS fixture still generates independent disposable identities and now tests native-order encrypted compat quality and ICE batches. Native GStreamer/browser interoperability remains unverified. See docs/M6_NATIVE_ORDER_HANDOFF.md.
+
+## Independent native media integration candidate (CI only)
+
+The Web lab workflow also builds the existing native `routed_diagnostic` binary with no default features and runs `npm run test:native-wss` in a disposable hosted runner. The browser uses a reload-persisted controller identity, isolated TLS/Origin enrollment, signed profile-0 WSS/Noise and native record ordering, then verifies actual GStreamer VP8 decode, negotiated data-channel acknowledgements, inert release and route closure. The new test module is not distributed by the normal lab server/bundle. No actual screen capture or OS input; new CI results are required before claiming interoperability. See docs/M6_NATIVE_MEDIA_HANDOFF.md.

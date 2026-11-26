@@ -148,3 +148,8 @@ Shared 28-profile v1 table now drives routed grants and signature validation wit
 ### M6 fourth candidate — persistent browser identity and native record order
 
 996a054 Core, Native media, Container and Web lab passed; [Web lab](https://github.com/xzcode/remote-ex/actions/runs/45774460916) includes actual WSS synthetic decode. Candidate adds explicit origin-local non-extractable browser identity vault, reload/isolation/deletion checks, and profile-0 native-order encrypted compat quality and host ICE batches around exact signed SDP. New CI pending. No persistent identity registration, native GStreamer/browser media interoperability, real desktop view, input, mobile, public deployment or new release. See [handoff](M6_NATIVE_ORDER_HANDOFF.md).
+
+
+### M6 fifth candidate — independent native VP8 ↔ browser fixture
+
+c757557 Web CI Rust tests passed; full browser result pending when work started. New CI-only enrolled localhost WSS fixture connects the persisted browser key (after reload) to the independent no-feature Rust/GStreamer synthetic host, uses native profile 0 quality/SDP/encrypted ICE, negotiated data channel, DTLS certificate verification and requires 30 decoded 960x540 frames, pixel evidence, fixed inert input release, and route closure. Handles native ICE end-of-candidates and bounded config/offer races. No actual desktop capture, user input, public connection or new release; interoperability remains pending CI. See [handoff](M6_NATIVE_MEDIA_HANDOFF.md).

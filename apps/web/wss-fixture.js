@@ -45,12 +45,12 @@ class Socket{
         try{this.socket.close();}catch{}
     }
     close(){this.fail("WSS fixture closed");}
-    receive(){
+    receive(timeout=7000){
         if(this.failed)return Promise.reject(Error("WSS fixture unavailable"));
         if(this.queue.length)return Promise.resolve(this.queue.shift());
         if(this.waiter)return Promise.reject(Error("Concurrent WSS receive"));
         return new Promise((resolve,reject)=>{
-            const timer=setTimeout(()=>this.fail("WSS fixture response timeout"),7000);
+            const timer=setTimeout(()=>this.fail("WSS fixture response timeout"),timeout);
             this.waiter={resolve,reject,timer};
         });
     }
@@ -248,3 +248,6 @@ export async function run(endpoint,expected){
     }
     return result;
 }
+
+// Reused by the separate disposable native diagnostic; not shipped.
+export {Socket,register,sendSignal,sendSealed,proofMessage,sdpProof,wait,checkEndpoint,require,nonzero,type,keys};
