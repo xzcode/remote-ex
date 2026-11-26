@@ -14,3 +14,13 @@ The owner approved the first alpha preview tag `v0.1.0-alpha.1`. A preview relea
 Windows x64 ZIP, macOS ARM64 tar.gz (ad-hoc signed app, no notarization), and Linux x64 debug development tar.gz. Each includes the self-host rendezvous binary and build documentation; none bundles the official GStreamer runtime. Refer to DEV_BUILD.md for dependencies and normal OS permissions. Do not select a final project license without owner approval or represent unverified third-party distribution obligations as resolved.
 
 Publication is complete only when the Release page contains the tagged prerelease and all three archives plus SHA256SUMS.txt. Temporary Actions artifact links alone are not a release.
+
+## First publication record — 2026-11-26
+
+- Release: [v0.1.0-alpha.1](https://github.com/xzcode/remote-ex/releases/tag/v0.1.0-alpha.1), published 03:07:19 UTC; prerelease, not draft.
+- Tag and release target: `303163ce2e85aea2f00df6f340ec932a6cfb29c0`.
+- All six source-commit checks passed: [Core](https://github.com/xzcode/remote-ex/actions/runs/45745271481), [Desktop](https://github.com/xzcode/remote-ex/actions/runs/45745271612), [Native input](https://github.com/xzcode/remote-ex/actions/runs/45745271609), [Native media](https://github.com/xzcode/remote-ex/actions/runs/45745271569), [Windows/macOS](https://github.com/xzcode/remote-ex/actions/runs/45745271487), [Linux](https://github.com/xzcode/remote-ex/actions/runs/45745271505).
+- [Publisher run](https://github.com/xzcode/remote-ex/actions/runs/45746815364): source checks, archive retrieval, archive inspection, commit stamps, checksums and prerelease publication succeeded. GitHub API confirms all four assets are uploaded.
+- Archive sizes in bytes: Windows 15036230; macOS 15640368; Linux 171709309. The release includes SHA256SUMS.txt.
+- Linux portal compiler fixes are covered by the successful Linux run. Xvfb capture/input fixtures and the bounded portal pipeline tests are not physical Wayland or hardware acceptance.
+- Release remains experimental. No server deployment, production endorsement, or OS signing/notarization is implied. This record does not modify the existing tag or assets.
