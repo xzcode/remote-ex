@@ -1,0 +1,42 @@
+name: WebKit controller compatibility
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'scripts/ci/test-webkit-controller.mjs'
+      - 'scripts/ci/webkit-controller-runtime.sh'
+      - '.github/workflows/webkit-controller-ci.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: webkit-controller-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  webkit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Build reviewed controller WASM
+        timeout-minutes: 7
+        run: |
+          rustup target add wasm32-unknown-unknown
+          cargo install wasm-bindgen-cli --version 0.2.106 --locked
+          RUSTFLAGS='--cfg getrandom_backend="wasm_js"' cargo build --release --manifest-path apps/web/crypto/Cargo.toml --target wasm32-unknown-unknown
+          wasm-bindgen --target web --out-dir apps/web/pkg --out-name noise apps/web/crypto/target/wasm32-unknown-unknown/release/remote_ex_web_crypto.wasm
+      - name: Install pinned WebKit runtime
+        timeout-minutes: 5
+        working-directory: apps/web
+        run: |
+          npm install --ignore-scripts --no-audit --no-fund
+          npx playwright install --with-deps webkit
+      - name: Actual HTTPS WebKit identity, capability and authenticated synthetic media
+        timeout-minutes: 6
+        run: |
+          node --check scripts/ci/test-webkit-controller.mjs
+          bash -n scripts/ci/webkit-controller-runtime.sh
+          bash scripts/ci/webkit-controller-runtime.sh
