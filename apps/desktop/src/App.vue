@@ -1,14 +1,15 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import { en, zh, type TextKey } from "./i18n";
+import type { TextKey } from "./i18n";
+import {localeChoices,systemLocale,translate,coverage,type Language} from "./locales";
 import LanPanel from "./LanPanel.vue";
 import PresencePanel from "./PresencePanel.vue";
 import RoutedPanel from "./RoutedPanel.vue";
 import ServicePanel from "./ServicePanel.vue";
 import RuntimePanel from "./RuntimePanel.vue";
+import UpdatePanel from "./UpdatePanel.vue";
 
-type Language = "system" | "en" | "zh";
 type Theme = "system" | "light" | "dark" | "black";
 type Page = "remote" | "routed" | "server" | "diagnostics" | "service" | "preferences";
 type Permission = "granted" | "required" | "system_managed";
@@ -20,7 +21,7 @@ function preference<T extends string>(key: string, values: readonly T[], fallbac
     return values.includes(value as T) ? value as T : fallback;
   } catch { return fallback; }
 }
-const language = ref<Language>(preference("remote-ex.language", ["system", "en", "zh"], "system"));
+const language = ref<Language>(preference<Language>("remote-ex.language", ["system",...localeChoices.map(x=>x.id)], "system"));
 const theme = ref<Theme>(preference("remote-ex.theme", ["system", "light", "dark", "black"], "system"));
 const active = ref<Page>("remote");
 const lanActive = ref(false);
@@ -30,16 +31,21 @@ const serviceActive=ref(false);
 const sessionActive=computed(()=>lanActive.value||routedActive.value||serviceActive.value);
 const presenceActive = ref(false);
 const native = isTauri();
-const systemLanguage = navigator.language.toLowerCase().startsWith("zh") ? "zh" : "en";
-const locale = computed(() => language.value === "system" ? systemLanguage : language.value);
-const t = (key: TextKey) => (locale.value === "zh" ? zh : en)[key];
-watch([language, theme], ([lang, mode]) => {
+const systemLanguage = ref(systemLocale(navigator.languages?.length?navigator.languages:[navigator.language]));
+const refreshLanguage=()=>{systemLanguage.value=systemLocale(navigator.languages?.length?navigator.languages:[navigator.language]);};
+const locale = computed(() => language.value === "system" ? systemLanguage.value : language.value);
+const translationCoverage=computed(()=>coverage(locale.value));
+const t = (key: TextKey) => translate(locale.value,key);
+const buildLabel=ref("Remote EX");
+onMounted(()=>{window.addEventListener("languagechange",refreshLanguage);if(native)void invoke<{version:string;tag:string|null;commit:string|null}>("build_info").then(b=>{buildLabel.value=b.tag??(b.version+" · "+(b.commit?.slice(0,8)??"dev"));}).catch(()=>{});});
+onBeforeUnmount(()=>window.removeEventListener("languagechange",refreshLanguage));
+watch([language, theme,locale], ([lang, mode]) => {
   try {
     localStorage.setItem("remote-ex.language", lang);
     localStorage.setItem("remote-ex.theme", mode);
   } catch { /* Private webviews may disable local storage. */ }
   document.documentElement.dataset.theme = mode;
-  document.documentElement.lang = locale.value;
+  document.documentElement.lang = localeChoices.find(x=>x.id===locale.value)?.lang??"en";
 }, { immediate: true });
 
 const displays = ref<Display[]>([]);
@@ -173,16 +179,18 @@ const pages: { key: Page; symbol: string }[] = [
         <template v-else>
           <section class="panel">
             <div class="preference-row"><label for="language">{{ t("language") }}</label>
-              <select id="language" v-model="language"><option value="system">{{ t("system") }}</option><option value="zh">简体中文</option><option value="en">English</option></select>
+              <select id="language" v-model="language"><option value="system">{{ t("system") }}</option><option v-for="choice in localeChoices" :key="choice.id" :value="choice.id">{{ choice.label }}</option></select>
             </div>
             <div class="preference-row"><label for="theme">{{ t("appearance") }}</label>
               <select id="theme" v-model="theme"><option value="system">{{ t("system") }}</option><option value="light">{{ t("light") }}</option><option value="dark">{{ t("dark") }}</option><option value="black">{{ t("black") }}</option></select>
             </div>
+            <p v-if="translationCoverage.translated!==translationCoverage.total" class="muted">{{ t("localePartial") }} {{ t("localeCoverage") }}: {{ translationCoverage.translated }}/{{ translationCoverage.total }}</p>
             <p class="muted">{{ t("saved") }}</p>
           </section>
+          <UpdatePanel :t="t" :blocked="busy" @active="busy=$event" />
         </template>
       </div>
-      <footer class="footer">{{ t("version") }}<span>{{ t("noRemote") }}</span></footer>
+      <footer class="footer">{{ buildLabel }}<span>{{ t("noRemote") }}</span></footer>
     </main>
   </div>
 </template>

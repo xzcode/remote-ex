@@ -35,3 +35,24 @@ Open Diagnostics → Installation and media runtime → Check local runtime. Thi
 Use two explicitly authorized devices. For initial LAN testing, use the secure test profile and follow the full local key comparison and consent steps in DEV_BUILD.md. Use routed view/control only with an administrator-configured, trusted WSS rendezvous and the matching server ID. See deploy/README.md and docs/M2_NETWORK_ACCEPTANCE.md. No automatic public listener, default unattended access, permission bypass, or auto-deployment is enabled.
 
 Actual screen, input, sound, lock/suspend, Wayland virtual display and power behavior still need authorized physical-device testing. Linux real screen viewing uses the routed native sidecar, not the LAN synthetic diagnostic. Keep the host visible and use Disconnect; do not rely on this alpha for critical remote access.
+
+
+## 5. Installation packages (next development build)
+
+These candidates are not retroactively included in alpha.1 and are not yet released. Use the matching development artifacts only after the current workflow passes.
+
+| Platform | New package | Scope and removal |
+| --- | --- | --- |
+| Windows x64 | Setup.exe (NSIS) | Installs into a fixed, version/commit-specific directory under the current user's LocalAppData Programs folder. Start-menu shortcut and current-user uninstall entry. No service, elevation or automatic launch. Disable login startup in Remote EX and disconnect/close before uninstall. The uninstaller removes only its known application files, preserving credentials and user data. |
+| macOS ARM64 | DMG | Drag Remote EX.app to Applications; close the app and disable login launch before removal. External GStreamer framework required. Ad-hoc signature, not notarized. |
+| Linux x64 | DEB | On a compatible build-distribution system, inspect with `dpkg-deb --info <file.deb>`, then explicitly use your package manager, e.g. `sudo apt install ./<file.deb>`. Files go under /opt/remote-ex with an application menu entry; package manager handles declared dependencies. No service or privileged listener is installed. Actual distro installation and GUI launch remain unverified. |
+
+All formats preserve the prior portable archives. Windows/macOS do not silently download or install GStreamer/WebView2; Diagnostics provides fixed official help links. Linux uses package metadata to declare linked libraries and GStreamer plugins. The DEB is not guaranteed compatible with other distributions or older glibc. Always close sessions before upgrading or uninstalling.
+
+## 6. Update discovery and locales
+
+Settings → Version and updates shows compiled tag/commit and manually checks the official GitHub release API with a bounded HTTPS request. Stable-only and preview-inclusive filters are available. Development builds without an exact published tag are not falsely marked outdated. Only exact platform asset names are listed; use the official releases button, verify SHA256SUMS and install manually. No automatic download, binary replacement, background update check or credential is used.
+
+English and simplified Chinese remain the complete existing application dictionaries. German, French, Spanish, Portuguese, Japanese and Korean are partial additional dictionaries with explicit message counts and English fallback for untranslated instructions/consent text. Native sidecar/viewer, OS dialogs and other hard-coded messages are not fully localized. System language selection respects browser/OS language preferences; unsupported locales fall back to English.
+
+New packaged builds embed their exact source commit and refuse missing or mismatching sidecar manifests; source builds without an embedded commit may remain unverified. DEPENDENCIES.json records resolved build inputs from Rust and frontend lockfiles, including dev/target-specific entries; it is not a full SBOM or licensing/compliance audit.

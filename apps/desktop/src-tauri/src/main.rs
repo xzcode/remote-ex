@@ -8,11 +8,13 @@ mod service;
 mod policy;
 mod power_local;
 mod runtime_check;
+mod update;
 use tauri::Manager;
 
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent,None))
+        .plugin(tauri_plugin_opener::init())
         .setup(|app|{service::setup_tray(app.handle());Ok(())})
         .manage(lan::SessionManager::default())
         .manage(lan::RoutedManagers::default())
@@ -20,6 +22,9 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             service::platform_capabilities,
             runtime_check::runtime_check,
+            update::build_info,
+            update::check_updates,
+            update::open_help,
             service::startup_status,
             service::startup_change,
             service::stop_all,

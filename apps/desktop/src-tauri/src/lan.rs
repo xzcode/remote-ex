@@ -798,6 +798,10 @@ impl SessionManager {
                 if let Err(e)=crate::policy::verify_display(&policy.policy){stage(&shared,Stage::Failed,Some(e));break;}
                 if worker_stop.load(Ordering::Acquire)||!policy.valid(){break;}
                 let mut next=initial.clone();next.service_completed=completed;*locked(&shared)=next;
+                if let Err(e)=sidecar_path(profile){
+                    stage(&shared,Stage::Failed,Some(e));
+                    break;
+                }
                 match command.spawn(){
                     Ok(c)=>child=c,
                     Err(e)=>{stage(&shared,Stage::Failed,Some(format!("Cannot rearm visible host service: {e}")));break;}

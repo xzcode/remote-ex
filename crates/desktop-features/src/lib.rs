@@ -14,3 +14,5 @@ pub mod power;
 
 pub mod bundle;
 pub mod runtime;
+
+pub mod updates;

@@ -24,3 +24,6 @@ Publication is complete only when the Release page contains the tagged prereleas
 - Archive sizes in bytes: Windows 15036230; macOS 15640368; Linux 171709309. The release includes SHA256SUMS.txt.
 - Linux portal compiler fixes are covered by the successful Linux run. Xvfb capture/input fixtures and the bounded portal pipeline tests are not physical Wayland or hardware acceptance.
 - Release remains experimental. No server deployment, production endorsement, or OS signing/notarization is implied. This record does not modify the existing tag or assets.
+
+## Next-release package gate
+Future explicitly approved previews require six platform formats (three portable archives plus Windows Setup.exe, macOS DMG and Linux DEB), checked component manifests, exact release-tag and revision stamps, dependency input inventory, and SHA256SUMS.txt covering all six packages. Installer smoke steps run in native build jobs. No existing release assets are modified. New gate has not yet been verified by a subsequent release. External GStreamer remains separate and publisher signing/license audit remain incomplete.

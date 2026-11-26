@@ -8,6 +8,11 @@ on:
       - '.github/preview-release.json'
       - 'scripts/ci/install-gstreamer.*'
       - 'scripts/ci/check_bundle.py'
+      - 'scripts/ci/build_identity.py'
+      - 'scripts/ci/dependency_inventory.py'
+      - 'scripts/ci/build-windows-installer.ps1'
+      - 'scripts/ci/windows-installer.nsi'
+      - 'scripts/ci/build-macos-dmg.sh'
       - 'docs/DEV_BUILD.md'
       - 'scripts/ci/macos-development-info.plist'
       - 'crates/media/macos/SystemAudio.swift'
@@ -28,6 +33,11 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Embed explicit build identity
+        shell: bash
+        run: python3 scripts/ci/build_identity.py
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -146,7 +156,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Component manifest check failed' }
           python scripts/ci/check_bundle.py probe --dir stage --platform windows
           if ($LASTEXITCODE -ne 0) { throw 'Packaged media probe failed' }
-          @("commit=$env:GITHUB_SHA", "runtime=$env:GST_VERSION", "architecture=$env:RUNNER_ARCH") | Set-Content stage/BUILD_INFO.txt
+          @("commit=$env:GITHUB_SHA", "runtime=$env:GST_VERSION", "architecture=$env:RUNNER_ARCH", "release=$env:REMOTE_EX_BUILD_TAG") | Set-Content stage/BUILD_INFO.txt
+          python scripts/ci/dependency_inventory.py --out stage/DEPENDENCIES.json --platform windows
+          if ($LASTEXITCODE -ne 0) { throw 'Dependency inventory generation failed' }
           Compress-Archive -Path stage/* -DestinationPath artifacts/Remote-EX-dev-Windows-x64.zip -Force
       - name: Collect macOS development package
         if: runner.os == 'macOS'
@@ -172,8 +184,17 @@ jobs:
           codesign --force --sign - stage/remote-ex-rendezvous
           cp docs/DEV_BUILD.md stage/README.md
           cp docs/INSTALL.md stage/INSTALL.md
-          printf 'commit=%s\nruntime=%s\narchitecture=%s\n' "$GITHUB_SHA" "$GST_VERSION" "$RUNNER_ARCH" > stage/BUILD_INFO.txt
+          printf 'commit=%s\nruntime=%s\narchitecture=%s\nrelease=%s\n' "$GITHUB_SHA" "$GST_VERSION" "$RUNNER_ARCH" "$REMOTE_EX_BUILD_TAG" > stage/BUILD_INFO.txt
+          python3 scripts/ci/dependency_inventory.py --out stage/DEPENDENCIES.json --platform macos
           tar -czf "artifacts/Remote-EX-dev-macOS-$(uname -m).tar.gz" -C stage .
+      - name: Build and test current-user Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/ci/build-windows-installer.ps1
+      - name: Build and verify macOS disk image
+        if: runner.os == 'macOS'
+        shell: bash
+        run: bash scripts/ci/build-macos-dmg.sh
       - uses: actions/upload-artifact@v4
         with:
           name: Remote-EX-dev-${{ runner.os }}-${{ runner.arch }}

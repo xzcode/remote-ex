@@ -100,3 +100,7 @@ Owner approved v0.1.0-alpha.1 after Linux portal compilation repair and successf
 ### M4/M5 发布后的安装与环境诊断批次
 
 新增本机运行环境诊断、固定组件清单 SHA-256 校验、离线 VP8 合成编解码、GStreamer 元素缺失列表、Windows 官方运行库路径候选、Linux LAN 合成诊断组件补包、Linux 打包副本移除调试信息、各平台打包后自检及后续发布时归档内组件核验。代码待本轮 CI；已有 alpha.1 标签和文件保持不变。无正式安装器、物理隐私屏、Windows/macOS 虚拟显示驱动或跨重启无人值守新实现；实机验收仍是 M4 退出条件。
+
+
+### M5 first installer/update/localization integration
+Previous 4ee4563 Core 45747955262, Native media 45747955298, Desktop 45747955274 and Linux 45747955300 passed; Windows/macOS 45747955283 still running at integration time. Added current-user NSIS installer and uninstall fixture, macOS drag-to-Applications DMG and read-only image smoke check, Linux DEB with dpkg-shlibdeps and extraction/runtime check; portable archives retained. Approved future preview publication requires all six package formats, exact revision/tag stamps, component manifest, resolved dependency inventory and checksums. Manual version discovery against fixed official GitHub HTTPS release API, semver channel filtering and exact platform assets, no auto-updater. Eight UI language options (two existing complete dictionaries + six partial 125-message dictionaries with English fallback/coverage). System language matching and official runtime links. New CI pending. OS signing, bundling redistributable runtimes, full translations/native viewer localization, license audit, real device/install acceptance and actual M4 closure remain open. No new release authorized.

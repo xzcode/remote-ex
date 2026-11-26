@@ -80,3 +80,8 @@ The owner approved `v0.1.0-alpha.1` as a GitHub pre-release. All three platform 
 ## After alpha.1: package/runtime preflight candidate
 
 See [INSTALL.md](INSTALL.md). New builds include a fixed sidecar checksum manifest, offline local plugin and synthetic VP8 checks, and a bounded diagnostic report. The Windows launcher can discover supported locally installed runtime directory hints without modifying system PATH. Linux packages add the missing LAN diagnostic sidecars and strip debug metadata from staged copies only. All packaged sidecars are verified in CI; subsequent approved preview releases verify their manifest against archive contents. The existing published alpha.1 is unchanged and does not contain these new diagnostics. No physical platform acceptance or installer/signing claim; current CI pending.
+
+
+## M5 installation and update candidate
+
+The new development workflow stages NSIS current-user Setup.exe, macOS DMG, and Linux DEB in addition to portable archives. Windows uses an isolated hosted-runner installation/uninstallation fixture; macOS mounts the image read-only and verifies the app; Linux extracts the package, checks linked dependency metadata, manifests and runtime. No physical desktop acceptance or real distro installation is claimed. Build metadata carries the source revision and only an explicitly requested tag. Local runtime refuses wrong/missing manifest for embedded-build revisions. DEPENDENCIES.json records lockfile-resolved build inputs, not an audited SBOM. Manual update discovery and six partial additional locales are available. External official runtime and platform-signing limitations remain. New CI pending; alpha.1 stays unchanged.

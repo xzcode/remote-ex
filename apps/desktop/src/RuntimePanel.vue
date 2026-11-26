@@ -18,6 +18,7 @@ async function check(){
  catch(e){if(!disposed)error.value=String(e);}
  finally{if(!disposed){running.value=false;emit("active",false);}}
 }
+async function help(target:"gstreamer"|"webview2"|"install"){if(!native||props.blocked||running.value)return;try{await invoke("open_help",{target,confirmed:true});}catch(e){if(!disposed)error.value=String(e);}}
 onBeforeUnmount(()=>{disposed=true;if(running.value)emit("active",false);});
 </script>
 <template>
@@ -26,6 +27,7 @@ onBeforeUnmount(()=>{disposed=true;if(running.value)emit("active",false);});
    <p>{{ t("runtimeNotice") }}</p>
    <p v-if="!native" class="muted">{{ t("browser") }}</p>
    <p v-if="error" class="error" role="alert">{{ error }}</p>
+   <div class="field"><label>{{ t("runtimeHelp") }}</label><div class="actions"><button :disabled="!native||blocked||running" @click="help('gstreamer')">{{ t("runtimeGstreamer") }}</button><button :disabled="!native||blocked||running" @click="help('webview2')">{{ t("runtimeWebview") }}</button><button :disabled="!native||blocked||running" @click="help('install')">{{ t("runtimeInstallGuide") }}</button></div></div>
    <template v-if="report">
      <p class="muted">Remote EX {{ report.app_version }} · {{ report.platform }} / {{ report.arch }}<span v-if="report.bundle_commit"> · {{ report.bundle_commit.slice(0,12) }}</span></p>
      <div class="preference-row"><label>{{ t("runtimeManifest") }}</label><span class="muted">{{ t(statusKey(report.manifest)) }}</span></div>

@@ -98,6 +98,9 @@ jobs:
           cp downloads/windows/Remote-EX-dev-Windows-x64.zip "release/Remote-EX-$TAG-Windows-x64.zip"
           cp downloads/macos/Remote-EX-dev-macOS-arm64.tar.gz "release/Remote-EX-$TAG-macOS-arm64.tar.gz"
           cp downloads/linux/Remote-EX-dev-Linux-x64.tar.gz "release/Remote-EX-$TAG-Linux-x64.tar.gz"
+          cp downloads/windows/Remote-EX-dev-Windows-x64-Setup.exe "release/Remote-EX-$TAG-Windows-x64-Setup.exe"
+          cp downloads/macos/Remote-EX-dev-macOS-arm64.dmg "release/Remote-EX-$TAG-macOS-arm64.dmg"
+          cp downloads/linux/Remote-EX-dev-Linux-x64.deb "release/Remote-EX-$TAG-Linux-x64.deb"
       - name: Inspect archive contents, commit stamps and checksums
         if: steps.gate.outputs.ready == 'true'
         env:
@@ -134,12 +137,21 @@ jobs:
                   assert 0 < e['size'] <= 512*1024*1024 and size(member) == e['size']
                   with open_member(member) as stream:
                       assert hashlib.file_digest(stream, 'sha256').hexdigest() == e['sha256']
+          def check_inventory(names, open_member, size, platform):
+              member = names['DEPENDENCIES.json']
+              assert 0 < size(member) <= 8*1024*1024
+              with open_member(member) as stream:
+                  inventory = json.load(stream)
+              assert inventory['schema'] == 1 and inventory['commit'] == sha and inventory['platform'] == platform
+              assert 0 < len(inventory['packages']) <= 10000
+              assert {'workspace','media','desktop','frontend'} <= {p['scope'] for p in inventory['packages']}
           def inspect(path, required):
               if path.suffix == '.zip':
                   with zipfile.ZipFile(path) as archive:
                       names = {x.filename.removeprefix('./'):x for x in archive.infolist() if not x.is_dir()}
                       assert required <= names.keys(), f'{path.name}: missing binaries'
                       check_components(names, archive.open, lambda m:m.file_size, 'windows', 'x86_64', '', 'sidecars.json')
+                      check_inventory(names, archive.open, lambda m:m.file_size, 'windows')
                       stamp = names['BUILD_INFO.txt']
                       assert stamp.file_size <= 4096
                       return archive.read(stamp)
@@ -150,6 +162,7 @@ jobs:
                       check_components(names, archive.extractfile, lambda m:m.size, 'macos', 'aarch64', 'Remote EX.app/Contents/MacOS/', 'Remote EX.app/Contents/Resources/sidecars.json')
                   else:
                       check_components(names, archive.extractfile, lambda m:m.size, 'linux', 'x86_64', '', 'sidecars.json')
+                  check_inventory(names, archive.extractfile, lambda m:m.size, 'macos' if 'macOS-arm64' in path.name else 'linux')
                   stamp = names['BUILD_INFO.txt']
                   assert stamp.size <= 4096
                   return archive.extractfile(stamp).read()
@@ -157,9 +170,13 @@ jobs:
               path = root / f'Remote-EX-{tag}-{suffix}'
               info = dict(line.split('=',1) for line in inspect(path, required).decode('utf-8-sig').splitlines() if '=' in line)
               assert info.get('commit') == sha, f'{path.name}: wrong commit'
+              assert info.get('release') == tag, f'{path.name}: wrong release tag'
               assert info.get('architecture','').lower() == arch, f'{path.name}: wrong architecture'
               print(f'Validated {path.name}: {sha}, {arch}')
           PY
+          test -s "release/Remote-EX-$TAG-Windows-x64-Setup.exe"
+          test -s "release/Remote-EX-$TAG-macOS-arm64.dmg"
+          test "$(dpkg-deb -f "release/Remote-EX-$TAG-Linux-x64.deb" Architecture)" = amd64
           (cd release && sha256sum Remote-EX-* > SHA256SUMS.txt)
       - name: Publish the immutable alpha release
         if: steps.gate.outputs.ready == 'true'
@@ -183,8 +200,9 @@ jobs:
           ## Remote EX alpha preview / 预览版
 
           Three platform archives built from the same verified source revision.
-          This is an experimental pre-release, not a production-ready remote desktop
-          or a signed installer. Native Wayland, real-device input/audio, display
+          This is an experimental pre-release, not a production-ready remote desktop.
+          Includes portable archives, unsigned current-user Windows Setup,
+          an ad-hoc signed macOS app in DMG, and Linux DEB for the build distribution. Native Wayland, real-device input/audio, display
           permissions, suspend/lock behavior, and power actions still require
           testing on authorized devices. Physical display privacy and Windows/macOS
           virtual display drivers are not supported. Startup is offline by default.

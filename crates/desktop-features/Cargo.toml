@@ -10,6 +10,7 @@ serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 base64 = "0.22"
+semver = "1"
 url = "2"
 # Capability-relative file operations, https://docs.rs/cap-std/4.0.3/
 cap-std = "=4.0.3"

@@ -16,9 +16,21 @@ pub struct Report{
     core_ready:bool,audio_ready:bool,portal_ready:bool,
 }
 fn app_directory()->Result<PathBuf,String>{std::env::current_exe().map_err(|_|"Cannot locate desktop executable")?.parent().map(Path::to_path_buf).ok_or_else(||"Cannot locate app directory".into())}
+fn installed_manifest(dir:&Path,platform:&str,arch:&str)->Result<Option<bundle::Manifest>,String>{
+    let m=bundle::load(dir,platform,arch)?;
+    check_manifest_commit(option_env!("REMOTE_EX_BUILD_COMMIT"),m.as_ref().map(|x|x.commit.as_str()))?;
+    Ok(m)
+}
+fn check_manifest_commit(expected:Option<&str>,actual:Option<&str>)->Result<(),String>{
+    if expected.is_some_and(|e|Some(e)!=actual){return Err("Installed component manifest is missing or belongs to another build. Reinstall the complete matching package.".into());}
+    Ok(())
+}
 pub(crate) fn verify_component(dir:&Path,name:&str)->Result<(),String>{
     let platform=std::env::consts::OS;let arch=std::env::consts::ARCH;
-    if let Some(m)=bundle::load(dir,platform,arch)?{m.verify_name(dir,name)?;}Ok(())
+    if !bundle::names(platform)?.contains(&name)||!std::fs::symlink_metadata(dir.join(name)).is_ok_and(|m|m.file_type().is_file()){
+        return Err("Missing or invalid installed media component".into());
+    }
+    if let Some(m)=installed_manifest(dir,platform,arch)?{m.verify_name(dir,name)?;}Ok(())
 }
 #[cfg(windows)]
 fn installed_gstreamer_bin()->Option<PathBuf>{
@@ -85,7 +97,7 @@ fn inspect()->Result<Report,String>{
     let dir=app_directory()?;
     let platform=std::env::consts::OS;let arch=std::env::consts::ARCH;
     let names=bundle::names(platform)?;
-    let (manifest,invalid)=match bundle::load(&dir,platform,arch){Ok(m)=>(m,false),Err(_)=>(None,true)};
+    let (manifest,invalid)=match installed_manifest(&dir,platform,arch){Ok(m)=>(m,false),Err(_)=>(None,true)};
     let mut components=Vec::new();
     for name in names{
         let present=std::fs::symlink_metadata(dir.join(name)).is_ok_and(|m|m.file_type().is_file());
@@ -113,6 +125,7 @@ pub async fn runtime_check(window:WebviewWindow)->Result<Report,String>{
 }
 #[cfg(test)]mod tests{
     use super::*;
+    #[test]fn installed_revision_never_accepts_other_or_missing_manifest(){assert!(check_manifest_commit(Some("a"),Some("a")).is_ok());assert!(check_manifest_commit(Some("a"),Some("b")).is_err());assert!(check_manifest_commit(Some("a"),None).is_err());assert!(check_manifest_commit(None,None).is_ok());}
     #[test]fn rejects_unbounded_and_unexpected_probe_output(){
         assert!(parse_report(&vec![b' ';MAX_OUTPUT+1]).is_err());
         assert!(parse_report(br#"{"schema":1,"initialized":true,"version":[1,26,11,0],"missing":["/secret"],"synthetic_video":true}"#).is_err());
