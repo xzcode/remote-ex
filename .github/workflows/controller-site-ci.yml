@@ -6,6 +6,8 @@ on:
       - 'deploy/controller-site*'
       - 'deploy/remote-ex-controller-site.service.example'
       - 'scripts/test-controller-site.mjs'
+      - 'scripts/test-controller-site-live.mjs'
+      - 'scripts/verify-controller-site.mjs'
       - 'scripts/stage-mobile-client.mjs'
       - 'scripts/verify-mobile-stage.mjs'
       - '.github/workflows/controller-site-ci.yml'
@@ -25,3 +27,7 @@ jobs:
         run: |
           node --check deploy/controller-site.mjs
           node scripts/test-controller-site.mjs
+      - name: Actual HTTPS deployed asset and response verification
+        run: |
+          node --check scripts/verify-controller-site.mjs
+          node scripts/test-controller-site-live.mjs

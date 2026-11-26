@@ -79,3 +79,15 @@ Use a verified staged controller directory, not the localhost diagnostic lab. Th
 3. Run `node deploy/controller-site.mjs --check-config /path/to/staged-directory`; this checks configuration without listening. Review exact HTTPS origin (including port except 443), configure rendezvous REMOTE_EX_WEB_ORIGIN(S), and enroll device IDs separately.
 4. Explicitly start `node deploy/controller-site.mjs --serve /path/to/staged-directory` only after review. Use a dedicated unprivileged account and restricted firewall. The systemd example defaults to no capabilities and an unprivileged port; use a reviewed TLS reverse proxy or separately approved low-port privilege arrangement if needed. A reverse proxy must preserve the reviewed Host and not weaken headers; the backend stays HTTPS, not the diagnostic lab. No automatic restart, deployment or certificate issuance. To update assets, stage a new immutable directory, preflight, change the configured directory and perform a planned restart; keep the last verified directory for rollback.
 5. Perform actual browser/mobile TLS, enrollment and media acceptance. This new service's isolated TLS test uses disposable synthetic assets, not a physical connection test.
+
+### Verify the live HTTPS controller before accepting traffic
+
+After an operator has deliberately started a reviewed controller site (or configured its TLS reverse proxy), compare the actual client-facing origin to the same independently inspected asset tree:
+
+```sh
+node scripts/verify-mobile-stage.mjs /path/to/reviewed-assets
+# Copy tree_sha256 from your approved, retained preflight record.
+node scripts/verify-controller-site.mjs /path/to/reviewed-assets https://controller.example.net REVIEWED_TREE_SHA256
+```
+
+Run only against a site you administer. Node's normal certificate chain and hostname verification is mandatory (for a reviewed private CA, use Node's standard NODE_EXTRA_CA_CERTS configuration before startup). The checker does not start services, follow redirects, use cookies or credentials, crawl arbitrary URLs, connect to signaling, request TURN credentials, register an identity or grant remote access. It reads only fixed asset routes, compares each exact byte digest/MIME/length and the canonical security headers including HSTS, checks two HEAD responses and a small fixed list of denied paths. Strict header equality intentionally rejects merged/duplicate CSP, compression, rewritten content or an incompatible reverse proxy policy. Configure the reviewed response policy rather than disabling checks. Requests are bounded by per-request and total deadlines. Successful JSON reports reviewed digest, mode, count, TLS versions and verification flags, without endpoints or secrets. A pass proves the observed static HTTPS deployment matches this approved tree at check time; it does not establish WSS reachability, client media/identity support, relay performance, production availability or physical device acceptance. Keep the previous reviewed tree and digest for rollback.
