@@ -120,16 +120,20 @@ public final class OfflineSmoke extends Instrumentation {
         require(value.matches("[0-9a-f]{64}") && !value.matches("0+"), "Invalid local public fingerprint");
         return value;
     }
+    private void progress(String stage) { android.util.Log.i("RemoteEXOfflineSmoke", "stage="+stage); }
     private void fullSmoke() throws Exception {
+        progress("first_launch");
         Activity a = launch();
         String saved;
         try {
             WebView first = landing(a);
+            progress("capabilities_verified");
             navigate(first, IDENTITY);
             require(yes(first, "document.querySelector('#identity-status').dataset.state==='idle'"), "Expected fresh test installation");
             require(yes(first, "!document.querySelector('#identity-create').disabled"), "Identity create unavailable");
             js(first, "document.querySelector('#identity-create').click(); true");
             saved = identity(first);
+            progress("identity_created");
             // Ordinary foreground transition, not a fabricated lifecycle callback.
             main(() -> {
                 Intent home = new Intent(Intent.ACTION_MAIN);
@@ -139,21 +143,25 @@ public final class OfflineSmoke extends Instrumentation {
                 return null;
             });
             until(() -> web(a) == null, 15, "Background retained the WebView");
+            progress("background_destroyed");
         } finally {
             main(() -> { if (!a.isFinishing()) a.finish(); return null; });
         }
         until(() -> main(a::isDestroyed), 15, "Previous activity not destroyed");
+        progress("relaunch");
         Activity b = launch();
         try {
             WebView second = landing(b);
             navigate(second, IDENTITY);
             require(saved.equals(identity(second)), "Private identity did not survive activity recreation");
+            progress("identity_persisted");
             require(yes(second, "document.querySelector('#identity-create').disabled"), "Existing identity can be overwritten");
             js(second, "document.querySelector('#identity-confirm').click();document.querySelector('#identity-delete').click();true");
             until(() -> yes(second, "document.querySelector('#identity-status').dataset.state==='idle' && !document.querySelector('#device-id').value"), 20,
                 "Explicit identity deletion did not complete");
             main(() -> { second.loadUrl(HOME); return null; });
             landing(b);
+            progress("identity_deleted_and_offline_ready");
         } finally {
             main(() -> { if (!b.isFinishing()) b.finish(); return null; });
         }
