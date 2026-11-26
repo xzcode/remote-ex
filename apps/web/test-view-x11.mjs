@@ -25,7 +25,7 @@ function reader(child){
                 assert(!line.done&&line.value.length<=4096,"Host output unavailable");
                 if(line.value.startsWith(prefix))return line.value;
                 // Ignore only fixed statistics emitted by the authorized host.
-                if(!line.value.startsWith("STATS "))throw Error("Unexpected host output: "+line.value);
+                if(!line.value.startsWith("NET_STATS "))throw Error("Unexpected host output: "+line.value);
             }
             throw Error("Host output timeout");
         }finally{clearTimeout(timer);}

@@ -49,6 +49,7 @@ export async function serve(port=0,fixtureEndpoint=null,viewer=null){
  }
  if(viewer!==null){
     const ep=viewEndpoint(viewer);
+    if(!["view.html","view-page.js","view-session.js"].every(file=>existsSync(path.join(root,file))))throw Error("Source-only viewer assets unavailable; use the repository checkout");
     if(fixtureEndpoint!==null&&fixtureEndpoint!==viewer)throw Error("Only one WSS endpoint allowed");
     table.set("/view.html",["view.html","text/html; charset=utf-8"]);
     table.set("/view-page.js",["view-page.js","text/javascript; charset=utf-8"]);
