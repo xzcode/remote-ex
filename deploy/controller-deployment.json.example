@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "tree_sha256": "REPLACE_WITH_APPROVED_TREE_SHA256",
+  "site_origin": "https://controller.example.net",
+  "signaling_endpoint": "wss://signal.example.net/v1/ws",
+  "server_id": "REPLACE_WITH_INDEPENDENTLY_VERIFIED_SERVER_ID",
+  "android": true
+}
