@@ -1,0 +1,45 @@
+name: Product workspace visual acceptance
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'apps/desktop/src/**'
+      - 'scripts/ci/test-desktop-workspace.mjs'
+      - '.github/workflows/workspace-ui-ci.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: workspace-ui-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  desktop-workspace:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Build actual desktop frontend
+        working-directory: apps/desktop
+        run: |
+          npm install --ignore-scripts --no-audit --no-fund
+          npm run build
+      - name: Check all eight desktop dictionaries
+        run: python3 scripts/ci/check_locales.py
+      - name: Install pinned browser tooling
+        working-directory: apps/web
+        run: |
+          npm install --ignore-scripts --no-audit --no-fund
+          npx playwright install --with-deps chromium
+      - name: Render actual workspace and capture non-native preview
+        env:
+          REMOTE_EX_UI_PREVIEW_DIR: build/workspace-preview
+        run: node scripts/ci/test-desktop-workspace.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Remote-EX-M7-desktop-visual-preview
+          path: build/workspace-preview/*.png
+          if-no-files-found: error
+          retention-days: 14

@@ -5,6 +5,13 @@ on:
     paths:
       - 'scripts/ci/test-webkit-controller.mjs'
       - 'apps/web/test-view-x11.mjs'
+      - 'apps/web/view.html'
+      - 'apps/web/view-page.js'
+      - 'apps/web/mobile.html'
+      - 'apps/web/mobile.js'
+      - 'apps/web/controller-ui.js'
+      - 'apps/web/style.css'
+      - 'scripts/stage-mobile-client.mjs'
       - 'scripts/ci/webkit-receiver-pixels.mjs'
       - 'scripts/ci/webkit-controller-runtime.sh'
       - '.github/workflows/webkit-controller-ci.yml'

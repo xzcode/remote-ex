@@ -1,6 +1,8 @@
 // Product UI regression with the real Chromium and current controller
 // code. No network session, actual device, capture, or production records.
 import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import path from "node:path";
 import {chromium} from "playwright";
 import {serve} from "./serve.mjs";
 const endpoint="wss://127.0.0.1:9443/v1/ws";
@@ -10,6 +12,9 @@ try{
     browser=await chromium.launch({headless:true,args:["--disable-background-networking"]});
     const context=await browser.newContext({permissions:[],hasTouch:true,isMobile:true,viewport:{width:390,height:844}});
     const page=await context.newPage(),sockets=[],outside=[];
+    const out=process.env.REMOTE_EX_UI_PREVIEW_DIR;
+    if(out)await fs.mkdir(out,{recursive:true});
+    const snap=async name=>{if(out)await page.screenshot({path:path.join(out,name+".png"),animations:"disabled"});};
     await context.route("**/*",r=>{if(new URL(r.request().url()).origin!==url){outside.push("unexpected");return r.abort();}return r.continue();});
     page.on("websocket",()=>sockets.push("unexpected"));
     await page.goto(url+"/mobile.html");
@@ -18,8 +23,9 @@ try{
     assert(await page.locator("#home-devices").isHidden());
     assert(await page.locator("#mobile-recent").getByText("No saved devices.").isVisible());
     const fits=()=>page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1);
-    assert(await fits());
+    assert(await fits());await snap("mobile-connect-empty");
     await page.locator('.mobile-nav [data-home-target="home-settings"]').click();
+    await snap("mobile-settings");
     assert(await page.locator("#home-settings").isVisible());
     await page.locator("#mobile-theme").selectOption("gray");
     assert.equal(await page.locator("html").getAttribute("data-theme"),"gray");
@@ -36,6 +42,7 @@ try{
     await page.reload();
     await page.waitForFunction(()=>!document.querySelector("#mobile-connect").hidden&&document.querySelector("#mobile-recent").textContent.includes("CI-only"),null,{timeout:45000});
     await page.locator('.mobile-nav [data-home-target="home-devices"]').click();
+    await snap("mobile-devices-ci-fixture");
     await page.locator("#mobile-device-search").fill("no match");
     assert(await page.locator("#mobile-devices").getByText("No saved devices.").isVisible());
     await page.locator("#mobile-device-search").fill("CI-only");
@@ -47,6 +54,7 @@ try{
     for(const id of ["view-control","view-extended","view-consent"])assert(!(await page.locator("#"+id).isChecked()));
     assert(await page.locator("#view-connect").isDisabled());
     assert(await fits());
+    await snap("mobile-review-connection");
     await page.setViewportSize({width:844,height:390});
     assert(await fits());
     assert.deepEqual(sockets,[]);assert.deepEqual(outside,[]);

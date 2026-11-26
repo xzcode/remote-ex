@@ -5,9 +5,11 @@ import type {TextKey} from "./i18n";
 import TrustPanel from "./TrustPanel.vue";
 type Profile={label:string;url:string;server_id:string};
 const props=defineProps<{t:(key:TextKey)=>string;section:"devices"|"history"}>();
-const emit=defineEmits<{active:[value:boolean];server:[]}>();
+type Target={url:string;server_id:string;device_id:string;public_key:string};
+const emit=defineEmits<{active:[value:boolean];server:[];review:[target:Target]}>();
 const native=isTauri(),profiles=ref<Profile[]>([]),selection=ref(""),scope=ref(""),draft=ref(""),busy=ref(false),editing=ref(false),error=ref("");
 const locked=computed(()=>busy.value||editing.value);
+const scopeProfile=computed(()=>profiles.value.find(p=>p.server_id===scope.value));
 let disposed=false;
 function valid(s:string){return /^[a-fA-F0-9]{64}$/.test(s)&&!/^0+$/.test(s);}
 function active(value:boolean){editing.value=value;emit("active",locked.value);}
@@ -24,6 +26,11 @@ function choose(){
  if(p){draft.value=p.server_id;scope.value=p.server_id;}
 }
 function apply(){if(!locked.value&&valid(draft.value.trim())){scope.value=draft.value.trim().toLowerCase();selection.value=profiles.value.some(p=>p.server_id===scope.value)?scope.value:"";}}
+function review(device:{device_id:string;public_key:string}){
+ const p=scopeProfile.value;
+ if(!p||locked.value||!valid(device.device_id)||!valid(device.public_key))return;
+ emit("review",{url:p.url,server_id:p.server_id,device_id:device.device_id,public_key:device.public_key});
+}
 onMounted(()=>void refresh());onBeforeUnmount(()=>{disposed=true;});
 </script>
 <template>
@@ -39,5 +46,5 @@ onMounted(()=>void refresh());onBeforeUnmount(()=>{disposed=true;});
   <p v-if="error" class="error" role="alert">{{ error }}</p>
   <button v-if="!scope" :disabled="locked" @click="emit('server')">{{ t("server") }}</button>
  </section>
- <TrustPanel v-if="scope" :key="scope+section" :t="t" :server-id="scope" :disabled="busy" :section="section" @active="active"/>
+ <TrustPanel v-if="scope" :key="scope+section" :t="t" :server-id="scope" :disabled="busy" :section="section" :can-review="!!scopeProfile" @active="active" @review="review"/>
 </template>

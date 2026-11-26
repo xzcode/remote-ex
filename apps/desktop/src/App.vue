@@ -33,7 +33,8 @@ const serviceActive=ref(false);
 const sessionActive=computed(()=>lanActive.value||routedActive.value||serviceActive.value);
 const presenceActive = ref(false);
 const libraryActive = ref(false);
-const inviteDraft=ref(""),initialInvitation=ref(""),initialRole=ref<"host"|"controller">("controller");
+type Target={url:string;server_id:string;device_id:string;public_key:string};
+const inviteDraft=ref(""),initialInvitation=ref(""),initialRole=ref<"host"|"controller">("controller"),initialPeer=ref<Target|null>(null);
 const navLocked=computed(()=>busy.value||sessionActive.value||presenceActive.value||libraryActive.value);
 const native = isTauri();
 const systemLanguage = ref(systemLocale(navigator.languages?.length?navigator.languages:[navigator.language]));
@@ -109,7 +110,7 @@ function imageLoaded(event: Event) {
 }
 function navigate(page: Page) {
   if (navLocked.value || page===active.value) return;
-  initialInvitation.value="";initialRole.value="controller";currentSlot.value=0;
+  initialInvitation.value="";initialRole.value="controller";initialPeer.value=null;currentSlot.value=0;
   if (active.value === "diagnostics" && page !== "diagnostics") clearPreview();
   error.value = "";
   active.value = page;
@@ -132,6 +133,11 @@ function openRouted(role:"host"|"controller",useInvite=false){
   navigate("routed");
   initialRole.value=role;
   if(useInvite){initialInvitation.value=inviteDraft.value.trim();inviteDraft.value="";}
+}
+function reviewDevice(peer:Target){
+  if(navLocked.value)return;
+  navigate("routed");
+  initialPeer.value=peer;
 }
 </script>
 
@@ -184,12 +190,12 @@ function openRouted(role:"host"|"controller",useInvite=false){
           <LanPanel :t="t" @active="lanActive = $event" />
         </template>
         <template v-else-if="active === 'devices'||active === 'history'">
-          <DeviceWorkspace :key="active" :section="active" :t="t" @active="libraryActive=$event" @server="navigate('server')"/>
+          <DeviceWorkspace :key="active" :section="active" :t="t" @active="libraryActive=$event" @server="navigate('server')" @review="reviewDevice"/>
         </template>
         <template v-else-if="active === 'routed'||active === 'files'">
           <div class="actions session-tabs"><button v-for="n in 3" :key="n" :class="{primary:currentSlot===n-1}" @click="currentSlot=n-1">{{ t("sessionTab") }} {{ n }}<span v-if="slotActive[n-1]"> ●</span></button></div>
           <p class="muted">{{ t("multiSessionNotice") }}</p>
-          <RoutedPanel v-for="n in 3" v-show="currentSlot===n-1" :key="active+'-'+n" :slot="n-1" :visible="currentSlot===n-1" :t="t" :initial-mode="active==='files'?'file':'view'" :initial-role="n===1?initialRole:'controller'" :initial-invitation="n===1?initialInvitation:''" @active="slotActive[n-1]=$event" />
+          <RoutedPanel v-for="n in 3" v-show="currentSlot===n-1" :key="active+'-'+n" :slot="n-1" :visible="currentSlot===n-1" :t="t" :initial-mode="active==='files'?'file':'view'" :initial-role="n===1?initialRole:'controller'" :initial-invitation="n===1?initialInvitation:''" :initial-peer="n===1?initialPeer:null" @active="slotActive[n-1]=$event" />
         </template>
         <template v-else-if="active === 'server'">
           <PresencePanel :t="t" @active="presenceActive = $event" />

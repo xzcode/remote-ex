@@ -70,6 +70,7 @@ final class Controller: UIViewController, WKNavigationDelegate, WKUIDelegate {
     private let openButton = UIButton(type: .system)
     private let stopButton = UIButton(type: .system)
     private let surface = UIView()
+    private let landing = UIStackView()
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .systemBackground
@@ -97,9 +98,18 @@ final class Controller: UIViewController, WKNavigationDelegate, WKUIDelegate {
         header.alignment = .center
         header.isLayoutMarginsRelativeArrangement = true
         header.layoutMargins = UIEdgeInsets(top: 0, left: 16, bottom: 0, right: 16)
-        let stack = UIStackView(arrangedSubviews: [header, status, openButton, surface])
+        landing.axis = .vertical
+        landing.spacing = 14
+        landing.isLayoutMarginsRelativeArrangement = true
+        landing.layoutMargins = UIEdgeInsets(top: 12, left: 20, bottom: 12, right: 20)
+        landing.addArrangedSubview(status)
+        landing.addArrangedSubview(openButton)
+        let openHeight = openButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44)
+        openHeight.priority = .defaultHigh
+        openHeight.isActive = true
+        let stack = UIStackView(arrangedSubviews: [header, landing, surface])
         stack.axis = .vertical
-        stack.spacing = 8
+        stack.spacing = 0
         stack.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(stack)
         NSLayoutConstraint.activate([
@@ -107,8 +117,7 @@ final class Controller: UIViewController, WKNavigationDelegate, WKUIDelegate {
             stack.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),
             stack.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             stack.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
-            header.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
-            openButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44)
+            header.heightAnchor.constraint(greaterThanOrEqualToConstant: 44)
         ])
     }
     @objc private func openController() {
@@ -134,8 +143,7 @@ final class Controller: UIViewController, WKNavigationDelegate, WKUIDelegate {
         ])
         web = w
         openButton.isEnabled = false
-        openButton.isHidden = true
-        status.isHidden = true
+        landing.isHidden = true
         stopButton.isHidden = false
         stopButton.isEnabled = true
         status.text = "Controller opened. No incoming phone control or background session."
@@ -153,10 +161,9 @@ final class Controller: UIViewController, WKNavigationDelegate, WKUIDelegate {
         }
         // WKWebsiteDataStore identity is retained. No automatic session restore.
         openButton.isEnabled = origin != nil
-        openButton.isHidden = false
+        landing.isHidden = false
         stopButton.isEnabled = false
         stopButton.isHidden = true
-        status.isHidden = false
         status.text = message
     }
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,

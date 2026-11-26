@@ -77,7 +77,7 @@ jobs:
           npm run test:wasm-loader
           node --check test-mobile-capabilities.mjs
           node test-mobile-capabilities.mjs
-          node test-workspace-ui.mjs
+          REMOTE_EX_UI_PREVIEW_DIR="$GITHUB_WORKSPACE/build/mobile-ui-preview" node test-workspace-ui.mjs
           node --check test-touch-browser.mjs
           node test-touch-browser.mjs
           npm run test:touch
@@ -139,6 +139,13 @@ jobs:
         run: |
           test "$RUNNER_ENVIRONMENT" = github-hosted
           xvfb-run -a -s '-screen 0 1024x768x24 +extension RANDR' env -u WAYLAND_DISPLAY -u WAYLAND_SOCKET XDG_SESSION_TYPE=x11 timeout 190s npm run test:view-x11 -- --extended
+      - name: Upload M7 mobile UI preview (local-only fixture)
+        uses: actions/upload-artifact@v4
+        with:
+          name: Remote-EX-M7-mobile-visual-preview
+          path: build/mobile-ui-preview/*.png
+          if-no-files-found: error
+          retention-days: 14
       - name: Stage private local-only diagnostic bundle
         run: |
           mkdir -p apps/web/dist/pkg

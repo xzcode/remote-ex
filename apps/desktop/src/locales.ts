@@ -12,6 +12,7 @@ type Row=[TextKey,string,string,string,string,string,string];
 // The settings page reports coverage; new untranslated keys fall back to
 // the original English until their translations are added.
 const rows:Row[]=[
+["workspaceReviewDevice","Verbindung prüfen","Vérifier la connexion","Revisar conexión","Revisar conexão","接続情報を確認","연결 정보 확인"],
 ["workspace","Arbeitsbereich","Espace de travail","Área de trabajo","Área de trabalho","ワークスペース","작업 공간"],
 ["management","Verwaltung","Gestion","Administración","Gerenciamento","管理","관리"],
 ["workspaceWelcome","Bereit zur Verbindung","Prêt à se connecter","Listo para conectar","Pronto para conectar","接続を開始","연결 준비"],

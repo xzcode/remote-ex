@@ -4,8 +4,8 @@ import {invoke,isTauri} from "@tauri-apps/api/core";
 import type {TextKey} from "./i18n";
 type Device={device_id:string;public_key:string;label:string;group_name:string;note:string;favorite:boolean};
 type History={device_id:string;mode:string;ended_at:number;outcome:string;duration_sec:number};
-const props=defineProps<{t:(key:TextKey)=>string;serverId:string;disabled:boolean;online?:boolean;statuses?:{device_id:string;online:boolean;busy:boolean}[];checkedAt?:number|null;section?:"devices"|"history"}>();
-const emit=defineEmits<{active:[value:boolean]}>();
+const props=defineProps<{t:(key:TextKey)=>string;serverId:string;disabled:boolean;online?:boolean;statuses?:{device_id:string;online:boolean;busy:boolean}[];checkedAt?:number|null;section?:"devices"|"history";canReview?:boolean}>();
+const emit=defineEmits<{active:[value:boolean];review:[device:{device_id:string;public_key:string}]}>();
 const records=ref<Device[]>([]);const label=ref("");const id=ref("");const key=ref("");
 const verified=ref(false);const removeId=ref("");const busy=ref(false);const error=ref("");
 watch(busy,value=>emit("active",value));
@@ -61,7 +61,7 @@ async function remove(){
    <label>{{ t("presenceDeviceId") }}</label><input readonly :value="d.device_id" class="key-input"/>
    <label>{{ t("trustPublicKey") }}</label><input readonly :value="d.public_key" class="key-input"/>
    <label>{{ t("deviceGroup") }}</label><input v-model="d.group_name" maxlength="64" :disabled="disabled||busy"/><label>{{ t("deviceNote") }}</label><input v-model="d.note" maxlength="256" :disabled="disabled||busy"/><label class="check-label"><input type="checkbox" v-model="d.favorite" :disabled="disabled||busy"/>{{ t("deviceFavorites") }}</label>
-   <div class="actions"><button :disabled="disabled||busy" @click="saveMetadata(d)">{{ t("deviceSaveMetadata") }}</button><button class="danger-text" :disabled="disabled||busy" @click="removeId=d.device_id">{{ t("trustRemove") }}</button></div>
+   <div class="actions"><button v-if="canReview" class="primary" :disabled="disabled||busy" @click="emit('review', {device_id:d.device_id,public_key:d.public_key})">{{ t("workspaceReviewDevice") }}</button><button :disabled="disabled||busy" @click="saveMetadata(d)">{{ t("deviceSaveMetadata") }}</button><button class="danger-text" :disabled="disabled||busy" @click="removeId=d.device_id">{{ t("trustRemove") }}</button></div>
    <div v-if="removeId===d.device_id" class="actions"><button :disabled="disabled||busy" @click="remove">{{ t("trustConfirmRemove") }}</button><button @click="removeId=''">{{ t("trustCancel") }}</button></div>
   </div>
  </details>

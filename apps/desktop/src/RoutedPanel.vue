@@ -14,7 +14,7 @@ type PowerReview={action:PowerAction;token:string};
 type Snapshot={privacy_available?:boolean;privacy_paused?:boolean;privacy_pending?:boolean|null;power_review?:PowerReview|null;power_approved?:boolean;power_accepted?:PowerAction|null;power_os_submitted?:boolean;stage:Stage;active:boolean;local_key:string|null;device_id:string|null;detail:string|null;profile:string;input_released:boolean;decoded_fps?:number|null;decoded_bps?:number|null;transfer_done?:number|null;transfer_total?:number|null;transfer_verified?:boolean;transfer_paused?:boolean;checkpoint_saved?:number|null;directory_entries?:number|null;clipboard_sent?:number|null;clipboard_received?:number|null;catalog?:CatalogEntry[];catalog_ready?:boolean;catalog_selected?:number|null;manage_review?:FileReview|null;manage_token?:string|null;manage_submitted?:boolean;manage_approved?:boolean;manage_applied?:number|null;armed?:boolean;extended?:boolean;stream_quality?:string|null;stream_decoded?:string|null;resume_offset?:number|null;audio_volume?:number|null;network_bps?:number|null;rtt_ms?:number|null;loss_pct?:number|null;route_type?:string|null};
 type Device={device_id:string;public_key:string;label:string};
 type Display={id:number;name:string;width:number;height:number;primary:boolean};
-const props=defineProps<{t:(key:TextKey)=>string;slot:number;visible:boolean;initialMode?:"view"|"file";initialRole?:"host"|"controller";initialInvitation?:string}>();
+const props=defineProps<{t:(key:TextKey)=>string;slot:number;visible:boolean;initialMode?:"view"|"file";initialRole?:"host"|"controller";initialInvitation?:string;initialPeer?:{url:string;server_id:string;device_id:string;public_key:string}|null}>();
 const emit=defineEmits<{active:[value:boolean]}>();
 const native=isTauri(),role=ref<"host"|"controller">(props.initialRole??"controller"),mode=ref<"test"|"view"|"control"|"file"|"text"|"png"|"audio"|"directory"|"clipboard_sync"|"catalog"|"catalog_batch"|"av_view"|"av_control"|"manage"|"power">(props.initialMode??"view");
 type PlatformCaps={os:string;desktop_session:string;portal_sources:string[];portal_version:number|null;portal_detail:string|null;wayland_portal:boolean;portal_control:boolean};
@@ -137,7 +137,16 @@ function prepare(){
 }
 function confirm(){if(!canConfirm.value)return;submitted.value=true;return command("routed_confirm",{deviceId:peerId.value.trim(),peerKey:peerKey.value.trim(),approved:true});}
 let stopDrop:(()=>void)|undefined;
-onMounted(()=>{void poll();if(native&&props.initialInvitation){invitation.value=props.initialInvitation;void readInvitation();}if(native)void invoke<PlatformCaps>("platform_capabilities").then(c=>{if(!disposed){platform.value=c;if(c.os==="linux"){persistent.value=false;sharedIdentity.value=false;}}}).catch(e=>{if(!disposed)error.value=String(e);});timer=window.setInterval(poll,400);if(native)void getCurrentWebview().onDragDropEvent(event=>{
+// Local saved-device review only. Reuse the complete server/peer pins; do
+// not prepare/register/connect, infer permissions or persist a grant.
+async function reviewSavedPeer(){
+ const p=props.initialPeer;
+ if(!p||!native||busy.value||snapshot.value.active)return;
+ url.value=p.url;serverId.value=p.server_id;ca.value="";role.value="controller";mode.value="view";approved.value=false;
+ await nextTick();if(disposed||snapshot.value.active)return;
+ peerId.value=p.device_id;peerKey.value=p.public_key;approved.value=false;
+}
+onMounted(()=>{void poll();if(native&&props.initialInvitation){invitation.value=props.initialInvitation;void readInvitation();}else if(native&&props.initialPeer)void reviewSavedPeer();if(native)void invoke<PlatformCaps>("platform_capabilities").then(c=>{if(!disposed){platform.value=c;if(c.os==="linux"){persistent.value=false;sharedIdentity.value=false;}}}).catch(e=>{if(!disposed)error.value=String(e);});timer=window.setInterval(poll,400);if(native)void getCurrentWebview().onDragDropEvent(event=>{
  if(event.payload.type!=="drop"||!props.visible||busy.value||snapshot.value.active||role.value!==sender.value||!["file","directory"].includes(mode.value))return;
  if(event.payload.paths.length!==1){error.value=props.t("dropSingle");return;}
  transferPath.value=event.payload.paths[0]??"";approved.value=false;
