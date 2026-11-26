@@ -3,6 +3,7 @@ package com.remoteex.mobile;
 import android.app.Activity;
 import android.app.Instrumentation;
 import android.content.Intent;
+import android.content.pm.PackageInfo;
 import android.os.Bundle;
 import android.os.SystemClock;
 import android.view.View;
@@ -86,10 +87,16 @@ public final class OfflineSmoke extends Instrumentation {
         }, 20, "Bundled landing page did not load");
         WebView w = web(a);
         until(() -> yes(w, "Boolean(document.querySelector('#mobile-policy') && document.querySelector('#mobile-policy').textContent.includes('Identity management is local only.'))"),
-            25, "Offline configuration or capability page did not settle");
+            40, "Offline configuration or capability page did not settle");
         require(yes(w, "isSecureContext && location.origin==='https://appassets.androidplatform.net' && document.querySelector('#mobile-connect').hidden"), "Offline origin/connect gate failed");
         require(yes(w, "document.querySelectorAll('#mobile-checks li').length===6"), "Capability report incomplete");
-        require(yes(w, "document.querySelectorAll('#mobile-checks li[data-pass=true]').length===6"), "Installed WebView lacks a required crypto/WASM/storage/WebRTC capability");
+        String report=string(w, "Array.from(document.querySelectorAll('#mobile-checks li'),e=>e.dataset.capability+':'+e.dataset.pass+':'+e.dataset.code).join(' ')");
+        require(report.matches("[A-Za-z0-9_: -]{1,600}"),"Invalid capability report shape");
+        PackageInfo provider=main(WebView::getCurrentWebViewPackage);
+        String version=provider==null?"unavailable":String.valueOf(provider.versionName).replaceAll("[^A-Za-z0-9._-]","_");
+        if(version.length()>80)version=version.substring(0,80);
+        android.util.Log.i("RemoteEXOfflineSmoke","WebView version="+version+" "+report);
+        require(yes(w, "document.querySelectorAll('#mobile-checks li[data-pass=true]').length===6"), "WebView "+version+" missing capabilities: "+report);
         require(main(() -> !w.getSettings().getAllowFileAccess() &&
                             !w.getSettings().getAllowContentAccess() &&
                             !w.getSettings().getJavaScriptCanOpenWindowsAutomatically()),

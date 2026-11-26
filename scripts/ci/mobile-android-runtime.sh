@@ -47,9 +47,15 @@ adb -s "$serial" shell wm dismiss-keyguard
 adb -s "$serial" shell settings put global window_animation_scale 0
 adb -s "$serial" shell settings put global transition_animation_scale 0
 adb -s "$serial" shell settings put global animator_duration_scale 0
+adb -s "$serial" shell dumpsys webviewupdate | grep -E "Current WebView package|Preferred WebView package|Minimum WebView version" || true
 adb -s "$serial" install "$app"
 adb -s "$serial" install "$testapk"
-timeout 180s adb -s "$serial" shell am instrument -w -r com.remoteex.mobile.test/com.remoteex.mobile.OfflineSmoke | tee "$result"
+set +e
+timeout 220s adb -s "$serial" shell am instrument -w -r com.remoteex.mobile.test/com.remoteex.mobile.OfflineSmoke | tee "$result"
+status=$?
+set -e
+adb -s "$serial" logcat -d -s RemoteEXOfflineSmoke:I "*:S" | tail -n 12 || true
+test "$status" = 0
 grep -Fq 'PASS REMOTE EX ANDROID OFFLINE RUNTIME:' "$result"
 grep -Eq '^INSTRUMENTATION_CODE: -1[[:space:]]*$' "$result"
 if grep -Fq 'FAIL REMOTE EX ANDROID OFFLINE RUNTIME:' "$result"; then exit 1; fi

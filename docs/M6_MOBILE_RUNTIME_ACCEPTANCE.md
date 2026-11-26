@@ -16,3 +16,7 @@ Android test APK（独立 instrumentation runner，不进入生产 APK）在一�
 5. iOS 签名、系统密钥方案、正式分发与配置审查。保留当前 alpha.2；未发布或部署。
 
 以上验证均不能以源码、CI 排队、构建或纯模拟器测试替代实际物理设备证据。
+
+## Runtime compatibility repair follow-up
+
+8a1263f Web CI 45781258710 **fully passed** including actual profile-2 browser events with native inert Dispatcher, verified held-key/button release, forced TURN Xvfb capture and extended real decoder switching. Core, Linux X11, Native Media and mobile builds at that commit passed. 9f17026 Android runtime CI 45782232173 installed and launched both APKs but failed its original generic six-capability gate. The original log did not identify which capability was missing; no proven underlying WebView cause yet. New diagnostic checks actual Ed25519 sign/verify and export refusal, bounded same-origin WASM binary/MIME/validation and non-streaming initialization, transactional temporary CryptoKey clone/sign proof, recvonly VP8/data-channel SDP (no setLocalDescription/ICE) and pointer API. Android instrumentation now emits sanitized per-capability reason codes and provider version; no real identity/private key printed. Added actual Chromium mobile capability gate and missing-WebRTC branch, pure WASM loader tests. Missing functionality continues to block connection; no weak crypto or TLS fallback. New CI pending. Physical Android/iOS, OS input and cross-network acceptance remain open.

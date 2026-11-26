@@ -1,6 +1,7 @@
 // Outgoing read-only or explicitly enabled screen/input controller. No host,
 // clipboard, files, local capture, audio, recording or automatic reconnect.
 import init,{ViewPeer} from "./pkg/noise.js";
+import {loadControllerWasm} from "./wasm-loader.js";
 import {readIdentity} from "./identity.js";
 import {directPolicy,normalizePolicy,iceMode,rtcIce,candidateRoute} from "./ice-policy.js";
 import {InputEncoder,SurfaceInput} from "./input.js";
@@ -115,7 +116,7 @@ export class ViewSession{
             need(identity&&identity.id===this.identityId,"Local identity changed — refresh first");
             const host=key(this.hostKey,32),target=hex(await sha(host));this.guard();
             need(target!==identity.id,"Choose a different host identity");
-            await init();this.guard();
+            await loadControllerWasm(init);this.guard();
             const socket=this.socket=new Transport(this.url,this.abort);
             const ch=message(await socket.receive(10000),"challenge",["server","nonce"]);
             need(ch.server===this.serverId,"Server ID mismatch — registration refused");

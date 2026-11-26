@@ -31,3 +31,7 @@ The optional operator config `extended: true` allows a separately selected and a
 ## Runtime acceptance (CI only)
 
 The mobile workflow also builds a separate Android instrumentation APK and installs the offline client on a fresh API 36 emulator to check actual WebView secure context/capabilities, origin-local identity lifecycle and background destruction. The iOS job attempts actual simulator install and launch/relaunch of the offline app. These steps run after build artifacts are uploaded; an unavailable emulator, missing required API or failed probe is a test failure, not a compatibility pass. No production APK test code or signing changes. Actual authorized physical remote sessions remain separate; see docs/M6_MOBILE_RUNTIME_ACCEPTANCE.md.
+
+### Capability diagnostics
+
+The landing page now reports per-capability reason codes: secure context, Ed25519 proof/non-exportability, bounded WASM binary initialization, transactional IndexedDB temporary key clone, actual local VP8/data-channel offer and stats, and pointer capture. The checks do not set a local description, gather ICE, open signaling or enroll an identity. A missing API disables the connection. Android instrumentation logs the provider version and fixed reason codes only. The previous API 36 emulator installed the APK successfully but failed the original undifferentiated capability gate; the precise cause is still awaiting the expanded runtime check. Do not bypass TLS, substitute a weaker key, or claim physical support from an emulator build.

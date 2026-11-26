@@ -50,13 +50,15 @@ export async function serve(port=0,fixtureEndpoint=null,viewer=null,options={stu
  }
  if(viewer!==null){
     const ep=viewEndpoint(viewer);
-    if(!["view.html","view-page.js","view-session.js","ice-policy.js","input.js","touch.js","mobile.html","mobile.js","session-policy.js","connection-book.js"].every(file=>existsSync(path.join(root,file))))throw Error("Source-only viewer assets unavailable; use the repository checkout");
+    if(!["view.html","view-page.js","view-session.js","ice-policy.js","input.js","touch.js","mobile.html","mobile.js","session-policy.js","connection-book.js","wasm-loader.js","capabilities.js"].every(file=>existsSync(path.join(root,file))))throw Error("Source-only viewer assets unavailable; use the repository checkout");
     if(fixtureEndpoint!==null&&fixtureEndpoint!==viewer)throw Error("Only one WSS endpoint allowed");
     const {normalizePolicy}=await import("./ice-policy.js");
     const {stun,turn,relayOnly,control,extended=false}=options;
     if(typeof control!=="boolean"||typeof extended!=="boolean")throw Error("Invalid control or duration policy");
     viewConfig={schema:1,mode:"direct-read-only",endpoint:viewer,ice:normalizePolicy({stun,turn,relayOnly}),control,extended};
     table.set("/ice-policy.js",["ice-policy.js","text/javascript; charset=utf-8"]);
+    table.set("/wasm-loader.js",["wasm-loader.js","text/javascript; charset=utf-8"]);
+    table.set("/capabilities.js",["capabilities.js","text/javascript; charset=utf-8"]);
     table.set("/connection-book.js",["connection-book.js","text/javascript; charset=utf-8"]);
     table.set("/session-policy.js",["session-policy.js","text/javascript; charset=utf-8"]);
     table.set("/input.js",["input.js","text/javascript; charset=utf-8"]);
