@@ -4,6 +4,7 @@ on:
     branches: [master]
     paths:
       - 'scripts/ci/test-webkit-controller.mjs'
+      - 'apps/web/test-view-x11.mjs'
       - 'scripts/ci/webkit-controller-runtime.sh'
       - '.github/workflows/webkit-controller-ci.yml'
   workflow_dispatch:
@@ -15,7 +16,7 @@ concurrency:
 jobs:
   webkit:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 55
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -44,9 +45,21 @@ jobs:
         timeout-minutes: 10
         working-directory: apps/web
         run: npx playwright install webkit
-      - name: Actual HTTPS WebKit identity, capability and authenticated synthetic media
-        timeout-minutes: 6
+      - name: Actual HTTPS WebKit identity and capability gates (no media)
+        id: identity_gate
+        timeout-minutes: 5
         run: |
           node --check scripts/ci/test-webkit-controller.mjs
           bash -n scripts/ci/webkit-controller-runtime.sh
           bash scripts/ci/webkit-controller-runtime.sh
+
+      - name: Build independent native X11 screen sender and WSS rendezvous
+        timeout-minutes: 20
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y openssl pkg-config libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libgstreamer-plugins-bad1.0-dev gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-nice build-essential libclang-dev clang libpipewire-0.3-dev libspa-0.2-dev libxcb1-dev libxcb-randr0-dev libx11-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libegl1-mesa-dev libdbus-1-dev xvfb xauth x11-xserver-utils gstreamer1.0-pipewire
+          cargo build -p remote-ex-rendezvous
+          cargo build --manifest-path crates/media/Cargo.toml --features native-x11-view --bin routed_x11_view
+      - name: WebKit receive-only actual Xvfb desktop through trusted staged HTTPS and native WSS
+        timeout-minutes: 5
+        run: bash scripts/ci/webkit-controller-runtime.sh --native-receiver

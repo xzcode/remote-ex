@@ -1,6 +1,8 @@
 // Actual capture of an isolated Xvfb screen; never run on a user's desktop.
 import assert from "node:assert/strict";
-import {chromium} from "playwright";
+import {chromium,webkit} from "playwright";
+import {stage} from "../../scripts/stage-mobile-client.mjs";
+import {prepare,listen} from "../../deploy/controller-site.mjs";
 import {serve} from "./serve.mjs";
 import {spawn,execFileSync} from "node:child_process";
 import {mkdtempSync,mkdirSync,writeFileSync,rmSync} from "node:fs";
@@ -17,7 +19,9 @@ assert.equal(process.env.XDG_SESSION_TYPE,"x11");
 assert.match(process.env.DISPLAY??"",/^:\d+$/);
 const relayOnly=process.argv.slice(2).includes("--relay-only");
 const extended=process.argv.slice(2).includes("--extended");
-assert(process.argv.slice(2).every(x=>x==="--relay-only"||x==="--extended"));
+const useWebKit=process.argv.slice(2).includes("--webkit");
+assert(process.argv.slice(2).every(x=>["--relay-only","--extended","--webkit"].includes(x)));
+assert(!useWebKit||!relayOnly&&!extended,"First WebKit receiver acceptance is direct read-only only");
 function reader(child){
     const lines=createInterface({input:child.stdout})[Symbol.asyncIterator]();
     return async(prefix,limit=15000)=>{
@@ -57,21 +61,36 @@ async function relayFixture(root){
     // No credentials or coturn logs emitted; service remains private runner only.
     return {process,stun:"stun://"+ip+":"+port,turn:"turn://"+ip+":"+port,secretFile};
 }
-const root=mkdtempSync(path.join(tmpdir(),"remote-ex-web-view-"));let server,host,browser,web,relay;
+const root=mkdtempSync(path.join(tmpdir(),"remote-ex-web-view-"));let server,host,browser,web,relay,page;
 try{
     const home=path.join(root,"home");mkdirSync(home,{mode:0o700});
-    const certs=certificates(root);installRoot(home,certs.ca);
+    const certs=useWebKit?{
+        ca:process.env.REMOTE_EX_WEBKIT_CA,cert:process.env.REMOTE_EX_WEBKIT_CERT,key:process.env.REMOTE_EX_WEBKIT_KEY
+    }:certificates(root);
+    if(useWebKit)assert(Object.values(certs).every(v=>typeof v==="string"&&path.isAbsolute(v)),"Disposable WebKit TLS files required");
+    else installRoot(home,certs.ca);
     const port=await freePort(),endpoint="wss://127.0.0.1:"+port+"/v1/ws";
     if(relayOnly){relay=await relayFixture(root);await new Promise(resolve=>setTimeout(resolve,1000));assert.equal(relay.process.exitCode,null);}
-    web=await serve(0,null,endpoint,{stun:relay?.stun??null,turn:relay?[relay.turn]:[],relayOnly,control:false,extended});
-    browser=await chromium.launch({headless:true,env:{...process.env,HOME:home,XDG_CONFIG_HOME:path.join(home,".config"),XDG_DATA_HOME:path.join(home,".local/share")},args:["--disable-background-networking","--disable-features=WebRtcHideLocalIpsWithMdns","--autoplay-policy=no-user-gesture-required"]});
-    const context=await browser.newContext({permissions:[],ignoreHTTPSErrors:false});
+    if(useWebKit){
+        const dir=path.join(root,"reviewed-assets"),sitePort=await freePort();
+        await stage(dir,{endpoint,ice:{stun:null,turn:[],relayOnly:false},control:false,extended:false});
+        const reviewed=await prepare(dir,{REMOTE_EX_SITE_HOST:"localhost",REMOTE_EX_SITE_PORT:String(sitePort),REMOTE_EX_SITE_TLS_CERT:certs.cert,REMOTE_EX_SITE_TLS_KEY:certs.key});
+        web={server:await listen(reviewed),url:"https://localhost:"+sitePort};
+        browser=await webkit.launch({headless:true});
+    }else{
+        web=await serve(0,null,endpoint,{stun:relay?.stun??null,turn:relay?[relay.turn]:[],relayOnly,control:false,extended});
+        browser=await chromium.launch({headless:true,env:{...process.env,HOME:home,XDG_CONFIG_HOME:path.join(home,".config"),XDG_DATA_HOME:path.join(home,".local/share")},args:["--disable-background-networking","--disable-features=WebRtcHideLocalIpsWithMdns","--autoplay-policy=no-user-gesture-required"]});
+    }
+    const context=await browser.newContext({permissions:[],ignoreHTTPSErrors:false,...(useWebKit?{viewport:{width:390,height:844},isMobile:true,hasTouch:true}:{})});
     const unexpected=[],errors=[];
     await context.route("**/*",r=>{if(new URL(r.request().url()).origin!==web.url){unexpected.push("Unexpected HTTP origin");return r.abort();}return r.continue();});
     await context.addInitScript(()=>{window.__forbiddenCalls=0;if(navigator.mediaDevices)for(const name of ["getDisplayMedia","getUserMedia"])Object.defineProperty(navigator.mediaDevices,name,{configurable:true,value:async()=>{window.__forbiddenCalls++;throw Error("Forbidden capture");}});});
-    const page=await context.newPage();
+    page=await context.newPage();
+    page.on("crash",()=>console.log("REMOTE EX WEB RECEIVER: browser page crashed"));
+    browser.on("disconnected",()=>{if(page&&!page.isClosed())console.log("REMOTE EX WEB RECEIVER: browser disconnected");});
     page.on("pageerror",e=>errors.push(e.message));page.on("websocket",ws=>{if(ws.url()!==endpoint)unexpected.push("Unexpected websocket");});
     await page.goto(web.url+"/identity.html");
+    if(useWebKit)assert(await page.evaluate(()=>isSecureContext&&location.protocol==="https:"));
     await page.locator("#identity-create").click();
     await page.waitForFunction(()=>document.querySelector("#identity-status").dataset.state==="verified");
     const controllerId=await page.locator("#device-id").inputValue(),controllerKey=await page.locator("#public-key").inputValue();
@@ -105,6 +124,7 @@ try{
     assert(await page.locator("#view-video").isHidden());
     host.stdin.write("REGISTER DEVICE\n");assert.equal(await read("ONLINE "),"ONLINE "+hostId);
     await read("PEER_KEY ");host.stdin.write(controllerKey+"\n");const consent=extended?"ALLOW ROUTED SCREEN FOR UP TO 300 SECONDS":"ALLOW ROUTED SCREEN";await read("CONSENT (type "+consent+";");host.stdin.write(consent+"\n");
+    console.log("REMOTE EX WEB RECEIVER: independently enrolled read-only host and controller");
     await page.locator("#view-server").fill(serverId);
     await page.locator("#view-consent").check();await page.locator("#view-connect").click();
     await page.waitForFunction(()=>["viewing","error"].includes(document.querySelector("#view-status").dataset.state),{},{timeout:65000});
@@ -135,7 +155,16 @@ try{
     const [code]=await exited;assert.equal(code,0);
     assert.equal(await page.evaluate(()=>window.__forbiddenCalls),0);
     assert.deepEqual(unexpected,[]);assert.deepEqual(errors,[]);await context.close();
-    console.log("PASS "+(relayOnly?"forced TURN relay; ":"direct ICE; ")+(extended?"extended quality and >30s viewing; ":"")+"actual isolated X11 screen -> Web UI: explicit enrollment, incorrect server pin rejected, read-only grant, verified captured pixels, stop and route closure");
+    console.log("PASS "+(useWebKit?"WebKit staged HTTPS receiver; ":"")+(relayOnly?"forced TURN relay; ":"direct ICE; ")+(extended?"extended quality and >30s viewing; ":"")+"actual isolated X11 screen -> Web UI: explicit enrollment, incorrect server pin rejected, read-only grant, verified captured pixels, stop and route closure");
+}catch(error){
+    if(useWebKit&&page&&!page.isClosed()){
+        const diagnostic=await page.locator("#view-status").evaluate(e=>({
+            state:e.dataset.state??"unknown",
+            message:(e.textContent??"").replace(/[^A-Za-z0-9 _.,:;()/-]/g," ").slice(0,160)
+        })).catch(()=>null);
+        if(diagnostic)console.log("WEBKIT_NATIVE_RECEIVER "+JSON.stringify(diagnostic));
+    }
+    throw error;
 }finally{
     await browser?.close();await stopChild(host);await stopChild(server);await stopChild(relay?.process);
     if(web)await new Promise(resolve=>web.server.close(resolve));

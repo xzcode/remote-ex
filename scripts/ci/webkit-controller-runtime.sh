@@ -33,13 +33,25 @@ cat >"$tmp/leaf.ext" <<'EOF'
 basicConstraints=critical,CA:FALSE
 keyUsage=critical,digitalSignature,keyEncipherment
 extendedKeyUsage=serverAuth
-subjectAltName=DNS:localhost
+subjectAltName=DNS:localhost,IP:127.0.0.1
 EOF
 openssl x509 -req -in "$tmp/server.csr" -CA "$tmp/ca.pem" -CAkey "$tmp/ca.key" -CAcreateserial \
     -days 1 -sha256 -extfile "$tmp/leaf.ext" -out "$tmp/server.pem"
 openssl verify -CAfile "$tmp/ca.pem" -verify_hostname localhost "$tmp/server.pem"
+openssl verify -CAfile "$tmp/ca.pem" -verify_ip 127.0.0.1 "$tmp/server.pem"
 timeout 15s sudo install -m 0644 "$tmp/ca.pem" "$ca"
 installed=1
 timeout 45s sudo update-ca-certificates
-export REMOTE_EX_WEBKIT_CERT="$tmp/server.pem" REMOTE_EX_WEBKIT_KEY="$tmp/server.key"
-timeout --kill-after=10s 240s node scripts/ci/test-webkit-controller.mjs
+export REMOTE_EX_WEBKIT_CA="$tmp/ca.pem" REMOTE_EX_WEBKIT_CERT="$tmp/server.pem" REMOTE_EX_WEBKIT_KEY="$tmp/server.key"
+case "$*" in
+    "")
+        timeout --kill-after=10s 150s node scripts/ci/test-webkit-controller.mjs
+        ;;
+    --native-receiver)
+        xvfb-run -a -s '-screen 0 1024x768x24 +extension RANDR' env -u WAYLAND_DISPLAY -u WAYLAND_SOCKET XDG_SESSION_TYPE=x11 timeout --kill-after=10s 180s node apps/web/test-view-x11.mjs --webkit
+        ;;
+    --local-media)
+        timeout --kill-after=10s 240s node scripts/ci/test-webkit-controller.mjs --local-media
+        ;;
+    *) echo "Unsupported WebKit acceptance mode"; exit 1;;
+esac

@@ -12,11 +12,13 @@ import {freePort} from "../../apps/web/wss-test-support.mjs";
 const require=createRequire(new URL("../../apps/web/package.json",import.meta.url));
 const {webkit}=require("playwright");
 assert.equal(process.env.RUNNER_ENVIRONMENT,"github-hosted");
+const localMedia=process.argv.slice(2).includes("--local-media");
+assert(process.argv.slice(2).every(v=>v==="--local-media"));
 const dir=await fs.mkdtemp(path.join(os.tmpdir(),"remote-ex-webkit-"));
 const cert=process.env.REMOTE_EX_WEBKIT_CERT,key=process.env.REMOTE_EX_WEBKIT_KEY;
 assert(cert&&key&&path.isAbsolute(cert)&&path.isAbsolute(key));
 let browser,site,lab;
-const results={schema:1,engine:"webkit",https:false,capabilities:[],identity:false,persistence:false,deletion:false,viewer_gate:false,local_media:false,dtls:false,decoded_frames:false,no_signaling:false};
+const results={schema:1,engine:"webkit",https:false,capabilities:[],identity:false,persistence:false,deletion:false,viewer_gate:false,local_media_attempted:localMedia,local_media:false,dtls:false,decoded_frames:false,no_signaling:false};
 const phase=name=>console.log("REMOTE EX WEBKIT PHASE: "+name);
 try{
     phase("stage");
@@ -26,13 +28,13 @@ try{
     const prepared=await prepare(root,{REMOTE_EX_SITE_HOST:"localhost",REMOTE_EX_SITE_PORT:String(port),REMOTE_EX_SITE_TLS_CERT:cert,REMOTE_EX_SITE_TLS_KEY:key});
     assert.equal(report(prepared).network_started,false);
     site=await listen(prepared);const origin="https://localhost:"+port;
-    lab=await serve(0);
+    if(localMedia)lab=await serve(0);
     phase("trusted_https");
     browser=await webkit.launch({headless:true});
     const context=await browser.newContext({ignoreHTTPSErrors:false,permissions:[],viewport:{width:390,height:844},isMobile:true,hasTouch:true});
     const sockets=[],outside=[],pageErrors=[];
     await context.route("**/*",r=>{
-        if(![origin,lab.url].includes(new URL(r.request().url()).origin)){outside.push("unexpected HTTP origin");return r.abort();}
+        if(![origin,lab?.url].includes(new URL(r.request().url()).origin)){outside.push("unexpected HTTP origin");return r.abort();}
         return r.continue();
     });
     await context.addInitScript(()=>{
@@ -102,7 +104,7 @@ try{
     }
     // Existing local-only signed media fixture, separate from staged assets.
     // Actual DTLS certificate stats must match; no SDP-only fallback.
-    if(supported){
+    if(supported&&localMedia){
         phase("authenticated_local_media");
         await page.goto(lab.url);
         await page.locator("#consent").check();await page.locator("#start").click();
@@ -129,9 +131,9 @@ try{
     results.no_signaling=sockets.length===0&&outside.length===0;
     assert(results.no_signaling,"Unexpected external connection");assert.deepEqual(pageErrors,[]);
     // Correctly blocking an unsupported engine is not media compatibility.
-    assert(supported&&results.identity&&results.persistence&&results.deletion&&results.local_media,
+    assert(supported&&results.identity&&results.persistence&&results.deletion&&(!localMedia||results.local_media),
         "WebKit compatibility incomplete; inspect WEBKIT_CAPABILITIES and WEBKIT_LOCAL_MEDIA");
-    console.log("PASS REMOTE EX WEBKIT: staged HTTPS, identity lifecycle, direct-view consent, signed local media, connected DTLS and decoded generated video");
+    console.log("PASS REMOTE EX WEBKIT: staged HTTPS, identity lifecycle, direct-view consent"+(localMedia?", signed local synthetic media verified":"; native receiver tested separately"));
 }finally{
     console.log("WEBKIT_ACCEPTANCE "+JSON.stringify(results));
     await browser?.close();

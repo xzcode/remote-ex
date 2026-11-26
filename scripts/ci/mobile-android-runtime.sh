@@ -8,11 +8,10 @@ test -n "$ANDROID_HOME"
 api="$REMOTE_EX_ANDROID_API"
 expectation="$REMOTE_EX_ANDROID_EXPECTATION"
 case "$api:$expectation" in
-    36:legacy|37:supported) ;;
+    36:legacy|modern:supported) ;;
     *) echo "Invalid Android runtime matrix selection"; exit 1 ;;
 esac
-image="system-images;android-$api;google_apis;x86_64"
-printf 'REMOTE EX ANDROID MATRIX: API %s / %s\n' "$api" "$expectation"
+printf 'REMOTE EX ANDROID MATRIX: %s / %s\n' "$api" "$expectation"
 app="apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk"
 testapk="apps/mobile/android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk"
 test -f "$app"
@@ -58,8 +57,13 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+mark sdk-catalog
+catalog="$(bounded 90s sdkmanager --list --channel=0)"
+image="$(printf '%s\n' "$catalog" | python3 scripts/ci/select-android-image.py "$expectation")"
+printf 'REMOTE EX ANDROID IMAGE: %s\n' "$image"
+unset catalog
 mark sdk-install
-bounded 300s sdkmanager "emulator" "$image"
+bounded 300s sdkmanager --channel=0 "emulator" "$image"
 bounded 15s sudo chown "$(id -u):$(id -g)" /dev/kvm
 test -r /dev/kvm && test -w /dev/kvm
 mark avd-create

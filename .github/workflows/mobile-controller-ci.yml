@@ -12,6 +12,7 @@ on:
       - 'scripts/test-mobile-verify.mjs'
       - 'scripts/configure-ios-controller.py'
       - 'scripts/ci/mobile-android-runtime.sh'
+      - 'scripts/ci/select-android-image.py'
       - 'scripts/ci/mobile-ios-runtime.sh'
       - '.github/workflows/mobile-controller-ci.yml'
   workflow_dispatch:
@@ -114,7 +115,7 @@ jobs:
         include:
           - api: 36
             expectation: legacy
-          - api: 37
+          - api: modern
             expectation: supported
     name: Android runtime API ${{ matrix.api }} (${{ matrix.expectation }})
     steps:
@@ -141,7 +142,9 @@ jobs:
         env:
           REMOTE_EX_ANDROID_API: ${{ matrix.api }}
           REMOTE_EX_ANDROID_EXPECTATION: ${{ matrix.expectation }}
-        run: bash scripts/ci/mobile-android-runtime.sh
+        run: |
+          python3 scripts/ci/select-android-image.py --self-test
+          bash scripts/ci/mobile-android-runtime.sh
 
   ios:
     runs-on: macos-latest
