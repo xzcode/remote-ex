@@ -110,7 +110,13 @@ try{
         const state=await page.locator("#status").getAttribute("data-state");
         const checks=await page.locator("[data-step]").evaluateAll(items=>items.map(i=>({step:i.dataset.step,ok:i.dataset.pass==="true"})));
         assert(checks.every(x=>["vectors","identity","noise","sdp","dtls","video"].includes(x.step)));
-        console.log("WEBKIT_LOCAL_MEDIA "+JSON.stringify({state,checks}));
+        const failure=await page.locator("#error").evaluate(e=>({
+            stage:(e.dataset.stage??"").slice(0,100),
+            detail:(e.textContent??"").replace(/[^a-zA-Z0-9 _.,:;()/-]/g," ").slice(0,220)
+        }));
+        // Only disposable fixture diagnostics; no configured URLs, keys or
+        // SDP are logged. The stage is fixed UI text, details sanitized.
+        console.log("WEBKIT_LOCAL_MEDIA "+JSON.stringify({state,checks,failure}));
         results.dtls=checks.some(v=>v.step==="dtls"&&v.ok);
         results.decoded_frames=checks.some(v=>v.step==="video"&&v.ok)&&Number(await page.locator("#frames").textContent())>=3;
         results.local_media=state==="verified"&&results.dtls&&results.decoded_frames;

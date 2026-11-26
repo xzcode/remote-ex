@@ -141,7 +141,7 @@ jobs:
       - name: Stage private local-only diagnostic bundle
         run: |
           mkdir -p apps/web/dist/pkg
-          cp apps/web/index.html apps/web/style.css apps/web/crypto.js apps/web/app.js apps/web/identity.html apps/web/identity.js apps/web/identity-page.js apps/web/dist/
+          cp apps/web/index.html apps/web/style.css apps/web/crypto.js apps/web/wasm-loader.js apps/web/app.js apps/web/identity.html apps/web/identity.js apps/web/identity-page.js apps/web/dist/
           cp apps/web/pkg/noise.js apps/web/pkg/noise_bg.wasm apps/web/dist/pkg/
           cp docs/protocol/v1-fixture.json apps/web/dist/
           cp apps/web/serve.mjs apps/web/dist/

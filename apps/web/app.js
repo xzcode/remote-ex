@@ -1,9 +1,9 @@
-import init,{FixturePeer} from "./pkg/noise.js";
+import {loadControllerWasm} from "./wasm-loader.js";
 import {publicVectors,newFixtureIdentity,random,authenticateNoise,signedSdpPair,sdpFingerprint,dtlsFingerprint} from "./crypto.js";
 const $=id=>document.getElementById(id);
 const source=$("source"),video=$("remote"),start=$("start"),stop=$("stop"),consent=$("consent"),status=$("status"),error=$("error");
 const paint=source.getContext("2d",{alpha:false});
-let active=null,wasmReady=null;
+let active=null;
 function state(value,label){status.dataset.state=value;status.textContent=label;}
 function step(name){document.querySelector(`[data-step="${name}"]`).dataset.pass="true";}
 function resetSteps(){for(const node of document.querySelectorAll("[data-step]"))delete node.dataset.pass;}
@@ -51,7 +51,7 @@ async function gather(s,pc){await wait(s,()=>pc.iceGatheringState==="complete",7
 async function run(){
     if(active||!consent.checked)return;
     const s={abort:new AbortController(),peers:[],stream:null,received:null,sequence:0,decoded:0,deadline:null,paintTimer:null,statsTimer:null,frameCallback:null};
-    active=s;resetSteps();error.textContent="";consent.disabled=true;start.disabled=true;stop.disabled=false;
+    active=s;resetSteps();error.textContent="";delete error.dataset.stage;consent.disabled=true;start.disabled=true;stop.disabled=false;
     $("frames").textContent="—";$("resolution").textContent="—";$("transport").textContent="—";state("running","Checking prerequisites");
     s.deadline=setTimeout(()=>close(s,"stopped","30-second limit reached"),30000);
     try{
@@ -59,8 +59,12 @@ async function run(){
         const response=await fetch("v1-fixture.json",{signal:s.abort.signal,cache:"no-store"});
         if(!response.ok)throw Error("Public fixture unavailable");
         await publicVectors(await response.json());guard(s);step("vectors");
-        if(!wasmReady)wasmReady=init().catch(e=>{wasmReady=null;throw e;});
-        await wasmReady;guard(s);
+        state("running","Initializing local WASM");
+        const wasm=await import("./pkg/noise.js");
+        await loadControllerWasm(wasm.default);guard(s);
+        const FixturePeer=wasm.FixturePeer;
+        if(typeof FixturePeer!=="function")throw Error("Fixture WASM exports unavailable");
+        state("running","Creating local test identities");
         const controller=await newFixtureIdentity(),host=await newFixtureIdentity();guard(s);step("identity");
         const session=random(16),cn=random(32),hn=random(32);
         await authenticateNoise(FixturePeer,controller,host,session,cn,hn);guard(s);step("noise");
@@ -120,6 +124,7 @@ async function run(){
         s.statsTimer=setInterval(()=>{void measure().catch(()=>close(s,"error","Stats failed"));},500);
     }catch(e){
         if(active!==s)return;
+        error.dataset.stage=status.textContent;
         error.textContent=String(e?.message??e).slice(0,250);close(s,"error","Test failed");
     }
 }
