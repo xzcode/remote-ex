@@ -8,14 +8,14 @@ import sys
 
 LEGACY = "system-images;android-36;google_apis;x86_64"
 MODERN = (
-    "system-images;android-37.2;google_apis_ps16k;x86_64",
     "system-images;android-37.2;google_apis;x86_64",
-    "system-images;android-37.1;google_apis_ps16k;x86_64",
+    "system-images;android-37.2;google_apis_ps16k;x86_64",
     "system-images;android-37.1;google_apis;x86_64",
-    "system-images;android-37.0;google_apis_ps16k;x86_64",
+    "system-images;android-37.1;google_apis_ps16k;x86_64",
     "system-images;android-37.0;google_apis;x86_64",
-    "system-images;android-37;google_apis_ps16k;x86_64",
+    "system-images;android-37.0;google_apis_ps16k;x86_64",
     "system-images;android-37;google_apis;x86_64",
+    "system-images;android-37;google_apis_ps16k;x86_64",
     "system-images;android-36.1;google_apis;x86_64",
     "system-images;android-36.1;google_apis_ps16k;x86_64",
 )
@@ -36,6 +36,8 @@ def self_test():
     assert select("legacy", LEGACY+" | 7 | image") == LEGACY
     assert select("supported", MODERN[-2]+" | 4 | image\n"+MODERN[0]+" | 1 | image") == MODERN[0]
     assert select("supported", MODERN[-2]+" | 4 | image") == MODERN[-2]
+    assert select("supported", MODERN[1]+" | 4 | image\n"+MODERN[0]+" | 4 | image") == MODERN[0]
+    assert select("supported", MODERN[1]+" | 4 | image") == MODERN[1]
     for bad in (LEGACY+" | 7 | image", MODERN[0]+"-fake | 1 | image",
                 "system-images;android-37.2;google_apis;arm64-v8a | 1 | image",
                 "description | "+MODERN[0], ""):

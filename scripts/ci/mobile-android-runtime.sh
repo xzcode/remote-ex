@@ -35,7 +35,11 @@ cleanup() {
         if [[ "$owned_serial" = 1 ]]; then
             adb_run 8s logcat -d -s RemoteEXOfflineSmoke:I '*:S' | tail -n 18 || true
         fi
-        if [[ -n "$log" && -f "$log" ]]; then tail -n 25 "$log" || true; fi
+        if [[ -n "$log" && -f "$log" ]]; then
+            grep -Ei 'error|fatal|panic|failed|startup|accelerat|warning' "$log" | tail -n 30 || true
+            tail -n 30 "$log" || true
+        fi
+        bounded 10s adb devices || true
     fi
     if [[ -n "$emulator_pid" ]]; then
         if [[ "$owned_serial" = 1 ]]; then adb_run 8s emu kill >/dev/null 2>&1 || true; fi
@@ -79,23 +83,63 @@ result="$(mktemp)"
 printf 'no\n' | bounded 60s avdmanager create avd --name remote-ex-offline --package "$image" --force
 
 mark emulator-start
-"$ANDROID_HOME/emulator/emulator" -avd remote-ex-offline -port 5554 -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect -accel on -camera-back none -camera-front none -no-metrics >"$log" 2>&1 &
+# Modern images (especially the 16 KB page-size variant) can take longer
+# than the legacy image's 120-second ADB deadline. Allocate a bounded
+# resource budget and distinguish ADB availability from Android boot.
+if [[ "$expectation" = supported ]]; then
+    gpu=swiftshader
+    boot_budget=420
+    emulator_resources=(-memory 4096 -cores 4)
+else
+    gpu=swiftshader_indirect
+    boot_budget=270
+    emulator_resources=()
+fi
+printf 'REMOTE EX ANDROID BOOT: gpu=%s budget=%ss\n' "$gpu" "$boot_budget"
+bounded 15s "$ANDROID_HOME/emulator/emulator" -accel-check
+bounded 15s adb start-server
+started=$SECONDS
+end=$((started+boot_budget))
+"$ANDROID_HOME/emulator/emulator" -avd remote-ex-offline -port 5554 -no-window -no-audio -no-boot-anim -no-snapshot -gpu "$gpu" -accel on -camera-back none -camera-front none -no-metrics "${emulator_resources[@]}" >"$log" 2>&1 &
 emulator_pid=$!
-adb_run 120s wait-for-device
+mark adb-ready
+ready=0
+next_report=0
+while ((SECONDS<end)); do
+    kill -0 "$emulator_pid" || { echo "Emulator exited before ADB became ready"; exit 1; }
+    state="$(adb_run 5s get-state 2>/dev/null | tr -d '\r' || true)"
+    if [[ "$state" = device ]]; then ready=1; break; fi
+    elapsed=$((SECONDS-started))
+    if ((elapsed>=next_report)); then
+        printf 'REMOTE EX ANDROID WAIT: adb after %ss\n' "$elapsed"
+        next_report=$((elapsed+30))
+    fi
+    sleep 3
+done
+if [[ "$ready" != 1 ]]; then echo "ADB readiness deadline exceeded"; exit 124; fi
 test "$(adb_run 10s shell getprop ro.kernel.qemu | tr -d '\r')" = 1
 # Only the serial that did not exist before our emulator was spawned.
 owned_serial=1
+printf 'REMOTE EX ANDROID ADB READY: %ss\n' "$((SECONDS-started))"
 mark boot-complete
 ready=0
-end=$((SECONDS+150))
+next_report=0
 while ((SECONDS<end)); do
     kill -0 "$emulator_pid" || exit 1
     boot="$(adb_run 8s shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)"
     if [[ "$boot" = 1 ]]; then ready=1; break; fi
-    sleep 2
+    elapsed=$((SECONDS-started))
+    if ((elapsed>=next_report)); then
+        printf 'REMOTE EX ANDROID WAIT: system boot after %ss\n' "$elapsed"
+        next_report=$((elapsed+30))
+    fi
+    sleep 3
 done
-test "$ready" = 1
+if [[ "$ready" != 1 ]]; then echo "Android system boot deadline exceeded"; exit 124; fi
+printf 'REMOTE EX ANDROID BOOT READY: %ss\n' "$((SECONDS-started))"
 mark prepare-device
+adb_run 15s shell getprop ro.build.version.sdk
+adb_run 15s shell getprop ro.build.version.release
 adb_run 12s shell input keyevent KEYCODE_WAKEUP
 adb_run 12s shell wm dismiss-keyguard
 adb_run 12s shell settings put global window_animation_scale 0
