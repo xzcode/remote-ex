@@ -1,6 +1,8 @@
 import {createIdentity,readIdentity,deleteIdentity} from "./identity.js";
 import {hex} from "./crypto.js";
 import {probeIdentityCapabilities,compatibilityGuidance} from "./capabilities.js";
+import {applyAppearance} from "./controller-ui.js";
+applyAppearance();
 const $=id=>document.getElementById(id);
 const status=$("identity-status"),create=$("identity-create"),remove=$("identity-delete"),refresh=$("identity-refresh"),confirm=$("identity-confirm"),support=$("identity-support");
 let busy=false,present=false,valid=false,canCreate=false;

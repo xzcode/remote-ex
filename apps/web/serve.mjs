@@ -15,6 +15,7 @@ const routes=new Map([
  ["/crypto.js",["crypto.js","text/javascript; charset=utf-8"]],
  ["/wasm-loader.js",["wasm-loader.js","text/javascript; charset=utf-8"]],
  ["/capabilities.js",["capabilities.js","text/javascript; charset=utf-8"]],
+ ["/controller-ui.js",["controller-ui.js","text/javascript; charset=utf-8"]],
  ["/identity.html",["identity.html","text/html; charset=utf-8"]],
  ["/identity.js",["identity.js","text/javascript; charset=utf-8"]],
  ["/identity-page.js",["identity-page.js","text/javascript; charset=utf-8"]],

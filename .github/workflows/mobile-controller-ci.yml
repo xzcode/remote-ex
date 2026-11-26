@@ -83,7 +83,7 @@ jobs:
           p=Path("apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk")
           with zipfile.ZipFile(p) as z:
               assert json.loads(z.read("assets/view-config.json")) == {"schema":1,"mode":"disabled"}
-              for n in ("mobile.html","view.html","touch.js","session-policy.js","connection-book.js","wasm-loader.js","capabilities.js","pkg/noise_bg.wasm","headers.json"):
+              for n in ("mobile.html","view.html","touch.js","session-policy.js","connection-book.js","wasm-loader.js","capabilities.js","controller-ui.js","pkg/noise_bg.wasm","headers.json"):
                   assert z.getinfo("assets/"+n).file_size > 0
               assert not any("fixture" in n for n in z.namelist() if n.startswith("assets/"))
           PY

@@ -5,6 +5,8 @@ import {normalizePolicy,directPolicy} from "./ice-policy.js";
 import {QUALITY_MODES} from "./session-policy.js";
 import {probeCapabilities,capabilityBlockers,compatibilityGuidance} from "./capabilities.js";
 import {BOOK_KEY,connectionKey,readBook,writeBook,saveEntry,removeEntry,forEndpoint} from "./connection-book.js";
+import {applyAppearance,takeSelection} from "./controller-ui.js";
+applyAppearance();
 const $=id=>document.getElementById(id);
 const url=$("view-endpoint"),server=$("view-server"),host=$("view-host"),consent=$("view-consent"),connect=$("view-connect"),disconnect=$("view-disconnect"),next=$("view-next"),video=$("view-video"),status=$("view-status");
 let config=null,identity=null,active=null,displayCount=0,policy=directPolicy(),allowControl=false,allowExtended=false,inputActive=false,compatible=false;
@@ -12,7 +14,7 @@ const control=$("view-control"),enable=$("input-enable"),disable=$("input-disabl
 const saved=$("saved-connection"),connectionLabel=$("connection-label"),save=$("connection-save"),remove=$("connection-remove"),bookStatus=$("connection-book-status");
 let book=[],bookAvailable=false;
 if(matchMedia("(pointer: coarse)").matches)inputMode.value="tap";
-function state(kind,label){status.dataset.state=kind;status.textContent=label;$("view-placeholder").hidden=!video.hidden;}
+function state(kind,label){status.dataset.state=kind;status.textContent=label;$("view-placeholder").hidden=!video.hidden;document.body.classList.toggle("session-live",kind==="viewing");}
 function controls(){
     const locked=!!active;
     server.disabled=host.disabled=locked;consent.disabled=locked||!config||!identity||!compatible;
@@ -47,12 +49,13 @@ function updateBook(action,selected=""){
         const fresh=readBook(localStorage.getItem(BOOK_KEY));localStorage.setItem(BOOK_KEY,writeBook(action(fresh)));refreshBook(selected);
     }catch(e){refreshBook();bookStatus.textContent="Connection details were not changed: "+String(e?.message??e).slice(0,100);}
 }
-saved.addEventListener("change",()=>{
+function applySaved(){
     if(active||!saved.value)return;
     const entry=book.find(v=>connectionKey(v)===saved.value&&v.endpoint===config);if(!entry)return;
     server.value=entry.serverId;host.value=entry.hostKey;connectionLabel.value=entry.label;
     control.checked=false;extended.checked=false;consent.checked=false;controls();
-});
+}
+saved.addEventListener("change",applySaved);
 connectionLabel.addEventListener("input",controls);
 save.addEventListener("click",()=>{
     if(save.disabled)return;
@@ -75,7 +78,10 @@ async function load(){
         if(blockers.length){identity=null;$("view-id").value="";$("view-public").value="";state("error","Local compatibility check failed. No connection attempted.");return;}
         identity=await readIdentity();compatible=true;
         $("view-id").value=identity?.id??"";$("view-public").value=identity?hex(identity.pub):"";
-        consent.checked=false;refreshBook();state("idle",identity?"Ready. Enter the independently verified identities.":"Create a browser identity first.");
+        consent.checked=false;refreshBook();
+        const selected=takeSelection();
+        if(selected&&[...saved.options].some(o=>o.value===selected)){saved.value=selected;applySaved();}
+        state("idle",identity?"Ready. Enter the independently verified identities.":"Create a browser identity first.");
     }catch(e){config=null;identity=null;compatible=false;$("view-id").value="";$("view-public").value="";$("view-compat").textContent="Configuration or local identity unavailable. Recheck or manage identity.";state("error",String(e.message??e));}finally{loading=false;controls();}
 }
 function metrics(m){
@@ -96,7 +102,7 @@ connect.addEventListener("click",async()=>{
     const s=new ViewSession({url:config,serverId:server.value,hostKey:host.value,identityId:identity.id,video,policy,control:allowControl&&control.checked,extended:allowExtended&&extended.checked,onInput:value=>{inputActive=value;$("input-status").textContent=value?"Input active — keep focus on the remote screen. Leaving it releases input.":"Input disabled; click Enable input again to resume.";controls();},onState:(kind,label)=>{if(active===s){state(kind,label);controls();}},onMetrics:m=>{if(active===s)metrics(m);}});
     active=s;controls();
     try{await s.run();}catch(e){s.cancel();state("error",String(e.message??e));}
-    finally{if(active===s){active=null;inputActive=false;consent.checked=false;displayCount=0;$("view-placeholder").hidden=false;controls();}}
+    finally{if(active===s){active=null;inputActive=false;consent.checked=false;displayCount=0;document.body.classList.remove("session-live");$("view-placeholder").hidden=false;controls();}}
 });
 disconnect.addEventListener("click",()=>{active?.stop();controls();});
 next.addEventListener("click",()=>active?.next());

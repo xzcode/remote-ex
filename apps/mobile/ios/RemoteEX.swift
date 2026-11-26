@@ -75,7 +75,7 @@ final class Controller: UIViewController, WKNavigationDelegate, WKUIDelegate {
         view.backgroundColor = .systemBackground
         let title = UILabel()
         title.text = "Remote EX"
-        title.font = .preferredFont(forTextStyle: .title1)
+        title.font = .preferredFont(forTextStyle: .headline)
         status.font = .preferredFont(forTextStyle: .body)
         status.numberOfLines = 0
         status.text = origin == nil ? "Offline candidate — no reviewed HTTPS controller configured." :
@@ -86,20 +86,29 @@ final class Controller: UIViewController, WKNavigationDelegate, WKUIDelegate {
         stopButton.setTitle("Disconnect", for: .normal)
         stopButton.isEnabled = false
         stopButton.addTarget(self, action: #selector(disconnect), for: .touchUpInside)
-        let buttons = UIStackView(arrangedSubviews: [openButton, stopButton])
-        buttons.axis = .horizontal
-        buttons.distribution = .fillEqually
-        let stack = UIStackView(arrangedSubviews: [title, status, buttons, surface])
+        stopButton.isHidden = true
+        stopButton.tintColor = .systemRed
+        var openStyle = UIButton.Configuration.filled()
+        openStyle.title = "Open controller"
+        openStyle.cornerStyle = .medium
+        openButton.configuration = openStyle
+        let header = UIStackView(arrangedSubviews: [title, UIView(), stopButton])
+        header.axis = .horizontal
+        header.alignment = .center
+        header.isLayoutMarginsRelativeArrangement = true
+        header.layoutMargins = UIEdgeInsets(top: 0, left: 16, bottom: 0, right: 16)
+        let stack = UIStackView(arrangedSubviews: [header, status, openButton, surface])
         stack.axis = .vertical
-        stack.spacing = 12
+        stack.spacing = 8
         stack.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(stack)
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
-            stack.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16),
-            stack.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12),
-            stack.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -8),
-            buttons.heightAnchor.constraint(greaterThanOrEqualToConstant: 44)
+            stack.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            stack.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
+            header.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            openButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44)
         ])
     }
     @objc private func openController() {
@@ -125,6 +134,9 @@ final class Controller: UIViewController, WKNavigationDelegate, WKUIDelegate {
         ])
         web = w
         openButton.isEnabled = false
+        openButton.isHidden = true
+        status.isHidden = true
+        stopButton.isHidden = false
         stopButton.isEnabled = true
         status.text = "Controller opened. No incoming phone control or background session."
         w.load(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData))
@@ -141,7 +153,10 @@ final class Controller: UIViewController, WKNavigationDelegate, WKUIDelegate {
         }
         // WKWebsiteDataStore identity is retained. No automatic session restore.
         openButton.isEnabled = origin != nil
+        openButton.isHidden = false
         stopButton.isEnabled = false
+        stopButton.isHidden = true
+        status.isHidden = false
         status.text = message
     }
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,

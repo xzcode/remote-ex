@@ -1,7 +1,39 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Remote EX — Mobile controller</title><link rel="stylesheet" href="style.css"></head>
-<body><header class="top"><strong>Remote EX</strong><span class="tag">Mobile controller · experimental</span></header>
-<main><section class="intro"><h1>Mobile controller</h1><p>Connect only to a separately authorized host. This application cannot share the phone screen or accept incoming remote control.</p></section>
-<section class="card"><h2>Compatibility</h2><p id="mobile-status" role="status">Checking this device…</p><ul id="mobile-checks"></ul><p class="muted">A capability check does not verify actual host video, network or physical input.</p></section>
-<section class="card"><h2>Device &amp; connection</h2><p>Create your local device identity and have your administrator enroll its fingerprint before connecting. Read-only is the default.</p><div class="buttons"><a href="/identity.html">Manage identity</a><a id="mobile-connect" href="/view.html" hidden>Open controller</a></div><p id="mobile-policy" class="muted">No default public server.</p></section>
-</main><script type="module" src="mobile.js"></script></body></html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Remote EX — Controller</title><link rel="stylesheet" href="style.css"></head>
+<body class="controller-shell mobile-home">
+<header class="top product-header"><a href="/mobile.html" class="product-brand" aria-label="Remote EX home"><span class="product-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4M8 10h8m-3-3 3 3-3 3"/></svg></span><strong>Remote EX</strong></a><span class="tag">Controller</span></header>
+<main class="home-main">
+<section id="home-connect" class="home-section" data-home-panel>
+ <div class="intro"><h1>Remote connection</h1><p>Connect to an approved desktop.</p></div>
+ <section class="card action-card">
+  <div class="feature-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4m-4-11h8m-3-3 3 3-3 3"/></svg></div>
+  <h2>Connect to a device</h2>
+  <p id="mobile-policy" class="muted">No default public server.</p>
+  <a id="mobile-connect" class="primary button-link" href="/view.html" hidden>Review connection</a>
+  <a class="button-link secondary" href="/identity.html">My device identity</a>
+ </section>
+ <div class="section-heading"><h2>Saved connections</h2><button class="text-button" type="button" data-home-target="home-devices">View all</button></div>
+ <div id="mobile-recent" class="card saved-list"></div>
+ <p class="safety-line"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M12 22s8-3.5 8-10V5l-8-3-8 3v7c0 6.5 8 10 8 10zM9 12l2 2 4-4"/></svg>Each session requires verified identities and separate host approval. Your phone cannot accept incoming remote control.</p>
+</section>
+<section id="home-devices" class="home-section" data-home-panel hidden>
+ <div class="intro"><h1>My devices</h1><p>Saved connection details on this device, not live presence.</p></div>
+ <label class="sr-only" for="mobile-device-search">Search saved devices</label><input id="mobile-device-search" type="search" class="search-field" placeholder="Search devices" autocomplete="off" maxlength="64"/>
+ <div id="mobile-devices" class="card saved-list"></div>
+ <p class="muted">Select a device to review its exact server ID and host key. Saved details never grant access.</p>
+</section>
+<section id="home-settings" class="home-section" data-home-panel hidden>
+ <div class="intro"><h1>Settings</h1><p>Controller preferences and local device information.</p></div>
+ <section class="card settings-card"><h2>Appearance</h2><label for="mobile-theme">Theme</label><select id="mobile-theme"><option value="system">System</option><option value="light">Light</option><option value="gray">Soft gray</option><option value="dark">Dark</option><option value="black">Black</option></select><p id="appearance-status" class="muted" role="status"></p></section>
+ <section class="card settings-card"><h2>Device identity</h2><p id="mobile-identity" class="muted">Checking local identity…</p><a class="button-link secondary" href="/identity.html">Manage identity</a></section>
+ <section class="card settings-card"><h2>Compatibility</h2><p id="mobile-status" role="status" data-state="checking">Checking this device…</p><ul id="mobile-checks" class="capability-list"></ul><p class="muted">These checks do not verify actual remote video, network or physical input.</p><button id="mobile-recheck" type="button" disabled>Recheck compatibility</button></section>
+</section>
+<!-- Keep the actionable blocker visible on the connection landing as well. -->
+<p id="mobile-blocker" class="error" role="alert" hidden></p>
+</main>
+<nav class="mobile-nav" aria-label="Controller navigation">
+ <button type="button" data-home-target="home-connect" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h16l-4-4m4 4-4 4M20 16H4l4-4m-4 4 4 4"/></svg><span>Connect</span></button>
+ <button type="button" data-home-target="home-devices"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><rect x="3" y="4" width="16" height="12" rx="2"/><path d="M7 21h8m-4-5v5"/><rect x="16" y="11" width="5" height="10" rx="1.5" fill="var(--surface)"/></svg><span>Devices</span></button>
+ <button type="button" data-home-target="home-settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><path d="M10 3h4l1 3 2 1 3-1 2 4-2 2v1l2 2-2 4-3-1-2 1-1 3h-4l-1-3-2-1-3 1-2-4 2-2v-1l-2-2 2-4 3 1 2-1z"/><circle cx="12" cy="12" r="3"/></svg><span>Settings</span></button>
+</nav>
+<script type="module" src="mobile.js"></script></body></html>

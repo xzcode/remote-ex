@@ -1,12 +1,12 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Remote EX — Read-only Web controller</title><link rel="stylesheet" href="style.css"></head>
-<body>
-<header class="top"><div><strong>Remote EX</strong><span class="muted"> / Web controller</span></div><span class="tag">M6 · view only · experimental</span></header>
-<main>
+<body class="controller-shell viewer-page">
+<header class="top product-header viewer-header"><div class="viewer-heading"><a class="home-link" href="/mobile.html" aria-label="Back to controller">‹</a><div><strong>Remote EX</strong><p id="view-status" role="status" data-state="idle">Loading configuration…</p></div></div><button id="view-disconnect" class="disconnect-button" disabled>Disconnect</button></header>
+<main class="viewer-main">
 <section class="intro"><h1>Connect to an approved desktop</h1><p>Read-only viewing is the default. An explicitly enabled operator policy may offer keyboard and mouse control, which requires separate host approval and local activation. Audio, clipboard and files are not supported.</p></section>
 <div class="view-grid">
-<section class="card">
-<h2>Connection</h2>
+<section class="card connection-card">
+<h2>Connection details</h2>
 <p id="view-compat" class="muted" role="status">Checking local browser capabilities…</p>
 <div class="buttons"><button id="view-recheck" disabled>Recheck compatibility</button><a href="/mobile.html">Detailed checks</a></div>
 <label for="view-endpoint">Operator-configured WSS endpoint</label><input id="view-endpoint" class="identity-value" readonly>
@@ -23,21 +23,19 @@
 <label class="view-consent" id="control-option" hidden><input id="view-control" type="checkbox"> Request screen and input permission (experimental).</label>
 <label class="view-consent" id="extended-option" hidden><input id="view-extended" type="checkbox"> Request up to five minutes (separate host approval).</label>
 <label class="view-consent"><input id="view-consent" type="checkbox" disabled> <span id="consent-label">I verified the identities and request one read-only session (up to 30 seconds after approval).</span></label>
-<div class="buttons"><button id="view-connect" class="primary" disabled>Connect</button><button id="view-disconnect" disabled>Disconnect</button></div>
-<p id="view-status" role="status" data-state="idle">Loading configuration…</p>
+<div class="buttons connect-actions"><button id="view-connect" class="primary" disabled>Connect</button></div>
 </section>
-<section class="card">
-<div class="row"><h2>Remote screen</h2><button id="view-next" disabled>Next approved display</button></div>
+<section class="card viewer-card">
+<div class="row viewer-card-heading"><h2>Remote screen</h2><button id="view-next" disabled>Next display</button></div>
 <div class="view-screen"><video id="view-video" muted playsinline autoplay hidden aria-label="Approved remote screen"></video><p id="view-placeholder" class="muted">No active screen sharing</p></div>
 <div class="metrics"><div><span>Frames</span><strong id="view-frames">—</strong></div><div><span>Resolution</span><strong id="view-resolution">—</strong></div><div><span>Remaining</span><strong id="view-time">—</strong></div></div>
-<label id="input-mode-wrap" hidden for="input-mode">Input method <select id="input-mode"><option value="mouse">Mouse / physical keyboard</option><option value="tap">Touch · left click</option><option value="drag">Touch · drag</option><option value="right">Touch · right click</option><option value="scroll">Touch · scroll</option></select></label>
+<div class="session-tools"><label id="input-mode-wrap" hidden for="input-mode">Input method <select id="input-mode"><option value="mouse">Mouse / physical keyboard</option><option value="tap">Touch · left click</option><option value="drag">Touch · drag</option><option value="right">Touch · right click</option><option value="scroll">Touch · scroll</option></select></label>
 <div class="buttons"><button id="input-enable" disabled hidden>Enable input</button><button id="input-disable" disabled hidden>Release input</button></div><p class="muted" id="input-status" hidden>Input disabled; focus the remote screen only after activation.</p>
 <label id="quality-wrap" hidden for="quality-mode">Stream quality <select id="quality-mode"><option value="0">Auto</option><option value="1">Full</option><option value="2">Balanced</option><option value="3">Low</option></select> <button id="quality-apply" disabled>Apply</button></label>
 <p id="quality-status" class="muted" hidden></p>
 <p class="muted" id="view-route">Transport: —</p>
-<p class="muted" id="view-layout">No approved displays</p>
+<p class="muted" id="view-layout">No approved displays</p></div>
 </section>
 </div>
-<p class="muted">Uses operator-approved ICE endpoints only; no default server, automatic reconnect or background viewing. Leaving or hiding this page disconnects. The host can revoke sharing independently.</p>
-<p><a href="/">Back to the local diagnostic lab</a></p>
+<p class="muted viewer-footnote">Uses operator-approved ICE endpoints only; no default server, automatic reconnect or background viewing. Leaving or hiding this page disconnects. The host can revoke sharing independently.</p>
 </main><script type="module" src="view-page.js"></script></body></html>
