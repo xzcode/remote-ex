@@ -72,6 +72,7 @@ jobs:
           node --check touch.js
           node --check mobile.js
           npm run test:touch
+          npm run test:session-policy
           npm run test:policy-input
           node --check test-input-browser.mjs
           npm run test:input-browser
@@ -112,6 +113,12 @@ jobs:
         run: |
           test "$RUNNER_ENVIRONMENT" = github-hosted
           xvfb-run -a -s '-screen 0 1024x768x24 +extension RANDR' env -u WAYLAND_DISPLAY -u WAYLAND_SOCKET XDG_SESSION_TYPE=x11 timeout 160s npm run test:view-x11 -- --relay-only
+      - name: Extended signed Web view and actual quality switching
+        if: ${{ !cancelled() && steps.x11_host.outcome == 'success' }}
+        working-directory: apps/web
+        run: |
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          xvfb-run -a -s '-screen 0 1024x768x24 +extension RANDR' env -u WAYLAND_DISPLAY -u WAYLAND_SOCKET XDG_SESSION_TYPE=x11 timeout 190s npm run test:view-x11 -- --extended
       - name: Stage private local-only diagnostic bundle
         run: |
           mkdir -p apps/web/dist/pkg

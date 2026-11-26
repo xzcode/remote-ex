@@ -4,6 +4,7 @@ import init,{ViewPeer} from "./pkg/noise.js";
 import {readIdentity} from "./identity.js";
 import {directPolicy,normalizePolicy,iceMode,rtcIce,candidateRoute} from "./ice-policy.js";
 import {InputEncoder,SurfaceInput} from "./input.js";
+import {sessionPolicy,leaseConfirmed,qualityStatus,qualityRequest,supportedFrame,mayEnableInput,remainingSeconds} from "./session-policy.js";
 import {text,concat,hex,sha,random,unhex,equal,sdpFingerprint,dtlsFingerprint} from "./crypto.js";
 const MAX=96*1024,READY=text("remote-ex-routed-test/ready/v1"),READY_ACK=text("remote-ex-routed-test/ready-ack/v1");
 const STOP=text("remote-ex-routed-test/stop/v1"),ACK=text("remote-ex-routed-test/released/v1"),HEARTBEAT=text("remote-ex-routed/heartbeat/v1"),NEXT=text("remote-ex-view/next/v1");
@@ -52,10 +53,10 @@ async function proof(identity,sid,host,cn,hn,offer,answer,grant){
     return sign(identity,concat(text("Remote EX/session-transcript/v1\0"),Uint8Array.of(1),sid,identity.pub,host,cn,hn,Uint8Array.of(grant,grant),await sha(text(offer)),await sha(text(answer))));
 }
 export class ViewSession{
-    constructor({url,serverId,hostKey,identityId,video,onState,onMetrics,onInput=()=>{},policy=directPolicy(),control=false}){
+    constructor({url,serverId,hostKey,identityId,video,onState,onMetrics,onInput=()=>{},policy=directPolicy(),control=false,extended=false}){
         this.url=endpoint(url).href;this.serverId=pin(serverId);this.hostKey=pin(hostKey);this.identityId=pin(identityId);
         this.video=video;this.onState=onState;this.onMetrics=onMetrics;this.onInput=onInput;
-        this.policy=normalizePolicy(policy);this.control=control===true;this.grant=this.control?3:1;this.route="unknown";this.input=null;
+        this.policy=normalizePolicy(policy);this.control=control===true;this.scope=sessionPolicy(this.control,extended===true);this.grant=this.scope.grant;this.quality=null;this.qualityPending=null;this.qualityAt=0;this.route="unknown";this.input=null;
         this.abort=new AbortController();this.phase="new";this.stopRequested=false;this.nextRequested=false;
         this.channelMessages=[];this.count=0;this.layout=0;this.frames=0;this.lastSwitch=0;
         this.hidden=()=>{if(document.hidden){this.releaseInput();this.cancel("Tab hidden — session stopped");}};
@@ -69,8 +70,19 @@ export class ViewSession{
     stop(){this.releaseInput();this.blank();if(this.phase==="viewing"){this.stopRequested=true;}else this.cancel();}
     next(){if(!this.control&&this.phase==="viewing"&&!this.stopRequested&&this.count>1&&performance.now()-this.lastSwitch>=500)this.nextRequested=true;}
     releaseInput(){this.input?.disable();}
+    inputReady(){return mayEnableInput(this.control,this.phase,this.stopRequested,this.frames,this.video.videoWidth,this.video.videoHeight,this.quality);}
+    setQuality(mode){
+        if(!this.scope.extended||this.phase!=="viewing"||this.stopRequested||this.qualityPending!==null||performance.now()-this.qualityAt<1000)return false;
+        try{this.releaseInput();this.channel(qualityRequest(mode));this.qualityPending=mode;this.qualityAt=performance.now();return true;}catch{this.cancel("Runtime quality request failed");return false;}
+    }
+    qualityRecord(v){
+        const status=qualityStatus(v);
+        if(this.quality&&status.tier!==this.quality.tier)this.releaseInput();
+        this.quality=status;
+        if(this.qualityPending!==null&&status.mode===this.qualityPending)this.qualityPending=null;
+    }
     enableInput(touchMode="mouse"){
-        if(!this.control||this.phase!=="viewing"||this.stopRequested||this.frames===0||!this.geometry||!this.inputEncoder)return false;
+        if(!this.inputReady()||!this.geometry||!this.inputEncoder||this.qualityPending!==null)return false;
         if(this.input?.active)return true;
         this.input=new SurfaceInput({video:this.video,geometry:this.geometry,encoder:this.inputEncoder,touchMode,send:bytes=>this.channel(bytes,true),onFailure:()=>this.cancel("Input transport failed"),onDisabled:()=>this.onInput(false)});
         this.input.enable();this.onInput(this.input.active);return this.input.active;
@@ -95,7 +107,7 @@ export class ViewSession{
     async run(){
         need(this.phase==="new"&&window.isSecureContext&&!document.hidden,"Secure, visible browser required");
         document.addEventListener("visibilitychange",this.hidden);window.addEventListener("pagehide",this.pagehide,{once:true});
-        const deadline=setTimeout(()=>this.cancel("Connection deadline reached"),100000);
+        let deadline=setTimeout(()=>this.cancel("Connection deadline reached"),100000);
         let normal=false;
         try{
             this.state("connecting","Verifying local identity");
@@ -110,14 +122,14 @@ export class ViewSession{
             const signature=await sign(identity,concat(text("Remote EX/register-controller-only/v1\0"),key(ch.server,32),key(ch.nonce,32)));
             socket.send({type:"register_controller",public_key:hex(identity.pub),signature:hex(signature)});
             need(message(await socket.receive(),"registered",["device_id"]).device_id===identity.id,"Registration identity mismatch");
-            this.state("approval",this.control?"Waiting for explicit host screen and input approval":"Waiting for host read-only approval");
+            this.state("approval",(this.control?"Waiting for explicit host screen and input approval":"Waiting for host read-only approval")+(this.scope.extended?" — up to 5 minutes":""));
             const cn=random(32);
             socket.send({type:"request",target,requested:this.grant,controller_nonce:hex(cn)});
             const requested=message(await socket.receive(),"requested",["session","target"]);
             this.session=requested.session;const sid=key(this.session,16);need(requested.target===target,"Target substitution refused");
             const decision=message(await socket.receive(20000),"decision",["session","grant","host_key","host_nonce"]);
             need(decision.session===this.session&&decision.grant===this.grant&&decision.host_key===this.hostKey,"Host rejected exact requested grant or key mismatch");
-            const hn=key(decision.host_nonce,32),peer=this.peer=new ViewPeer(sid,identity.pub,host,cn,hn,iceMode(this.policy),this.control);
+            const hn=key(decision.host_nonce,32),peer=this.peer=new ViewPeer(sid,identity.pub,host,cn,hn,iceMode(this.policy),this.control,this.scope.extended);
             if(this.control)this.inputEncoder=new InputEncoder(sid);
             this.state("authenticating","Authenticating encrypted route");
             this.sendSignal({type:"noise_handshake",step:1,packet:hex(peer.write_handshake())});
@@ -125,6 +137,10 @@ export class ViewSession{
             this.sealed(peer.send_proof(await sign(identity,peer.signature_message())));
             this.pending=[];peer.receive_proof(await this.incoming());need(peer.ready(),"Route authentication failed");
             this.sealed(peer.send_quality());peer.receive_quality(await this.incoming());
+            if(this.scope.extended){
+                socket.send({type:"extend_lease",session:this.session});
+                need(leaseConfirmed(await socket.receive(10000),this.session),"Extended route lease not granted — no fallback");
+            }
             socket.send({type:"ice_config",session:this.session});
             let gotIce=false,rtcConfig=null;
             for(let i=0;i<5;i++){
@@ -171,12 +187,14 @@ export class ViewSession{
             this.count=this.control?1:peer.receive_layout(await this.incoming());need(peer.view_metadata_verified(),"View metadata not verified");
             this.channel(READY);await this.reply(READY_ACK,42000);
             if(!this.control){await this.wait(()=>this.channelMessages.length>0,3000,"Host layout unavailable");this.layoutRecord(this.channelMessages.shift());}
+            if(this.scope.extended){await this.wait(()=>this.channelMessages.length>0,3000,"Host runtime quality unavailable");this.qualityRecord(this.channelMessages.shift());}
             // Keep the host alive immediately after its READY_ACK; do not attach
             // any track until signed route, DTLS and approved capture readiness.
             this.channel(HEARTBEAT);
             await this.wait(()=>!!this.received,1000,"Approved video track missing");
             this.video.muted=true;this.video.playsInline=true;this.video.srcObject=this.received;
             await this.video.play();this.guard();this.video.hidden=false;
+            clearTimeout(deadline);deadline=setTimeout(()=>this.cancel("Session limit reached"),(this.scope.seconds+5)*1000);
             this.state("viewing",this.control?"Connected — input disabled until explicitly enabled":"Connected — read only");
             let lastHeartbeat=performance.now(),lastPing=performance.now(),ping=0,lastStats=0,lastFrame=performance.now(),lastDecoded=0,started=performance.now();
             while(!this.stopRequested){
@@ -193,6 +211,7 @@ export class ViewSession{
                 while(this.channelMessages.length){
                     const v=this.channelMessages.shift();
                     if(equal(v,ACK)){this.input?.dispose();this.blank();await this.closeRoute();normal=true;return;}
+                    if(this.scope.extended&&v[0]===0xd3){this.qualityRecord(v);continue;}
                     need(!this.control,"Unexpected control response");this.layoutRecord(v);
                 }
                 if(now-lastStats>=300){
@@ -201,17 +220,21 @@ export class ViewSession{
                     const decoded=v?.framesDecoded??0;
                     if(decoded>lastDecoded){lastDecoded=decoded;lastFrame=now;}
                     this.frames=decoded;lastStats=now;this.route=candidateRoute(stats);
+                    const width=this.video.videoWidth,height=this.video.videoHeight;
+                    if(width&&height&&!supportedFrame(width,height,this.scope.extended))throw Error("Video dimensions exceed negotiated profile");
+                    if(this.input?.active&&!this.inputReady())this.releaseInput();
+                    if(this.qualityPending!==null&&now-this.qualityAt>8000)throw Error("Runtime quality acknowledgement timed out");
                     if(this.policy.relayOnly&&this.route!=="relay-both")throw Error("Forced relay route changed");
-                    this.onMetrics({frames:decoded,width:this.video.videoWidth,height:this.video.videoHeight,count:this.count,layout:this.layout,route:this.route,seconds:Math.max(0,Math.ceil((30000-(now-started))/1000))});
+                    this.onMetrics({frames:decoded,width:this.video.videoWidth,height:this.video.videoHeight,count:this.count,layout:this.layout,route:this.route,quality:this.quality,qualityPending:this.qualityPending,seconds:remainingSeconds(this.scope.seconds,now-started)});
                 }
                 if(now-lastFrame>2500)throw Error("Approved video stalled");
-                if(now-started>=30000){this.stopRequested=true;break;}
+                if(now-started>=this.scope.seconds*1000){this.stopRequested=true;break;}
                 await sleep(30);
             }
             this.releaseInput();this.blank();this.state("closing","Disconnecting");
             this.channel(STOP);
             await this.wait(()=>{
-                while(this.channelMessages.length){const v=this.channelMessages.shift();if(equal(v,ACK))return true;need(!this.control,"Unexpected close response");this.layoutRecord(v);}
+                while(this.channelMessages.length){const v=this.channelMessages.shift();if(equal(v,ACK))return true;if(this.scope.extended&&v[0]===0xd3){qualityStatus(v);continue;}need(!this.control,"Unexpected close response");this.layoutRecord(v);}
                 return false;
             },3000,"Host stop acknowledgement not received");
             await this.closeRoute();normal=true;

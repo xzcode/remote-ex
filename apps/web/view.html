@@ -15,6 +15,7 @@
 <label for="view-public">Your browser public key</label><input id="view-public" class="identity-value" readonly>
 <p><a id="view-manage" href="identity.html">Manage browser identity</a></p>
 <label class="view-consent" id="control-option" hidden><input id="view-control" type="checkbox"> Request screen and input permission (experimental).</label>
+<label class="view-consent" id="extended-option" hidden><input id="view-extended" type="checkbox"> Request up to five minutes (separate host approval).</label>
 <label class="view-consent"><input id="view-consent" type="checkbox" disabled> <span id="consent-label">I verified the identities and request one read-only session (up to 30 seconds after approval).</span></label>
 <div class="buttons"><button id="view-connect" class="primary" disabled>Connect</button><button id="view-disconnect" disabled>Disconnect</button></div>
 <p id="view-status" role="status" data-state="idle">Loading configuration…</p>
@@ -25,6 +26,8 @@
 <div class="metrics"><div><span>Frames</span><strong id="view-frames">—</strong></div><div><span>Resolution</span><strong id="view-resolution">—</strong></div><div><span>Remaining</span><strong id="view-time">—</strong></div></div>
 <label id="input-mode-wrap" hidden for="input-mode">Input method <select id="input-mode"><option value="mouse">Mouse / physical keyboard</option><option value="tap">Touch · left click</option><option value="drag">Touch · drag</option><option value="right">Touch · right click</option><option value="scroll">Touch · scroll</option></select></label>
 <div class="buttons"><button id="input-enable" disabled hidden>Enable input</button><button id="input-disable" disabled hidden>Release input</button></div><p class="muted" id="input-status" hidden>Input disabled; focus the remote screen only after activation.</p>
+<label id="quality-wrap" hidden for="quality-mode">Stream quality <select id="quality-mode"><option value="0">Auto</option><option value="1">Full</option><option value="2">Balanced</option><option value="3">Low</option></select> <button id="quality-apply" disabled>Apply</button></label>
+<p id="quality-status" class="muted" hidden></p>
 <p class="muted" id="view-route">Transport: —</p>
 <p class="muted" id="view-layout">No approved displays</p>
 </section>

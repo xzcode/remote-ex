@@ -40,7 +40,7 @@ public final class MainActivity extends Activity {
         return Collections.unmodifiableSet(new HashSet<>(Arrays.asList(values)));
     }
     private static final Set<String> PAGES = routes("/", "/index.html", "/mobile.html", "/identity.html", "/view.html");
-    private static final Set<String> ASSETS = routes("/mobile.js", "/identity.js", "/identity-page.js", "/view-page.js", "/view-session.js", "/crypto.js", "/ice-policy.js", "/input.js", "/touch.js", "/style.css", "/pkg/noise.js", "/pkg/noise_bg.wasm", "/view-config.json");
+    private static final Set<String> ASSETS = routes("/mobile.js", "/identity.js", "/identity-page.js", "/view-page.js", "/view-session.js", "/crypto.js", "/ice-policy.js", "/input.js", "/touch.js", "/session-policy.js", "/style.css", "/pkg/noise.js", "/pkg/noise_bg.wasm", "/view-config.json");
     private FrameLayout root;
     private WebView web;
     private Map<String,String> headers;

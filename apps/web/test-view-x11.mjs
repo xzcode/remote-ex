@@ -16,7 +16,8 @@ assert.equal(process.env.RUNNER_ENVIRONMENT,"github-hosted");
 assert.equal(process.env.XDG_SESSION_TYPE,"x11");
 assert.match(process.env.DISPLAY??"",/^:\d+$/);
 const relayOnly=process.argv.slice(2).includes("--relay-only");
-assert(process.argv.slice(2).every(x=>x==="--relay-only"));
+const extended=process.argv.slice(2).includes("--extended");
+assert(process.argv.slice(2).every(x=>x==="--relay-only"||x==="--extended"));
 function reader(child){
     const lines=createInterface({input:child.stdout})[Symbol.asyncIterator]();
     return async(prefix,limit=15000)=>{
@@ -28,7 +29,7 @@ function reader(child){
                 assert(!line.done&&line.value.length<=4096,"Host output unavailable");
                 if(line.value.startsWith(prefix))return line.value;
                 // Ignore only fixed statistics emitted by the authorized host.
-                if(!line.value.startsWith("NET_STATS "))throw Error("Unexpected host output: "+line.value);
+                if(!line.value.startsWith("NET_STATS ")&&!line.value.startsWith("STREAM_QUALITY "))throw Error("Unexpected host output: "+line.value);
             }
             throw Error("Host output timeout");
         }finally{clearTimeout(timer);}
@@ -62,7 +63,7 @@ try{
     const certs=certificates(root);installRoot(home,certs.ca);
     const port=await freePort(),endpoint="wss://127.0.0.1:"+port+"/v1/ws";
     if(relayOnly){relay=await relayFixture(root);await new Promise(resolve=>setTimeout(resolve,1000));assert.equal(relay.process.exitCode,null);}
-    web=await serve(0,null,endpoint,{stun:relay?.stun??null,turn:relay?[relay.turn]:[],relayOnly,control:false});
+    web=await serve(0,null,endpoint,{stun:relay?.stun??null,turn:relay?[relay.turn]:[],relayOnly,control:false,extended});
     browser=await chromium.launch({headless:true,env:{...process.env,HOME:home,XDG_CONFIG_HOME:path.join(home,".config"),XDG_DATA_HOME:path.join(home,".local/share")},args:["--disable-background-networking","--disable-features=WebRtcHideLocalIpsWithMdns","--autoplay-policy=no-user-gesture-required"]});
     const context=await browser.newContext({permissions:[],ignoreHTTPSErrors:false});
     const unexpected=[],errors=[];
@@ -86,7 +87,7 @@ try{
     assert.deepEqual(probe.slice(0,3),["PASS","X11","CAPTURE"]);
     const serverId=randomBytes(32).toString("hex");
     const env=Object.fromEntries(Object.entries(process.env).filter(([name])=>!name.startsWith("REMOTE_EX_")));
-    host=spawn(exe,["--host",endpoint,serverId,"--ca",certs.ca,"--desktop-session","--view",probe[3],"--enroll-before-register",...(relayOnly?["--relay-only"]:[])],{env,stdio:["pipe","pipe","inherit"]});
+    host=spawn(exe,["--host",endpoint,serverId,"--ca",certs.ca,"--desktop-session","--view",probe[3],"--enroll-before-register",...(relayOnly?["--relay-only"]:[]),...(extended?["--extended"]:[])],{env,stdio:["pipe","pipe","inherit"]});
     const exited=once(host,"exit");exited.catch(()=>{});
     const read=reader(host),hostKey=(await read("KEY ")).slice(4),hostId=createHash("sha256").update(Buffer.from(hostKey,"hex")).digest("hex");
     assert.equal(await read("ENROLL "),"ENROLL "+hostId);
@@ -98,12 +99,12 @@ try{
     // Wrong server pin must fail before registration, while host remains at
     // the explicit enrollment barrier. Then perform the actual view.
     await page.locator("#view-server").fill((serverId[0]==="0"?"1":"0")+serverId.slice(1));
-    await page.locator("#view-host").fill(hostKey);await page.locator("#view-consent").check();await page.locator("#view-connect").click();
+    await page.locator("#view-host").fill(hostKey);if(extended)await page.locator("#view-extended").check();await page.locator("#view-consent").check();await page.locator("#view-connect").click();
     await page.waitForFunction(()=>document.querySelector("#view-status").dataset.state==="error");
     assert.match(await page.locator("#view-status").textContent(),/Server ID mismatch/);
     assert(await page.locator("#view-video").isHidden());
     host.stdin.write("REGISTER DEVICE\n");assert.equal(await read("ONLINE "),"ONLINE "+hostId);
-    await read("PEER_KEY ");host.stdin.write(controllerKey+"\n");await read("CONSENT (type ALLOW ROUTED SCREEN;");host.stdin.write("ALLOW ROUTED SCREEN\n");
+    await read("PEER_KEY ");host.stdin.write(controllerKey+"\n");const consent=extended?"ALLOW ROUTED SCREEN FOR UP TO 300 SECONDS":"ALLOW ROUTED SCREEN";await read("CONSENT (type "+consent+";");host.stdin.write(consent+"\n");
     await page.locator("#view-server").fill(serverId);
     await page.locator("#view-consent").check();await page.locator("#view-connect").click();
     await page.waitForFunction(()=>["viewing","error"].includes(document.querySelector("#view-status").dataset.state),{},{timeout:65000});
@@ -114,6 +115,18 @@ try{
     const green=await page.evaluate(()=>{const v=document.querySelector("#view-video");const c=document.createElement("canvas");c.width=v.videoWidth;c.height=v.videoHeight;const ctx=c.getContext("2d");ctx.drawImage(v,0,0);const pixel=ctx.getImageData(480,270,1,1).data;return pixel[1]>120&&pixel[1]>pixel[0]+50&&pixel[1]>pixel[2]+25;});
     assert(green,"Actual captured Xvfb background absent");
     assert(await page.locator("#view-next").isDisabled()); // exactly one approved display
+    if(extended){
+        const start=Date.now();
+        assert(Number((await page.locator("#view-time").textContent()).split(" ")[0])>240);
+        await page.locator("#quality-mode").selectOption("3");await page.locator("#quality-apply").click();
+        await page.waitForFunction(()=>document.querySelector("#quality-status").textContent.includes("Low / Low")&&document.querySelector("#view-resolution").textContent==="480 × 270",{},{timeout:15000});
+        await page.locator("#quality-mode").selectOption("1");
+        await page.waitForTimeout(1100);await page.locator("#quality-apply").click();
+        await page.waitForFunction(()=>document.querySelector("#quality-status").textContent.includes("Full / Full")&&document.querySelector("#view-resolution").textContent==="960 × 540",{},{timeout:15000});
+        await page.waitForTimeout(Math.max(0,35000-(Date.now()-start)));
+        assert.equal(await page.locator("#view-status").getAttribute("data-state"),"viewing");
+        assert(Number((await page.locator("#view-time").textContent()).split(" ")[0])>200);
+    }
     await page.locator("#view-disconnect").click();
     await page.waitForFunction(()=>["stopped","error"].includes(document.querySelector("#view-status").dataset.state),{},{timeout:12000});
     assert.equal(await page.locator("#view-status").getAttribute("data-state"),"stopped",await page.locator("#view-status").textContent());
@@ -122,7 +135,7 @@ try{
     const [code]=await exited;assert.equal(code,0);
     assert.equal(await page.evaluate(()=>window.__forbiddenCalls),0);
     assert.deepEqual(unexpected,[]);assert.deepEqual(errors,[]);await context.close();
-    console.log("PASS "+(relayOnly?"forced TURN relay; ":"direct ICE; ")+"actual isolated X11 screen -> Web UI: explicit enrollment, incorrect server pin rejected, read-only grant, verified captured pixels, stop and route closure");
+    console.log("PASS "+(relayOnly?"forced TURN relay; ":"direct ICE; ")+(extended?"extended quality and >30s viewing; ":"")+"actual isolated X11 screen -> Web UI: explicit enrollment, incorrect server pin rejected, read-only grant, verified captured pixels, stop and route closure");
 }finally{
     await browser?.close();await stopChild(host);await stopChild(server);await stopChild(relay?.process);
     if(web)await new Promise(resolve=>web.server.close(resolve));

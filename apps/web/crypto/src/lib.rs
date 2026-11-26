@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 //! Bounded Web Noise and exact SDP verification. No sockets, arbitrary
 //! application encryption, device registration or input authority here.
-//! FixturePeer is profile 0; ViewPeer accepts only explicitly selected outgoing profile 1 or 2.
+//! FixturePeer is profile 0; ViewPeer accepts only explicitly selected outgoing profiles 1/2/22/23.
 use remote_ex_security::{Role,route_binding::RouteBinding,profiles::NOISE_PATTERN};
 use snow::{Builder,HandshakeState,TransportState};
 use wasm_bindgen::prelude::*;
@@ -25,7 +25,7 @@ impl Peer{
         Self::new_bound(role,session,controller,host,cn,hn,0,0)
     }
     fn new_bound(role:Role,session:&[u8],controller:&[u8],host:&[u8],cn:&[u8],hn:&[u8],profile:u8,ice_mode:u8)->Result<Self>{
-        let grant=match profile{0|2=>3,1=>1,_=>return Err("Unsupported browser profile".into())};
+        let grant=match profile{0|2|23=>3,1|22=>1,_=>return Err("Unsupported browser profile".into())};
         if ice_mode>2||(profile==0&&ice_mode!=0){return Err("Unsupported ICE policy".into());}
         let binding=RouteBinding{session:exact(session)?,controller:exact(controller)?,host:exact(host)?,
             controller_nonce:exact(cn)?,host_nonce:exact(hn)?,requested:grant,granted:grant,profile,relay_only:ice_mode==2};
@@ -141,13 +141,13 @@ impl Peer{
         let clear=s.open_sdp(packet)?;let items=native_records::check_ice(&clear,s.ice_mode)?;s.ice_received=true;Ok(items)
     })}
     fn receive_geometry(&mut self,packet:&[u8])->Result<String>{self.run(|s|{
-        if !matches!(s.binding.profile,1|2)||s.role!=Role::Controller||!s.ready()||!s.sdp.verified()
+        if !matches!(s.binding.profile,1|2|22|23)||s.role!=Role::Controller||!s.ready()||!s.sdp.verified()
             ||!s.ice_sent||!s.ice_received||s.geometry_received{return Err("Unexpected view geometry state".into());}
         let clear=s.open_sdp(packet)?;let geometry=native_records::check_geometry(&clear)?;
         s.geometry_received=true;Ok(geometry)
     })}
     fn receive_layout(&mut self,packet:&[u8])->Result<u8>{self.run(|s|{
-        if s.binding.profile!=1||s.role!=Role::Controller||!s.ready()||!s.geometry_received||s.layout_received{return Err("Unexpected view layout state".into());}
+        if !matches!(s.binding.profile,1|22)||s.role!=Role::Controller||!s.ready()||!s.geometry_received||s.layout_received{return Err("Unexpected view layout state".into());}
         let clear=s.open_sdp(packet)?;let count=native_records::check_layout(&clear)?;
         s.layout_received=true;Ok(count)
     })}
@@ -201,8 +201,8 @@ pub struct ViewPeer{inner:Peer}
 #[wasm_bindgen]
 impl ViewPeer{
     #[wasm_bindgen(constructor)]
-    pub fn new(session:&[u8],controller:&[u8],host:&[u8],cn:&[u8],hn:&[u8],ice_mode:u8,control:bool)->std::result::Result<ViewPeer,JsValue>{
-        js(Peer::new_bound(Role::Controller,session,controller,host,cn,hn,if control{2}else{1},ice_mode).and_then(|mut inner|{
+    pub fn new(session:&[u8],controller:&[u8],host:&[u8],cn:&[u8],hn:&[u8],ice_mode:u8,control:bool,extended:bool)->std::result::Result<ViewPeer,JsValue>{
+        js(Peer::new_bound(Role::Controller,session,controller,host,cn,hn,match (control,extended){(false,false)=>1,(true,false)=>2,(false,true)=>22,(true,true)=>23},ice_mode).and_then(|mut inner|{
             inner.enable_native_order()?;Ok(Self{inner})
         }))
     }
@@ -224,7 +224,7 @@ impl ViewPeer{
     pub fn native_ice_verified(&self)->bool{self.inner.ready()&&self.inner.sdp.verified()&&self.inner.ice_sent&&self.inner.ice_received}
     pub fn receive_geometry(&mut self,p:&[u8])->std::result::Result<String,JsValue>{js(self.inner.receive_geometry(p))}
     pub fn receive_layout(&mut self,p:&[u8])->std::result::Result<u8,JsValue>{js(self.inner.receive_layout(p))}
-    pub fn view_metadata_verified(&self)->bool{self.inner.ready()&&self.inner.geometry_received&&(self.inner.binding.profile==2||self.inner.layout_received)}
+    pub fn view_metadata_verified(&self)->bool{self.inner.ready()&&self.inner.geometry_received&&(matches!(self.inner.binding.profile,2|23)||self.inner.layout_received)}
     pub fn close(&mut self){self.inner.close();}
 }
 #[cfg(test)]
@@ -262,6 +262,16 @@ mod tests{
         assert!(c.quality_received&&h.quality_received);
         assert!(c.send_ice_batch("[]").is_err());assert!(!c.ready());
         assert!(h.receive_quality(&cq).is_err());assert!(!h.ready());
+    }
+    #[test]fn extended_scope_never_reuses_short_profile_signature(){
+        let c=DeviceIdentity::generate();let h=DeviceIdentity::generate();
+        let make=|role,profile|Peer::new_bound(role,&[7;16],&c.public_key(),&h.public_key(),&[8;32],&[9;32],profile,0).unwrap();
+        for (short,long,grant) in [(1,22,1),(2,23,3)]{
+            let mut a=make(Role::Controller,short);let mut b=make(Role::Host,long);
+            assert_eq!(a.binding.granted,grant);assert_eq!(b.binding.granted,grant);
+            b.read(&a.write().unwrap()).unwrap();
+            assert!(a.read(&b.write().unwrap()).is_err());assert!(!a.ready());
+        }
     }
     #[test]fn view_scope_cannot_authenticate_as_fixture_or_accept_early_geometry(){
         let c=DeviceIdentity::generate();let h=DeviceIdentity::generate();

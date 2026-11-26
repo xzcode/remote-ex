@@ -6,11 +6,11 @@ import {fileURLToPath} from "node:url";
 import {headers,viewEndpoint} from "../apps/web/serve.mjs";
 import {normalizePolicy} from "../apps/web/ice-policy.js";
 const root=fileURLToPath(new URL("../apps/web/",import.meta.url));
-const names=["mobile.html","mobile.js","identity.html","identity.js","identity-page.js","view.html","view-page.js","view-session.js","crypto.js","ice-policy.js","input.js","touch.js","style.css","pkg/noise.js","pkg/noise_bg.wasm"];
+const names=["mobile.html","mobile.js","identity.html","identity.js","identity-page.js","view.html","view-page.js","view-session.js","crypto.js","ice-policy.js","input.js","touch.js","session-policy.js","style.css","pkg/noise.js","pkg/noise_bg.wasm"];
 export function config(raw){
     if(raw===null)return {schema:1,mode:"disabled"};
-    if(!raw||typeof raw!=="object"||Array.isArray(raw)||Object.keys(raw).sort().join(",")!=="control,endpoint,ice"||typeof raw.control!=="boolean")throw Error("Invalid mobile operator config");
-    return {schema:1,mode:"direct-read-only",endpoint:viewEndpoint(raw.endpoint).href,ice:normalizePolicy(raw.ice),control:raw.control};
+    if(!raw||typeof raw!=="object"||Array.isArray(raw)||!["control,endpoint,ice","control,endpoint,extended,ice"].includes(Object.keys(raw).sort().join(","))||typeof raw.control!=="boolean"||(raw.extended!==undefined&&typeof raw.extended!=="boolean"))throw Error("Invalid mobile operator config");
+    return {schema:1,mode:"direct-read-only",endpoint:viewEndpoint(raw.endpoint).href,ice:normalizePolicy(raw.ice),control:raw.control,extended:raw.extended===true};
 }
 export function policyFor(v){
     const result={...headers};

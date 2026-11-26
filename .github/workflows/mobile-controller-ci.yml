@@ -34,7 +34,7 @@ jobs:
           gradle-version: '8.9'
       - name: Verify mobile gestures, ICE and asset configuration
         run: |
-          (cd apps/web && npm run test:touch && npm run test:policy-input && node --check mobile.js)
+          (cd apps/web && npm run test:touch && npm run test:policy-input && npm run test:session-policy && node --check mobile.js)
           node scripts/test-mobile-stage.mjs
       - name: Build existing WASM session core
         run: |
@@ -75,7 +75,7 @@ jobs:
           p=Path("apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk")
           with zipfile.ZipFile(p) as z:
               assert json.loads(z.read("assets/view-config.json")) == {"schema":1,"mode":"disabled"}
-              for n in ("mobile.html","view.html","touch.js","pkg/noise_bg.wasm","headers.json"):
+              for n in ("mobile.html","view.html","touch.js","session-policy.js","pkg/noise_bg.wasm","headers.json"):
                   assert z.getinfo("assets/"+n).file_size > 0
               assert not any("fixture" in n for n in z.namelist() if n.startswith("assets/"))
           PY

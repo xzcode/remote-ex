@@ -562,7 +562,7 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
     if shared_controller&&(host||!(profile.synthetic()||profile.native_view()||profile.native_control())||persistent&&identity_slot.unwrap_or(0)!=0){return Err("Shared identity is only for outgoing view/control/test using slot one identity".into());}
     if identity_slot.is_some()&&!persistent{return Err("Identity slot requires explicit persistent storage opt-in".into());}
     if defer_test_registration&&(!supervised||persistent||profile!=Profile::Test){return Err("Test registration barrier requires synthetic temporary supervised mode".into());}
-    if enroll_before_register&&(!supervised||persistent||armed||profile!=Profile::View){return Err("Enrollment wait requires a temporary one-shot supervised view-only host".into());}
+    if enroll_before_register&&(!supervised||persistent||armed||!matches!(profile,Profile::View|Profile::ExtendedView)){return Err("Enrollment wait requires a temporary one-shot supervised view-only host".into());}
     if native_allowed&&profile==Profile::Test{return Err("Choose a separate view, control or exchange profile".into());}
     if matches!(profile,Profile::Power(_)){
         if !supervised||armed||extended||secondary||portal_source.is_some()||shared_controller{return Err("Power requests require a separate visible, one-time reviewed session".into());}

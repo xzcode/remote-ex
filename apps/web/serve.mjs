@@ -37,7 +37,7 @@ export function viewEndpoint(value){
  if(typeof value!=="string"||value.length>512||u.protocol!=="wss:"||u.pathname!=="/v1/ws"||!u.hostname||u.username||u.password||u.search||u.hash||u.href!==value||!/^[a-zA-Z0-9.:\[\]-]+$/.test(u.host))throw Error("Use exact WSS endpoint /v1/ws, no credentials or parameters");
  return u;
 }
-export async function serve(port=0,fixtureEndpoint=null,viewer=null,options={stun:null,turn:[],relayOnly:false,control:false}){
+export async function serve(port=0,fixtureEndpoint=null,viewer=null,options={stun:null,turn:[],relayOnly:false,control:false,extended:false}){
  if(!Number.isInteger(port)||port<0||port>65535)throw Error("Invalid local port");
  const table=new Map(routes);let viewConfig=null;
  const policy={...headers};
@@ -50,13 +50,14 @@ export async function serve(port=0,fixtureEndpoint=null,viewer=null,options={stu
  }
  if(viewer!==null){
     const ep=viewEndpoint(viewer);
-    if(!["view.html","view-page.js","view-session.js","ice-policy.js","input.js","touch.js","mobile.html","mobile.js"].every(file=>existsSync(path.join(root,file))))throw Error("Source-only viewer assets unavailable; use the repository checkout");
+    if(!["view.html","view-page.js","view-session.js","ice-policy.js","input.js","touch.js","mobile.html","mobile.js","session-policy.js"].every(file=>existsSync(path.join(root,file))))throw Error("Source-only viewer assets unavailable; use the repository checkout");
     if(fixtureEndpoint!==null&&fixtureEndpoint!==viewer)throw Error("Only one WSS endpoint allowed");
     const {normalizePolicy}=await import("./ice-policy.js");
-    const {stun,turn,relayOnly,control}=options;
-    if(typeof control!=="boolean")throw Error("Invalid control policy");
-    viewConfig={schema:1,mode:"direct-read-only",endpoint:viewer,ice:normalizePolicy({stun,turn,relayOnly}),control};
+    const {stun,turn,relayOnly,control,extended=false}=options;
+    if(typeof control!=="boolean"||typeof extended!=="boolean")throw Error("Invalid control or duration policy");
+    viewConfig={schema:1,mode:"direct-read-only",endpoint:viewer,ice:normalizePolicy({stun,turn,relayOnly}),control,extended};
     table.set("/ice-policy.js",["ice-policy.js","text/javascript; charset=utf-8"]);
+    table.set("/session-policy.js",["session-policy.js","text/javascript; charset=utf-8"]);
     table.set("/input.js",["input.js","text/javascript; charset=utf-8"]);
     table.set("/touch.js",["touch.js","text/javascript; charset=utf-8"]);
     table.set("/mobile.html",["mobile.html","text/html; charset=utf-8"]);
@@ -86,9 +87,9 @@ export async function serve(port=0,fixtureEndpoint=null,viewer=null,options={stu
 if(process.argv[1]&&import.meta.url===pathToFileURL(path.resolve(process.argv[1])).href){
  const port=Number(process.argv[2]??8080);
  const args=process.argv.slice(3);
- let viewer=null;const options={stun:null,turn:[],relayOnly:false,control:false};
+ let viewer=null;const options={stun:null,turn:[],relayOnly:false,control:false,extended:false};
  if(args.length){
-    if(args.shift()!=="--view"||!args.length)throw Error("Usage: node serve.mjs [port] [--view wss://host/v1/ws [--stun URI] [--turn URI] [--relay-only] [--allow-control]]");
+    if(args.shift()!=="--view"||!args.length)throw Error("Usage: node serve.mjs [port] [--view wss://host/v1/ws [--stun URI] [--turn URI] [--relay-only] [--allow-control] [--allow-extended]]");
     viewer=args.shift();
     while(args.length){
         const flag=args.shift();
@@ -96,6 +97,7 @@ if(process.argv[1]&&import.meta.url===pathToFileURL(path.resolve(process.argv[1]
         else if(flag==="--turn"&&args.length&&options.turn.length<4)options.turn.push(args.shift());
         else if(flag==="--relay-only"&&!options.relayOnly)options.relayOnly=true;
         else if(flag==="--allow-control"&&!options.control)options.control=true;
+        else if(flag==="--allow-extended"&&!options.extended)options.extended=true;
         else throw Error("Invalid viewer option");
     }
  }

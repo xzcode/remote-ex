@@ -178,3 +178,8 @@ Shared mobile asset staging, explicit operator endpoint/ICE policy, offline defa
 ### M6 ninth candidate — iOS shell, multi-origin enrollment and Android SDK repair
 
 f41c864 complete Web CI passed actual independent native VP8 and authorized Xvfb capture. Android 8b79c8b WASM/staging passed; SDK command missing before APK compile. Candidate provisions SDK tools, adds offline-default iOS 17+ WKWebView project and unsigned simulator build, plus mutually exclusive bounded exact multi-Origin configuration, preflight count and browser tests. Actual mobile compatibility/control, full input/relay acceptance, production deployment and signing remain open.
+
+
+### M6 tenth candidate — extended foreground sessions and runtime quality
+
+Existing profiles 22/23, bilateral 420s route lease and 300s local consent; operator/user explicit opt-in, no silent fallback or renewal. Native quality D2/D3, bounded actual decoder dimensions and full-resolution-only input activation/release, mobile asset staging. Added pure policy and actual Xvfb >30s/quality-switch CI candidate. d8a052a Core/container and iOS simulator job passed, Android and latest browser integration pending. Physical devices, real input/TURN, operations and signing remain open. See [handoff](M6_EXTENDED_HANDOFF.md).
