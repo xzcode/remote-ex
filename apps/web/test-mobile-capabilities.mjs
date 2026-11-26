@@ -29,8 +29,32 @@ try{
         await page.goto(url+"/identity.html");
         await page.waitForFunction(()=>!document.querySelector("#identity-create").disabled);
         assert.equal(await page.locator("#device-id").inputValue(),""); // probe never creates enrolled identity
+        await page.locator("#identity-create").click();
+        await page.waitForFunction(()=>document.querySelector("#identity-status").dataset.state==="verified");
+        await page.goto(url+"/view.html");
+        await page.waitForFunction(()=>["idle","error"].includes(document.querySelector("#view-status").dataset.state)&&!document.querySelector("#view-recheck").disabled,null,{timeout:45000});
+        await page.locator("#view-server").fill("01".repeat(32));
+        await page.locator("#view-host").fill("02".repeat(32));
+        if(missing){
+            assert.equal(await page.locator("#view-status").getAttribute("data-state"),"error");
+            assert.match(await page.locator("#view-compat").textContent(),/webrtc: webrtc_api/);
+            assert(await page.locator("#view-consent").isDisabled());
+            assert(await page.locator("#view-connect").isDisabled());
+            await page.locator("#view-recheck").click();
+            await page.waitForFunction(()=>document.querySelector("#view-status").dataset.state==="error"&&!document.querySelector("#view-recheck").disabled,null,{timeout:45000});
+            assert(await page.locator("#view-connect").isDisabled());
+        }else{
+            assert.equal(await page.locator("#view-status").getAttribute("data-state"),"idle");
+            assert(await page.locator("#view-consent").isEnabled());
+            await page.locator("#view-consent").check();
+            assert(await page.locator("#view-connect").isEnabled());
+            await page.locator("#view-recheck").click();
+            await page.waitForFunction(()=>document.querySelector("#view-status").dataset.state==="idle"&&!document.querySelector("#view-recheck").disabled,null,{timeout:45000});
+            assert(!(await page.locator("#view-consent").isChecked()));
+            assert(await page.locator("#view-connect").isDisabled());
+        }
         assert.deepEqual(sockets,[]);assert.deepEqual(outside,[]);
         await context.close();
     }
-    console.log("PASS real mobile Chromium capability/temporary key clone, no enrollment, missing WebRTC disables connection, no remote socket");
+    console.log("PASS real mobile Chromium capability/temporary key clone, no enrollment, missing WebRTC disables direct viewer, recheck resets consent, no remote socket");
 }finally{await browser?.close();await new Promise(resolve=>server.close(resolve));}

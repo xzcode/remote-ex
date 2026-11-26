@@ -3,10 +3,11 @@ import {hex} from "./crypto.js";
 import {endpoint,pin,ViewSession} from "./view-session.js";
 import {normalizePolicy,directPolicy} from "./ice-policy.js";
 import {QUALITY_MODES} from "./session-policy.js";
+import {probeCapabilities,capabilityBlockers} from "./capabilities.js";
 import {BOOK_KEY,connectionKey,readBook,writeBook,saveEntry,removeEntry,forEndpoint} from "./connection-book.js";
 const $=id=>document.getElementById(id);
 const url=$("view-endpoint"),server=$("view-server"),host=$("view-host"),consent=$("view-consent"),connect=$("view-connect"),disconnect=$("view-disconnect"),next=$("view-next"),video=$("view-video"),status=$("view-status");
-let config=null,identity=null,active=null,displayCount=0,policy=directPolicy(),allowControl=false,allowExtended=false,inputActive=false;
+let config=null,identity=null,active=null,displayCount=0,policy=directPolicy(),allowControl=false,allowExtended=false,inputActive=false,compatible=false;
 const control=$("view-control"),enable=$("input-enable"),disable=$("input-disable"),inputMode=$("input-mode"),extended=$("view-extended"),qualityMode=$("quality-mode"),qualityApply=$("quality-apply");
 const saved=$("saved-connection"),connectionLabel=$("connection-label"),save=$("connection-save"),remove=$("connection-remove"),bookStatus=$("connection-book-status");
 let book=[],bookAvailable=false;
@@ -14,9 +15,10 @@ if(matchMedia("(pointer: coarse)").matches)inputMode.value="tap";
 function state(kind,label){status.dataset.state=kind;status.textContent=label;$("view-placeholder").hidden=!video.hidden;}
 function controls(){
     const locked=!!active;
-    server.disabled=host.disabled=locked;consent.disabled=locked||!config||!identity;
+    server.disabled=host.disabled=locked;consent.disabled=locked||!config||!identity||!compatible;
     let good=false;try{pin(server.value);pin(host.value);good=true;}catch{}
-    connect.disabled=locked||!good||!identity||!config||!consent.checked;
+    connect.disabled=locked||!good||!identity||!config||!compatible||!consent.checked;
+    $("view-recheck").disabled=locked||loading;
     saved.disabled=locked||!bookAvailable||!config||saved.options.length<=1;connectionLabel.disabled=locked||!bookAvailable;
     save.disabled=locked||!bookAvailable||!good||!config||!connectionLabel.value.trim();remove.disabled=locked||!bookAvailable||!saved.value;
     disconnect.disabled=!locked;control.disabled=locked||!allowControl;extended.disabled=locked||!allowExtended;next.disabled=!locked||active.control||active.phase!=="viewing"||active.stopRequested||displayCount<=1;
@@ -61,15 +63,20 @@ remove.addEventListener("click",()=>{if(!remove.disabled){const k=saved.value;up
 window.addEventListener("storage",e=>{if(!active&&e.key===BOOK_KEY){consent.checked=false;refreshBook();}});
 let loading=false;
 async function load(){
-    if(loading||active)return;loading=true;
+    if(loading||active)return;loading=true;compatible=false;consent.checked=false;
+    $("view-compat").textContent="Checking local browser capabilities…";
+    state("checking","Checking configuration and capabilities");controls();
     try{
         const r=await fetch("/view-config.json",{cache:"no-store"});if(!r.ok)throw Error("Viewer not enabled by operator");
         const v=await r.json();if(v.schema!==1||v.mode!=="direct-read-only")throw Error("Invalid viewer configuration");
         config=endpoint(v.endpoint).href;url.value=config;policy=normalizePolicy(v.ice);allowControl=v.control===true;$("control-option").hidden=!allowControl;control.checked=false;allowExtended=v.extended===true;$("extended-option").hidden=!allowExtended;extended.checked=false;
-        identity=await readIdentity();
+        const checks=await probeCapabilities(),blockers=capabilityBlockers(checks);
+        $("view-compat").textContent=blockers.length?"Connection unavailable: "+blockers.join("; ")+". Update the browser or WebView, then recheck.":"Required browser capabilities verified locally (not a remote session).";
+        if(blockers.length){identity=null;$("view-id").value="";$("view-public").value="";state("error","Local compatibility check failed. No connection attempted.");return;}
+        identity=await readIdentity();compatible=true;
         $("view-id").value=identity?.id??"";$("view-public").value=identity?hex(identity.pub):"";
         consent.checked=false;refreshBook();state("idle",identity?"Ready. Enter the independently verified identities.":"Create a browser identity first.");
-    }catch(e){config=null;state("error",String(e.message??e));}finally{loading=false;controls();}
+    }catch(e){config=null;identity=null;compatible=false;$("view-id").value="";$("view-public").value="";$("view-compat").textContent="Configuration or local identity unavailable. Recheck or manage identity.";state("error",String(e.message??e));}finally{loading=false;controls();}
 }
 function metrics(m){
     displayCount=m.count;$("view-route").textContent="Transport: "+(m.route==="relay-both"||m.route==="relay"?"TURN relay":m.route==="direct"?"Direct":"Verifying");$("view-frames").textContent=String(m.frames);
@@ -84,7 +91,7 @@ consent.addEventListener("change",controls);control.addEventListener("change",()
 qualityApply.addEventListener("click",()=>{active?.setQuality(Number(qualityMode.value));controls();});
 enable.addEventListener("click",()=>active?.enableInput(inputMode.value));disable.addEventListener("click",()=>active?.releaseInput());
 connect.addEventListener("click",async()=>{
-    if(connect.disabled||active)return;
+    if(connect.disabled||active||!compatible||document.hidden)return;
     displayCount=0;for(const id of ["view-frames","view-resolution","view-time"])$(id).textContent="—";$("view-layout").textContent="No approved displays";$("quality-status").textContent="Awaiting host status";qualityMode.value="0";
     const s=new ViewSession({url:config,serverId:server.value,hostKey:host.value,identityId:identity.id,video,policy,control:allowControl&&control.checked,extended:allowExtended&&extended.checked,onInput:value=>{inputActive=value;$("input-status").textContent=value?"Input active — keep focus on the remote screen. Leaving it releases input.":"Input disabled; click Enable input again to resume.";controls();},onState:(kind,label)=>{if(active===s){state(kind,label);controls();}},onMetrics:m=>{if(active===s)metrics(m);}});
     active=s;controls();
@@ -93,5 +100,6 @@ connect.addEventListener("click",async()=>{
 });
 disconnect.addEventListener("click",()=>{active?.stop();controls();});
 next.addEventListener("click",()=>active?.next());
+$("view-recheck").addEventListener("click",()=>{if(!active)load();});
 window.addEventListener("pageshow",()=>{if(!active)load();});
 controls();load();

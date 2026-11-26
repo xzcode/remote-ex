@@ -95,3 +95,13 @@ export async function probeCapabilities({loadModule=()=>import("./pkg/noise.js")
     await check("pointer",()=>{if(typeof PointerEvent!=="function"||typeof Element.prototype.setPointerCapture!=="function")throw Error("pointer_api");},"pointer_failed");
     return checks;
 }
+
+/** Only fixed diagnostic codes, not browser exception text or identity data. */
+export function capabilityBlockers(checks){
+    if(!Array.isArray(checks)||checks.length!==CAPABILITY_IDS.length||
+        checks.some((v,i)=>!v||v.id!==CAPABILITY_IDS[i]||typeof v.ok!=="boolean"||
+            typeof v.code!=="string"||!/^[A-Za-z_]{1,40}$/.test(v.code))){
+        return ["capability_report_invalid"];
+    }
+    return checks.filter(v=>!v.ok).map(v=>v.id+": "+v.code);
+}
