@@ -8,6 +8,9 @@ publish.workspace = true
 remote-ex-rendezvous-protocol = { path = "../../crates/rendezvous-protocol" }
 remote-ex-security = { path = "../../crates/security" }
 remote-ex-signaling = { path = "../../crates/signaling" }
+remote-ex-protocol = { path = "../../crates/protocol" }
+sha2.workspace = true
+tempfile = "3"
 serde.workspace = true
 serde_json.workspace = true
 rand_core.workspace = true
@@ -26,6 +29,5 @@ zeroize = "1"
 [dev-dependencies]
 remote-ex-rendezvous-client = { path = "../../crates/rendezvous-client" }
 rcgen = "0.13"
-tempfile = "3"
 tokio-tungstenite = "0.28"
 

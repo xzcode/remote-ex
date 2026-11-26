@@ -8,6 +8,8 @@ on:
       - 'crates/**'
       - 'servers/**'
       - '.github/workflows/core-ci.yml'
+      - 'docs/protocol/**'
+      - 'scripts/ci/protocol_vectors.mjs'
       - '.github/preview-release.json'
   pull_request:
     paths:
@@ -16,6 +18,8 @@ on:
       - 'crates/**'
       - 'servers/**'
       - '.github/workflows/core-ci.yml'
+      - 'docs/protocol/**'
+      - 'scripts/ci/protocol_vectors.mjs'
   workflow_dispatch:
 permissions:
   contents: read
@@ -28,6 +32,11 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Independent WebCrypto protocol vectors
+        run: node scripts/ci/protocol_vectors.mjs
       - name: Rust toolchain
         run: rustup update stable && rustup default stable
       - name: Core tests

@@ -2,7 +2,7 @@
 
 跨平台、可私有化部署的远程桌面工具。Remote EX 自主研发客户端、服务端和业务协议，使用成熟底层库，不基于 RustDesk 等完整产品进行 fork。
 
-**当前状态：已发布 [v0.1.0-alpha.1](https://github.com/xzcode/remote-ex/releases/tag/v0.1.0-alpha.1)（303163c）。第二个预览版 alpha.2 已进入七项 CI 发布验收，尚未生成 Release。M4/M5 实机、签名与分发审查仍未关闭。**
+**当前状态：已发布 [v0.1.0-alpha.2](https://github.com/xzcode/remote-ex/releases/tag/v0.1.0-alpha.2)（6a42d6e），七项 CI 全部通过，三平台六种安装/便携档案及两份校验记录已上传。M6 开始开发；M4/M5 实机、签名及分发审查仍未关闭。**
 
 ## 目标
 
@@ -46,6 +46,8 @@
 - [发布与验收记录](docs/PREVIEW_RELEASE.md)
 - [M5 验收与 alpha.2 发布交接](docs/M5_ACCEPTANCE.md)
 - [M6 实施计划](docs/M6_PLAN.md)
+- [M6 第一批交接](docs/M6_FIRST_HANDOFF.md)
+- [跨端协议 v1 基线](docs/protocol/V1_CONTRACT.md)
 - [输入适配说明](crates/input/README.md)
 - [LAN 信令诊断](crates/signaling/README.md)
 - [原生媒体模块说明](crates/media/README.md)

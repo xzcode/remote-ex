@@ -4,6 +4,9 @@
 mod hub;
 pub mod protocol;
 pub mod turn;
+pub mod admin;
+pub mod contract;
+mod relay_pool;
 
 use axum::{
     extract::{State, ws::{Message, WebSocket, WebSocketUpgrade}},

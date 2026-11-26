@@ -34,7 +34,7 @@ impl Profile{
     fn native_control(self)->bool{matches!(self,Self::Control|Self::AvControl|Self::ExtendedControl|Self::ExtendedAvControl)}
     fn synthetic(self)->bool{matches!(self,Self::Test|Self::AvTest|Self::ExtendedTest)}
     fn extended(self)->bool{matches!(self,Self::ExtendedTest|Self::ExtendedView|Self::ExtendedControl|Self::ExtendedAvView|Self::ExtendedAvControl)}
-    fn grant(self)->u8{if self.native_view()||matches!(self,Self::Exchange(_)|Self::Audio(_)|Self::ClipboardSync(_)|Self::Catalog|Self::CatalogBatch|Self::Manage|Self::Power(_)){VIEW}else{VIEW|INPUT}}
+    fn grant(self)->u8{remote_ex_security::profiles::get(self.code()).expect("internal profile code").grant}
     fn consent(self,host:bool)->&'static str{match(self,host){
         (Self::Test,_)=>"ALLOW ROUTED TEST",(Self::View,true)=>"ALLOW ROUTED SCREEN",
         (Self::View,false)=>"ALLOW ROUTED VIEW",(Self::Control,true)=>"ALLOW ROUTED SCREEN AND INPUT",

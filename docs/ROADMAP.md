@@ -9,8 +9,8 @@
 | M2 | 信令、设备 ID、认证、ICE、TURN、重连 | 实现待验：M2.1/2 本地信令/WSS 通过历史 CI；本批完成端到端 Noise 路由、可信设备/上线、原生 view/control UI、ICE/STUN/TURN、短期凭据、TLS 准入配置与重新注册代码；最新完整媒体/桌面/native-build、物理跨网及生产评审待验证 | 两个网络下直连与强制中继测试，身份、权限与撤销安全检查 |
 | M3 | 设备、音频、多屏、文件、剪贴板、统计、多会话 | 功能候选：10个工作包均有代码，部分子功能未完成；最新自动化与实机验证待办，详见 M3_FULL_HANDOFF.md | 功能端到端操作和权限测试 |
 | M4 | 无人值守、后台服务、Linux、高级能力 | 四批实现候选；alpha.1 自动验收通过，物理设备与未支持平台能力待验 | 分平台验证权限、服务生命周期和明确限制 |
-| M5 | 多语言/主题、安装包、更新、安全与部署、Release | alpha.1 已发布；八语言字典、安装器、手动更新校验、部署候选已实现；alpha.2 发布验收中，正式签名与实机验收未完 | 正式发布清单及三平台验证；未支持能力明示 |
-| M6 | Web、移动主控、管理端及多中继 | 规划已细化；未实施 | 各平台独立验收 |
+| M5 | 多语言/主题、安装包、更新、安全与部署、Release | alpha.1 已发布；八语言字典、安装器、手动更新校验、部署候选已实现；alpha.2 已发布，七项 CI 通过；正式签名与实机验收未完 | 正式发布清单及三平台验证；未支持能力明示 |
+| M6 | Web、移动主控、管理端及多中继 | M6.1–3 第一批实现候选；WebCrypto 向量检查已纳入 CI，真实 Web/移动主控未实现 | 各平台独立验收 |
 
 ## M0 执行顺序
 M0.1 产品文档与模块边界；M0.2 媒体引擎和原生渲染 spike；M0.3 平台采集/输入权限 spike；M0.4 构建打包及依赖许可证审查；M0.5 ADR、协议 schema 与版本锁定。
@@ -124,3 +124,12 @@ Previous e98ef583 Core [45763059710](https://github.com/xzcode/remote-ex/actions
 ### M5 alpha.2 release acceptance candidate
 
 3d98ba8 Core 45765313210, media 45765313251, container 45765313211 and Linux 45765313158 succeeded (including actual installed CJK font fixture, Xvfb and DEB). Desktop 45765313261 failed before compilation because the default working directory was apps/desktop and scripts/ci/check_locales.py was looked up there. This candidate fixes the step working directory and script root resolution, and requests v0.1.0-alpha.2 as an experimental prerelease. Seven exact-commit CI workflows required; each native build stamps its two package hashes and publisher cross-checks all six. RELEASE_BUILD.json and SHA256SUMS.txt record run IDs and verified package hashes. New candidate CI and actual publication pending. See [M5 acceptance](M5_ACCEPTANCE.md), [M6 plan](M6_PLAN.md). No physical acceptance, official publisher signature, final license or public service deployment claimed.
+
+
+## alpha.2 publication verified — 2026-11-26
+
+[v0.1.0-alpha.2](https://github.com/xzcode/remote-ex/releases/tag/v0.1.0-alpha.2) was published at 06:32:30 UTC (14:32:30 Malaysia time), a published prerelease, not a draft. The Git tag and release target both point to `6a42d6e1fb85d6ecee90a2486e01ac165ead14cf`. All seven exact-commit runs succeeded: [Core](https://github.com/xzcode/remote-ex/actions/runs/45766782091), [Desktop](https://github.com/xzcode/remote-ex/actions/runs/45766782111), [Native input](https://github.com/xzcode/remote-ex/actions/runs/45766782214), [Native media](https://github.com/xzcode/remote-ex/actions/runs/45766782370), [Windows/macOS](https://github.com/xzcode/remote-ex/actions/runs/45766782137), [Linux](https://github.com/xzcode/remote-ex/actions/runs/45766782074), [Container](https://github.com/xzcode/remote-ex/actions/runs/45766782115). [Publisher](https://github.com/xzcode/remote-ex/actions/runs/45768863134) passed every step. GitHub API confirms eight uploaded assets (Windows Setup 7,837,600 bytes and ZIP 16,225,272; macOS DMG 18,262,344 and TAR.GZ 16,769,943; Linux DEB 25,822,306 and TAR.GZ 37,927,547; SHA256SUMS.txt and RELEASE_BUILD.json). The physical acceptance, OS publisher signing and third-party license review gates remain open. No public deployment occurred. No existing tag or asset has been changed.
+
+### M6 first integrated candidate
+
+Shared 28-profile v1 table now drives routed grants and signature validation without changing code values or legacy profile-0 verifier semantics. Offline --protocol-info, public deterministic Rust/WebCrypto fixture vectors, local staged allowlist creation/enrollment/revocation/diff, shared startup parser, and bounded operator-configured TURN pool with region/priority/route-stable choice. All new checks pending; no DNS health probes, active config changes, auto restart, live management endpoint, browser/mobile real session or new release. See [M6 first handoff](M6_FIRST_HANDOFF.md).

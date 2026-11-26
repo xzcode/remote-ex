@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "relays": [
+    {
+      "id": "asia-a",
+      "region": "asia",
+      "priority": 1,
+      "url": "turns://relay-a.example.net:5349",
+      "secret_file": "/etc/remote-ex/relay-a.secret"
+    },
+    {
+      "id": "asia-b",
+      "region": "asia",
+      "priority": 1,
+      "url": "turns://relay-b.example.net:5349",
+      "secret_file": "/etc/remote-ex/relay-b.secret"
+    },
+    {
+      "id": "eu-a",
+      "region": "eu",
+      "priority": 1,
+      "url": "turns://relay-eu.example.net:5349",
+      "secret_file": "/etc/remote-ex/relay-eu.secret"
+    }
+  ]
+}

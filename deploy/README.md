@@ -34,3 +34,25 @@ docker compose -f deploy/compose.yml run --rm --no-deps rendezvous --check-confi
 ```
 
 After review, explicit operator start is `docker compose -f deploy/compose.yml up -d`. For remote access change host bind only after TLS, enrollment and firewall review; never forward plaintext development WS. Do not chmod private keys world-readable. Arrange ownership or restricted ACL for UID 10001. Image uses official Rust and Debian bases, not a pinned/audited production image; no runtime credentials baked in. Verify on disposable container CI before claiming support.
+
+
+## M6 local operator commands (new source candidate)
+
+Use a matching new server binary; alpha.2 does not include these commands. They are offline and never modify active configuration or restart the server.
+
+```sh
+remote-ex-rendezvous --protocol-info
+remote-ex-rendezvous --allowlist-info /path/to/current-allowlist.txt
+remote-ex-rendezvous --new-allowlist /path/to/new-list.txt DEVICE_ID PUBLIC_KEY
+remote-ex-rendezvous --enroll-plan /path/to/current-allowlist.txt /path/to/staged-list.txt DEVICE_ID PUBLIC_KEY
+remote-ex-rendezvous --revoke-plan /path/to/current-allowlist.txt /path/to/staged-revocation.txt DEVICE_ID
+remote-ex-rendezvous --allowlist-diff /path/to/current-allowlist.txt /path/to/staged-list.txt
+```
+
+Replace placeholders with the exact independently verified full lowercase hex IDs and public keys of devices you administer. Enrollment only permits registration, not desktop access. The operator commands verify public-key format and fingerprint match, bound and normalize the list, create a new staging file without overwriting anything, and return counts/hash rather than IDs or credentials. Refuse empty lists. Review the staged file independently, confirm the active canonical hash has not changed, use a private directory with restricted permissions, then deliberately select the new file in the service environment, preflight, and schedule a restart. Revocation becomes effective only after the reviewed config is applied and service restarted; no immediate live-session revocation claim.
+
+## Optional multi-TURN pool (new source candidate)
+
+Use either the existing REMOTE_EX_TURN_URL + REMOTE_EX_TURN_SECRET_FILE pair, or REMOTE_EX_RELAY_POOL_FILE (never both). See relay-pool.json.example; provide real reviewed relay DNS names and private absolute secret file paths outside the repository. Optional REMOTE_EX_RELAY_REGION filters exact lowercase region. A maximum of eight relay entries, unique IDs and URLs, priority 1–1000 (lower is preferred), all secret files validated at startup. Within the best priority and selected region, a stable hash of the server-generated session ID distributes routes across eligible relays. Both peers get the same relay and separate short-lived scoped credentials, through unchanged v1 ICE config. No automatic region guessing, network health measurement or failover; unavailable selected region fails configuration. --check-config reports total/eligible counts only. Reconfigure only after a planned restart.
+
+The new pool validates DNS-name shape and rejects IP literals and obvious local name suffixes. This is not DNS resolution or proof of public addressing. The operator must verify actual public A/AAAA answers and relay certificate validity, protect DNS, firewall and coturn peer/egress restrictions, and never route to management/metadata/private networks. No active probing or public service deployment by this code. The legacy single-relay path still supports isolated local test fixtures. Actual multi-relay cross-network acceptance remains pending.

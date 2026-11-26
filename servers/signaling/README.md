@@ -24,3 +24,6 @@ M2.3 adds an optional non-trickle IceBatch message, allowed once per participant
 
 
 M3 shared outgoing controller registration uses a separately signed RegisterController challenge. Up to three controller-only sockets for the same fingerprint are allowed; they cannot receive incoming requests, and are mutually exclusive with ordinary Register for that ID. Every session is owned by the exact socket, and one socket disconnect closes only its own session. Clients must use verified WSS, explicitly choose shared identity, and freshly approve each session. Existing single-connection registration remains supported. Requires updating the server and client together for shared mode; no silent downgrade. Actual Internet/physical parallel session acceptance remains pending.
+
+
+M6 first candidate adds offline protocol/allowlist management and bounded operator TURN pool. See deploy/README.md and docs/M6_FIRST_HANDOFF.md. No live management endpoint or deployed service. Alpha.2 is published; these new features need new builds.

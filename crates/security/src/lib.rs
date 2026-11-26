@@ -4,6 +4,7 @@ pub mod session;
 pub mod pairing;
 pub mod identity_store;
 pub mod route_binding;
+pub mod profiles;
 pub use session::{SessionTranscript, Role, VerifiedSession, ProofError, hash_sdp, verify_session};
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use rand_core::OsRng;
@@ -28,6 +29,7 @@ impl DeviceIdentity {
         self.0.sign(&controller_registration_bytes(server_identity,challenge)).to_bytes()
     }
 }
+pub fn valid_public_key(public:&PublicKey)->bool{VerifyingKey::from_bytes(public).is_ok_and(|k|!k.is_weak())}
 pub fn fingerprint(public: &PublicKey) -> Fingerprint {
     Sha256::digest(public).into()
 }

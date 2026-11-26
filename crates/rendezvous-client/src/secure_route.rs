@@ -9,8 +9,8 @@ use remote_ex_signaling::hex;
 use snow::{Builder,TransportState};
 use std::time::Duration;
 use zeroize::Zeroizing;
-const PATTERN:&str="Noise_NN_25519_ChaChaPoly_BLAKE2s";
-const MAX_CLEAR:usize=32768;
+const PATTERN:&str=remote_ex_security::profiles::NOISE_PATTERN;
+const MAX_CLEAR:usize=remote_ex_security::profiles::MAX_SEALED_CLEAR;
 fn fail<T>(r:std::result::Result<T,snow::Error>)->Result<T>{
     r.map_err(|_|"Routed Noise authentication failed".into())
 }

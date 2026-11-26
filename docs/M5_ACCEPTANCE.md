@@ -48,3 +48,8 @@
 ## 四、尚不能标记稳定版完成
 
 项目许可证选择、实际第三方分发义务、GStreamer/外部运行库集成、正式 OS 签名、公证及带可信发布签名的自动更新尚未完成。Windows/macOS 虚拟显示驱动和物理屏幕隐私模式未实现；真实 Wayland 兼容性、远程音频、混合 DPI 与各平台实际安装仍待确认。保留当前短时会话、用户可见、本机授权和停止入口。M6 规划可并行，但不改变这些验收缺口。
+
+
+## alpha.2 publication verified — 2026-11-26
+
+[v0.1.0-alpha.2](https://github.com/xzcode/remote-ex/releases/tag/v0.1.0-alpha.2) was published at 06:32:30 UTC (14:32:30 Malaysia time), a published prerelease, not a draft. The Git tag and release target both point to `6a42d6e1fb85d6ecee90a2486e01ac165ead14cf`. All seven exact-commit runs succeeded: [Core](https://github.com/xzcode/remote-ex/actions/runs/45766782091), [Desktop](https://github.com/xzcode/remote-ex/actions/runs/45766782111), [Native input](https://github.com/xzcode/remote-ex/actions/runs/45766782214), [Native media](https://github.com/xzcode/remote-ex/actions/runs/45766782370), [Windows/macOS](https://github.com/xzcode/remote-ex/actions/runs/45766782137), [Linux](https://github.com/xzcode/remote-ex/actions/runs/45766782074), [Container](https://github.com/xzcode/remote-ex/actions/runs/45766782115). [Publisher](https://github.com/xzcode/remote-ex/actions/runs/45768863134) passed every step. GitHub API confirms eight uploaded assets (Windows Setup 7,837,600 bytes and ZIP 16,225,272; macOS DMG 18,262,344 and TAR.GZ 16,769,943; Linux DEB 25,822,306 and TAR.GZ 37,927,547; SHA256SUMS.txt and RELEASE_BUILD.json). The physical acceptance, OS publisher signing and third-party license review gates remain open. No public deployment occurred. No existing tag or asset has been changed.

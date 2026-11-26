@@ -12,7 +12,7 @@ pub struct RouteBinding {
     pub host_nonce: [u8;32],
     pub requested: u8,
     pub granted: u8,
-    /// 0 = synthetic, 1 = real view, 2 = real control.
+    /// Stable profile code from crate::profiles; not a local permission grant.
     pub profile:u8,
     pub relay_only:bool,
 }
@@ -22,7 +22,7 @@ impl RouteBinding {
             ||self.controller==self.host||self.controller_nonce==[0;32]||self.host_nonce==[0;32]
             ||self.controller_nonce==self.host_nonce||self.requested&VIEW==0||self.granted&VIEW==0
             ||self.requested&!(VIEW|INPUT)!=0||self.granted&!self.requested!=0
-            ||!matches!(self.profile,0..=27)||((self.profile==1||(3..=15).contains(&self.profile)||matches!(self.profile,17|19|20|22|24|26|27))&&self.granted!=VIEW)||(matches!(self.profile,2|16|18|21|23|25)&&self.granted!=(VIEW|INPUT)){
+            ||!crate::profiles::binding_grant_valid(self.profile,self.granted){
             return Err(ProofError::InvalidTranscript);
         }
         let mut b=b"Remote EX/routed-noise/v1\0".to_vec();

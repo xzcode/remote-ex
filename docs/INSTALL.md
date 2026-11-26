@@ -2,12 +2,12 @@
 
 ## 1. 下载 / Download
 
-[alpha.1 发布页](https://github.com/xzcode/remote-ex/releases/tag/v0.1.0-alpha.1) 提供三个平台档案和 SHA256SUMS.txt。只下载当前设备架构对应的档案；保留全部文件，不要只移动主程序。发布页是预发行版，不是已签名或公证的安装器。后续开发包内容以 BUILD_INFO.txt 为准。
+[alpha.2 发布页](https://github.com/xzcode/remote-ex/releases/tag/v0.1.0-alpha.2) 提供三平台六种安装/便携档案、SHA256SUMS.txt 和 RELEASE_BUILD.json。只下载当前设备架构对应的档案；保留全部文件，不要只移动主程序。发布页是预发行版，不是已签名或公证的安装器。后续开发包内容以 BUILD_INFO.txt 为准。
 
 校验下载的档案：
-- Windows PowerShell: `Get-FileHash -Algorithm SHA256 .\Remote-EX-v0.1.0-alpha.1-Windows-x64.zip`
-- macOS: `shasum -a 256 Remote-EX-v0.1.0-alpha.1-macOS-arm64.tar.gz`
-- Linux: `sha256sum Remote-EX-v0.1.0-alpha.1-Linux-x64.tar.gz`
+- Windows PowerShell: `Get-FileHash -Algorithm SHA256 .\Remote-EX-v0.1.0-alpha.2-Windows-x64.zip`
+- macOS: `shasum -a 256 Remote-EX-v0.1.0-alpha.2-macOS-arm64.tar.gz`
+- Linux: `sha256sum Remote-EX-v0.1.0-alpha.2-Linux-x64.tar.gz`
 
 Compare the result with the matching SHA256SUMS.txt entry. A checksum detects file corruption; it is not an independent publisher signature.
 
@@ -88,3 +88,6 @@ Package DEPENDENCIES.json adds declared-license evidence and triage flags; see [
 ## 10. alpha.2 preview candidate
 
 See the [official Releases page](https://github.com/xzcode/remote-ex/releases) for actual published versions. The next requested alpha.2 is not available until its seven same-commit CI checks and publication complete. For alpha.2, choose the matching Setup.exe/ZIP, DMG/TAR.GZ, or DEB/TAR.GZ. Check SHA256SUMS.txt against your selected exact file; RELEASE_BUILD.json records the revision and build workflow IDs. Review [M5 acceptance](M5_ACCEPTANCE.md) for test coverage and unresolved physical device/signing/license gates. No automatic upgrade or runtime install.
+
+
+The alpha.2 release is now published; see the verified record in PREVIEW_RELEASE.md. M6 features below are newer source candidates, not present in the existing alpha.2 binaries.
