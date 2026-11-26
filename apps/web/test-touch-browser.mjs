@@ -17,6 +17,7 @@ try{
         const canvas=document.createElement("canvas");canvas.width=960;canvas.height=540;
         const ctx=canvas.getContext("2d");ctx.fillStyle="#287651";ctx.fillRect(0,0,960,540);
         const stream=canvas.captureStream(5),v=document.querySelector("#view-video");
+        document.querySelector("#view-placeholder").hidden=true;
         v.hidden=false;v.muted=true;v.srcObject=stream;await v.play();
         window.__touchFixture={stream,packets:[],input:null};
     });
@@ -60,9 +61,16 @@ try{
     await enable("drag");await touch("touchStart",[point(x,y)]);await touch("touchCancel",[]);
     await page.waitForFunction(()=>!window.__touchFixture.input.active);
     assert.deepEqual(kinds(await packets()),[82,90,114]);
+    // A different physical pointer type cannot own the same button namespace.
+    await enable("tap");await page.mouse.click(x,y);
+    await page.waitForFunction(()=>!window.__touchFixture.input.active);
+    assert.deepEqual(kinds(await packets()),[114]);
+    await enable("mouse");await page.touchscreen.tap(x,y);
+    await page.waitForFunction(()=>!window.__touchFixture.input.active);
+    assert.deepEqual(kinds(await packets()),[114]);
     await page.evaluate(()=>{
         const f=window.__touchFixture;f.input.dispose();f.stream.getTracks().forEach(t=>t.stop());
-        const v=document.querySelector("#view-video");v.srcObject=null;v.hidden=true;delete window.__touchFixture;
+        const v=document.querySelector("#view-video");v.srcObject=null;v.hidden=true;document.querySelector("#view-placeholder").hidden=false;delete window.__touchFixture;
     });
     await client.detach();await context.close();
     assert.deepEqual(errors,[]);assert.deepEqual(sockets,[]);

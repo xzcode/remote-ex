@@ -80,6 +80,7 @@ jobs:
           node --check test-touch-browser.mjs
           node test-touch-browser.mjs
           npm run test:touch
+          npm run test:input-source
           npm run test:session-policy
           npm run test:connection-book
           npm run test:policy-input

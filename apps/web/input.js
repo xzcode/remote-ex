@@ -57,6 +57,7 @@ export class SurfaceInput{
     }
     listen(target,name,fn,options){target.addEventListener(name,fn,options);this.handlers.push(()=>target.removeEventListener(name,fn,options));}
     emit(kind,value){
+        if(kind!=="release"&&!this.active)return false;
         const now=performance.now();if(now-this.rateStart>=1000){this.rateStart=now;this.rate=0;}
         if(kind!=="release"&&++this.rate>160){this.disable();return false;}
         try{this.send(this.encoder.encode(kind,value));return true;}
@@ -69,11 +70,19 @@ export class SurfaceInput{
         this.active=true;this.rateStart=performance.now();this.rate=0;this.video.tabIndex=0;this.video.focus({preventScroll:true});
         if(document.activeElement!==this.video){this.disable();return;}
         const v=this.video,button=e=>({0:1,1:2,2:3})[e.button];
+        // Touch and mouse share the same remote button namespace. Never
+        // allow overlapping pointer sources to independently press/release
+        // it. The selected mode owns pointer events for this activation.
+        this.listen(window,"pointerdown",e=>{
+            if(!this.active||!e.isTrusted)return;
+            const selected=this.touch?"touch":"mouse";
+            if(e.pointerType!==selected||this.touch&&(!e.isPrimary||this.touch.current&&e.pointerId!==this.touch.current.id))this.disable();
+        },true);
         if(this.touch){
             v.classList.add("touch-active");
             const safe=fn=>e=>{if(!this.active||!e.isTrusted||e.pointerType!=="touch")return;try{fn(e);}catch{this.disable();}};
             this.listen(v,"pointerdown",safe(e=>{
-                if(!this.enabled(e)||this.touch.current){this.disable();return;}
+                if(!this.enabled(e)||!e.isPrimary||this.touch.current){this.disable();return;}
                 const p=this.point(e);if(!p)return;
                 e.preventDefault();if(!this.touch.start(e.pointerId,p,e.clientX,e.clientY))this.disable();
                 else v.setPointerCapture(e.pointerId);
@@ -89,17 +98,18 @@ export class SurfaceInput{
                 e.preventDefault();if(!this.touch.end(e.pointerId,this.point(e),e.clientX,e.clientY))this.disable();
             }),{passive:false});
             this.listen(v,"lostpointercapture",safe(e=>{if(this.touch.current?.id===e.pointerId)this.disable();}));
-            this.listen(window,"pointerdown",safe(e=>{if(this.touch.current&&e.pointerId!==this.touch.current.id)this.disable();}),true);
-        }
+        }else{
         this.listen(v,"pointermove",e=>{if(!this.enabled(e)||e.pointerType!=="mouse")return;const p=this.point(e);if(!p){if(this.buttons.size)this.disable();return;}const now=performance.now();if(now-this.lastMove>=25){this.lastMove=now;this.emit("move",p);}});
         this.listen(v,"pointerdown",e=>{if(!this.enabled(e)||e.pointerType!=="mouse")return;const p=this.point(e),b=button(e);if(!p||!b||this.buttons.has(b))return;e.preventDefault();if(this.emit("move",p)&&this.emit("button",{button:b,down:true}))this.buttons.add(b);});
         this.listen(window,"pointerup",e=>{if(!this.active||!e.isTrusted||e.pointerType!=="mouse")return;const b=button(e);if(this.buttons.has(b)){e.preventDefault();this.emit("button",{button:b,down:false});this.buttons.delete(b);}});
         this.listen(v,"pointerleave",()=>{if(this.buttons.size)this.disable();});
+        this.listen(v,"wheel",e=>{if(!this.enabled(e))return;const p=this.point(e);if(!p)return;e.preventDefault();const x=wheel(e.deltaX,e.deltaMode),y=wheel(e.deltaY,e.deltaMode);if((x||y)&&this.emit("move",p))this.emit("scroll",{x,y});},{passive:false});
+        }
         this.listen(v,"pointercancel",()=>this.disable());
         this.listen(v,"contextmenu",e=>{if(this.enabled(e))e.preventDefault();});
         this.listen(v,"keydown",e=>{if(!this.enabled(e)||e.isComposing||e.repeat)return;const usage=physicalKey(e.code);if(!usage||this.keys.has(usage))return;e.preventDefault();if(this.emit("key",{usage,down:true}))this.keys.add(usage);});
         this.listen(v,"keyup",e=>{if(!this.enabled(e))return;const usage=physicalKey(e.code);if(!this.keys.has(usage))return;e.preventDefault();this.emit("key",{usage,down:false});this.keys.delete(usage);});
-        this.listen(v,"wheel",e=>{if(!this.enabled(e))return;const p=this.point(e);if(!p)return;e.preventDefault();const x=wheel(e.deltaX,e.deltaMode),y=wheel(e.deltaY,e.deltaMode);if((x||y)&&this.emit("move",p))this.emit("scroll",{x,y});},{passive:false});
+        this.listen(document,"visibilitychange",()=>{if(document.hidden)this.disable();});
         this.listen(v,"blur",()=>this.disable());this.listen(window,"blur",()=>this.disable());
     }
     releaseTouchCapture(){
