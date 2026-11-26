@@ -83,3 +83,6 @@ fea12c7 的四类 CI 因核心 unsafe lint 与 Vue 模板语法失败，已作�
 
 ### M4 第一整批
 M4.1/M4.2：一次限时预授权等待（已保存设备公钥、屏幕限定权限、五分钟、可见应用、单次连接），撤销信任/断开/退出停止；不是跨重启永久无人值守。M4.3/M4.4：本机显式用户登录启动与系统托盘，启动默认离线，不安装高权限服务。M4.5：独立 Linux X11 read-only sidecar，桌面与 Xvfb CI 候选。M4.6：检测 Wayland 并拒绝 XWayland fallback；真正 Portal 媒体/输入未实现。M4.7：局域网 Wake-on-LAN，其他远程电源操作未开放。M4.8/M4.9：能力界面明确不可用，不安装驱动、不关闭物理屏幕。M4.10：新测试及真实平台验收清单见 M4_FULL_HANDOFF.md；本批 CI 未完成，不能宣称 M4 已验收。
+
+### M4 second integrated batch
+Saved expiring per-device host policy with exact server, device, display and scope, local one-session activation, policy/identity validation and revocation; no persistent background listener. X11 input candidate with XTEST, single-monitor and active local unlocked logind checks; unit and disposable Xvfb fixtures, Linux archive workflow. Fixed known macOS Swift duration compile error. Latest CI pending. Wayland portal, additional power operations, virtual display, privacy mode, long-running supervised service and physical acceptance remain open.

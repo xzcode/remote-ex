@@ -8,11 +8,15 @@ use remote_ex_desktop_features::viewport::{self,Rect};
 use xcap::{Monitor,image::{DynamicImage,RgbaImage,Rgba,imageops::{self,FilterType}}};
 #[cfg(target_os="windows")] mod windows_display;
 #[cfg(target_os="macos")] mod macos_display;
+#[cfg(target_os="linux")] mod linux_display;
 
 fn monitor(display:u32,area:Option<DisplayArea>,input:bool,secondary:bool)->MediaResult<(Monitor,DisplayArea)>{
     #[cfg(target_os="windows")]
     let _dpi=if secondary{Some(windows_display::DpiGuard::new()?)}else{None};
-    let m=Monitor::all().map_err(error)?.into_iter().find(|m|m.id().ok()==Some(display)).ok_or("Authorized display disconnected")?;
+    let all=Monitor::all().map_err(error)?;
+    #[cfg(target_os="linux")]
+    if input&&(all.len()!=1||secondary){return Err("X11 control requires exactly one locally approved primary display".into());}
+    let m=all.into_iter().find(|m|m.id().ok()==Some(display)).ok_or("Authorized display disconnected")?;
     let primary=m.is_primary().map_err(error)?;
     if input&&!primary&&!secondary{return Err("Non-primary control requires explicit experimental approval".into());}
     if secondary&&!cfg!(any(target_os="windows",target_os="macos")){return Err("Secondary control requires Windows or macOS".into());}
@@ -28,7 +32,7 @@ fn monitor(display:u32,area:Option<DisplayArea>,input:bool,secondary:bool)->Medi
 }
 fn permissions(input:bool)->MediaResult<()>{
     #[cfg(target_os="linux")]
-    {if input{return Err("Linux native input is not supported".into());}remote_ex_desktop_features::platform::require_linux_x11()?;}
+    {remote_ex_desktop_features::platform::require_linux_x11()?;if input{linux_display::require_local_session()?;}}
     #[cfg(target_os="macos")]
     {
         #[link(name="CoreGraphics",kind="framework")] extern "C"{fn CGPreflightScreenCaptureAccess()->bool;}
@@ -199,7 +203,11 @@ pub(super) async fn host(peer:&Peer,channel:&ControlChannel,conn:&mut Connection
             return serve(peer,channel,conn,session,d,capture(displays,true,config,true),true,profile.av(),profile.extended()).await;
         }
         #[cfg(target_os="linux")]
-        {return Err("Linux X11 view-only; native input unavailable".into());}
+        {
+            let backend=linux_display::ScopedBackend::new(display,area)?;
+            let d=Dispatcher::new(gate,backend,area)?;
+            return serve(peer,channel,conn,session,d,capture(displays,true,config,false),true,profile.av(),profile.extended()).await;
+        }
         #[cfg(any(target_os="windows",target_os="macos"))]
         {let backend=NativeBackend::new()?;
         if backend.primary_area()?!=area{return Err("Primary display DPI/geometry mismatch".into());}

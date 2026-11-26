@@ -66,13 +66,13 @@ pub fn request_capture_permission(window: WebviewWindow) -> Result<Permission, S
     Ok(permission())
 }
 
-#[derive(Serialize)]
+#[derive(Serialize,Clone)]
 pub struct Display {
-    id: u32,
-    name: String,
-    width: u32,
-    height: u32,
-    primary: bool,
+    pub(crate) id: u32,
+    pub(crate) name: String,
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    pub(crate) primary: bool,
 }
 
 fn require_capture_permission() -> Result<(), String> {
@@ -84,7 +84,7 @@ fn require_capture_permission() -> Result<(), String> {
     Ok(())
 }
 
-fn enumerate() -> Result<Vec<Display>, String> {
+pub(crate) fn enumerate() -> Result<Vec<Display>, String> {
     require_capture_permission()?;
     Monitor::all().map_err(|e| e.to_string())?.into_iter().map(|m| {
         Ok(Display {

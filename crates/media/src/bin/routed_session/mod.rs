@@ -510,8 +510,8 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
     }
     if armed&&(!supervised||!persistent||!host||!(profile.native_view()||profile.native_control())||profile.av()){return Err("Arming requires persistent identity, explicit visible supervision and a screen-only view/control profile".into());}
     if armed_test&&(!supervised||persistent||profile!=Profile::Test){return Err("Armed test requires temporary supervised synthetic host".into());}
-    if cfg!(target_os="linux")&&native_allowed&&(!profile.native_view()||profile.av()||persistent||armed||secondary){return Err("Linux X11 candidate supports only temporary, supervised view-only sessions".into());}
-    if cfg!(target_os="linux")&&native_allowed{remote_ex_desktop_features::platform::require_linux_x11()?;if !supervised{return Err("Linux X11 view requires explicit desktop supervision".into());}}
+    if cfg!(target_os="linux")&&native_allowed&&(!(profile.native_view()||profile.native_control())||profile.av()||persistent||armed||secondary){return Err("Linux X11 candidate supports temporary supervised screen view/control only".into());}
+    if cfg!(target_os="linux")&&native_allowed{remote_ex_desktop_features::platform::require_linux_x11()?;if !supervised{return Err("Linux X11 sessions require explicit desktop supervision".into());}}
     if profile==Profile::ExtendedTest&&!supervised{return Err("Extended test requires supervised synthetic mode".into());}
     if secondary&&(!profile.native_control()||!cfg!(any(target_os="windows",target_os="macos"))){return Err("Experimental secondary control requires Windows or macOS host control".into());}
     if shared_controller&&(host||!(profile.synthetic()||profile.native_view()||profile.native_control())||persistent&&identity_slot.unwrap_or(0)!=0){return Err("Shared identity is only for outgoing view/control/test using slot one identity".into());}

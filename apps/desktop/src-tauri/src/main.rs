@@ -5,6 +5,7 @@ mod lan;
 mod presence;
 mod trust;
 mod service;
+mod policy;
 use tauri::Manager;
 
 fn main() {
@@ -20,6 +21,10 @@ fn main() {
             service::startup_change,
             service::stop_all,
             service::wake_lan,
+            policy::host_policy_list,
+            policy::host_policy_save,
+            policy::host_policy_revoke,
+            lan::host_policy_activate,
             capture::capture_permission,
             capture::request_capture_permission,
             capture::list_displays,

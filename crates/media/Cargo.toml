@@ -10,7 +10,7 @@ publish = false
 [features]
 default = []
 local-screen = ["dep:xcap"]
-native-x11-view = ["local-screen", "dep:winit", "dep:softbuffer", "dep:font8x8"]
+native-x11-view = ["local-screen", "dep:winit", "dep:softbuffer", "dep:font8x8", "dep:x11rb"]
 native-control = ["local-screen", "remote-ex-input/native", "remote-ex-security/native-vault", "dep:minifb", "dep:arboard", "dep:winit", "dep:softbuffer", "dep:font8x8", "dep:windows-sys"]
 
 [dependencies]
@@ -53,6 +53,7 @@ softbuffer = { version = "=0.4.8", optional = true, default-features = false }
 font8x8 = { version = "0.3", optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+x11rb = { version = "=0.13.2", optional = true, features = ["xtest"] }
 winit = { version = "=0.30.13", optional = true, default-features = false, features = ["rwh_06", "x11"] }
 softbuffer = { version = "=0.4.8", optional = true, default-features = false, features = ["x11", "x11-dlopen"] }
 font8x8 = { version = "0.3", optional = true }

@@ -57,7 +57,7 @@ pub fn platform_capabilities(window:WebviewWindow)->Result<Capabilities,String>{
     let name=if cfg!(target_os="linux"){"routed_x11_view"}else if cfg!(windows){"routed_control.exe"}else{"routed_control"};
     let sidecar_present=std::env::current_exe().ok().and_then(|p|p.parent().map(|d|d.join(name))).is_some_and(|p|p.is_file());
     Ok(Capabilities{os:os.into(),desktop_session:desktop_session.into(),view_candidate:desktop||desktop_session=="x11",
-        input_candidate:desktop,armed_candidate:desktop,sidecar_present,login_launch:desktop||cfg!(target_os="linux"),tray_ready:TRAY_READY.load(Ordering::Acquire),
+        input_candidate:desktop||desktop_session=="x11",armed_candidate:desktop,sidecar_present,login_launch:desktop||cfg!(target_os="linux"),tray_ready:TRAY_READY.load(Ordering::Acquire),
         wayland_portal:false,remote_power:false,virtual_display:false,privacy_display:false})
 }
 #[tauri::command]

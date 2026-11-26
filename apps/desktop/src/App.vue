@@ -25,7 +25,8 @@ const active = ref<Page>("remote");
 const lanActive = ref(false);
 const currentSlot=ref(0),slotActive=ref([false,false,false]);
 const routedActive=computed(()=>slotActive.value.some(Boolean));
-const sessionActive=computed(()=>lanActive.value||routedActive.value);
+const serviceActive=ref(false);
+const sessionActive=computed(()=>lanActive.value||routedActive.value||serviceActive.value);
 const presenceActive = ref(false);
 const native = isTauri();
 const systemLanguage = navigator.language.toLowerCase().startsWith("zh") ? "zh" : "en";
@@ -165,7 +166,7 @@ const pages: { key: Page; symbol: string }[] = [
           </section>
         </template>
         <template v-else-if="active === 'service'">
-          <ServicePanel :t="t" />
+          <ServicePanel :t="t" @active="serviceActive=$event" />
         </template>
         <template v-else>
           <section class="panel">

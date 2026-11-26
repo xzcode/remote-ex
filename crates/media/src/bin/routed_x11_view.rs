@@ -1,4 +1,4 @@
-//! Linux X11 read-only, explicitly supervised media candidate.
+//! Linux X11 explicitly supervised screen view/control candidate.
 #[cfg(target_os="linux")]
 mod routed_session;
 #[cfg(target_os="linux")]

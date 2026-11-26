@@ -48,7 +48,7 @@ final class Output: NSObject, SCStreamOutput, SCStreamDelegate {
         // Fixed short initial line; no arbitrary helper command.
         // Bound lifetime from launch, including permission or framework stalls.
         let launch = DispatchTime.now()
-        DispatchQueue.global().asyncAfter(deadline: launch + 305) { Darwin.exit(0) }
+        DispatchQueue.global().asyncAfter(deadline: launch + .seconds(305)) { Darwin.exit(0) }
         var line = [UInt8]()
         for _ in 0..<32 {
             var byte: UInt8 = 0
@@ -59,7 +59,7 @@ final class Output: NSObject, SCStreamOutput, SCStreamDelegate {
         let extended = line == Array("CAPTURE SYSTEM AUDIO EXTENDED".utf8)
         guard extended || line == Array("CAPTURE SYSTEM AUDIO".utf8) else { Darwin.exit(1) }
         let duration: UInt64 = extended ? 300 : 30
-        DispatchQueue.global().asyncAfter(deadline: launch + Int(duration + 5)) { Darwin.exit(0) }
+        DispatchQueue.global().asyncAfter(deadline: launch + .seconds(Int(duration + 5))) { Darwin.exit(0) }
         DispatchQueue.global().async {
             var b: UInt8 = 0
             _ = Darwin.read(STDIN_FILENO, &b, 1)

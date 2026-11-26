@@ -59,6 +59,7 @@ pub struct Snapshot {
     manage_applied:Option<usize>,
     secondary_control:bool,
     armed:bool,
+    saved_policy:bool,
     server_scope:Option<String>,
     extended:bool,
     stream_quality:Option<String>,
@@ -72,7 +73,7 @@ pub struct Snapshot {
 }
 impl Default for Snapshot {
     fn default() -> Self {
-        Self { stage: Stage::Idle, active: false, local_key: None, detail: None, profile: Profile::Diagnostic, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, transfer_paused:false, checkpoint_saved:None, directory_entries:None, clipboard_sent:None, clipboard_received:None, catalog:Vec::new(), catalog_ready:false,catalog_selected:None,manage_review:None,manage_token:None,manage_submitted:false,manage_approved:false,manage_applied:None,secondary_control:false,armed:false,server_scope:None,extended:false,stream_quality:None,stream_decoded:None,resume_offset:None, audio_volume:None, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None }
+        Self { stage: Stage::Idle, active: false, local_key: None, detail: None, profile: Profile::Diagnostic, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, transfer_paused:false, checkpoint_saved:None, directory_entries:None, clipboard_sent:None, clipboard_received:None, catalog:Vec::new(), catalog_ready:false,catalog_selected:None,manage_review:None,manage_token:None,manage_submitted:false,manage_approved:false,manage_applied:None,secondary_control:false,armed:false,saved_policy:false,server_scope:None,extended:false,stream_quality:None,stream_decoded:None,resume_offset:None, audio_volume:None, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None }
     }
 }
 
@@ -163,7 +164,7 @@ fn sidecar_path(profile: Profile) -> Result<PathBuf, String> {
         (Profile::Control, false) => "lan_control",
         (Profile::RoutedTest,true)=>"routed_diagnostic.exe",
         (Profile::RoutedTest,false)=>"routed_diagnostic",
-        (Profile::RoutedView,false) if cfg!(target_os="linux")=>"routed_x11_view",
+        (Profile::RoutedView|Profile::RoutedControl,false) if cfg!(target_os="linux")=>"routed_x11_view",
         (p,true) if p.exchange().is_some()=>"routed_control.exe",
         (p,false) if p.exchange().is_some()=>"routed_control",
         (Profile::RoutedView|Profile::RoutedControl|Profile::RoutedAvView|Profile::RoutedAvControl|Profile::RoutedAudio|Profile::RoutedClipboardSync|Profile::RoutedCatalog|Profile::RoutedCatalogBatch|Profile::RoutedManage,true)=>"routed_control.exe",
@@ -344,9 +345,11 @@ fn handle_output(shared: &Mutex<Snapshot>, output: Output, pass: &mut bool, fail
         }
     }
 }
+#[derive(Clone)]
+struct AutoApproval{peer_key:String,local_key:String,expires_at:u64}
 fn supervise(
     mut child: ChildGuard, commands: Receiver<WorkerCommand>, shared: Arc<Mutex<Snapshot>>,
-    profile: Profile, host: bool, stop: Arc<AtomicBool>,
+    profile: Profile, host: bool, stop: Arc<AtomicBool>, automatic:Option<AutoApproval>,
 ) {
     let (tx, output) = mpsc::sync_channel(64);
     let overflow = Arc::new(AtomicBool::new(false));
@@ -365,11 +368,16 @@ fn supervise(
     let mut failure = None;
     let mut stopping: Option<Instant> = None;
     let mut stop_error: Option<String> = None;
+    let mut automatic=automatic;
+    let expires=automatic.as_ref().map(|a|a.expires_at);
+    let remaining=expires.map(|e|Duration::from_secs(e.saturating_sub(crate::policy::now().unwrap_or(u64::MAX))));
     loop {
         for message in output.try_iter().take(64) {
             handle_output(&shared, message, &mut pass, &mut failure);
         }
-        let reason = if overflow.load(Ordering::Acquire) { Some("Media process output limit exceeded".into()) }
+        let expired=expires.is_some_and(|e|crate::policy::now().map_or(true,|now|now>=e))||remaining.is_some_and(|d|started.elapsed()>=d);
+        let reason = if expired {Some("Saved host policy expired".into())}
+            else if overflow.load(Ordering::Acquire) { Some("Media process output limit exceeded".into()) }
             else if started.elapsed() >= ({let s=locked(&shared);if s.armed{Duration::from_secs(780)}else if s.extended{Duration::from_secs(480)}else{SESSION_LIMIT}}) { Some("Session expired".into()) }
             else { failure.clone() };
         if stopping.is_none() && (stop.load(Ordering::Acquire) || reason.is_some()) {
@@ -388,7 +396,19 @@ fn supervise(
             stage(&shared, Stage::Failed, Some(if profile.requires_release(){"Control process did not stop in time; input release is not confirmed.".into()}else{"Transfer process did not stop in time; temporary-file cleanup is not confirmed.".into()}));
             return;
         }
-        if stopping.is_none() { match commands.try_recv() {
+        if stopping.is_none() {
+            let next=if let Some(a)=automatic.as_ref(){
+                let s=locked(&shared).clone();
+                if s.stage==Stage::AwaitingApproval&&s.device_id.is_some(){
+                    if s.local_key.as_deref()!=Some(a.local_key.as_str())||!s.armed||!host{
+                        failure=Some("Saved host identity or authorization changed".into());Err(TryRecvError::Empty)
+                    }else{
+                        let a=automatic.take().expect("saved policy present");
+                        Ok(WorkerCommand::Approve(a.peer_key))
+                    }
+                }else{commands.try_recv()}
+            }else{commands.try_recv()};
+            match next {
             Err(TryRecvError::Disconnected) => { stop.store(true, Ordering::Release); continue; }
             Ok(WorkerCommand::Approve(peer)) => {
                 let snapshot = locked(&shared).clone();
@@ -531,9 +551,9 @@ impl SessionManager {
                 command.arg("--desktop-session");
             }
         }
-        self.spawn(command,profile,host,None,false,false,false,None)
+        self.spawn(command,profile,host,None,false,false,false,None,None)
     }
-    fn prepare_routed(&self,role:&str,url:&str,server_id:&str,profile:Profile,display_id:Option<u32>,relay_only:bool,persistent:bool,storage_consent:bool,ca_path:Option<String>,history_path:Option<PathBuf>,quality:&str,transfer_path:Option<String>,volume:u8,extra_displays:Vec<u32>,identity_slot:u8,resume_from:Option<String>,checkpoint_path:Option<String>,shared_identity:bool,secondary:bool,extended:bool,armed:bool)->Result<Snapshot,String>{
+    fn prepare_routed(&self,role:&str,url:&str,server_id:&str,profile:Profile,display_id:Option<u32>,relay_only:bool,persistent:bool,storage_consent:bool,ca_path:Option<String>,history_path:Option<PathBuf>,quality:&str,transfer_path:Option<String>,volume:u8,extra_displays:Vec<u32>,identity_slot:u8,resume_from:Option<String>,checkpoint_path:Option<String>,shared_identity:bool,secondary:bool,extended:bool,armed:bool,automatic:Option<AutoApproval>)->Result<Snapshot,String>{
         if !profile.routed()||url.len()>512{return Err("Invalid routed session configuration".into());}
         if persistent&&!storage_consent{return Err("Persistent routed identity requires explicit native storage consent".into());}
         if shared_identity&&(!persistent||role!="controller"||!matches!(profile,Profile::RoutedTest|Profile::RoutedView|Profile::RoutedControl|Profile::RoutedAvView|Profile::RoutedAvControl)){return Err("Shared identity requires an explicitly selected persistent outgoing desktop session".into());}
@@ -542,7 +562,7 @@ impl SessionManager {
         let host=match role{"host"=>true,"controller"=>false,_=>return Err("Unknown routed role".into())};
         if armed&&(!host||!persistent||!matches!(profile,Profile::RoutedView|Profile::RoutedControl)){return Err("Armed host requires persistent identity and screen-only host mode".into());}
         #[cfg(target_os="linux")]
-        {if !matches!(profile,Profile::RoutedTest|Profile::RoutedView)||persistent||armed||secondary{return Err("Linux candidate supports temporary X11 view or synthetic test only".into());}if profile==Profile::RoutedView{remote_ex_desktop_features::platform::require_linux_x11()?;}}
+        {if !matches!(profile,Profile::RoutedTest|Profile::RoutedView|Profile::RoutedControl)||persistent||armed||secondary{return Err("Linux candidate supports temporary X11 screen view/control or synthetic test only".into());}if matches!(profile,Profile::RoutedView|Profile::RoutedControl){remote_ex_desktop_features::platform::require_linux_x11()?;}}
         if extended&&!matches!(profile,Profile::RoutedView|Profile::RoutedControl|Profile::RoutedAvView|Profile::RoutedAvControl){return Err("Extended lease is restricted to native display sessions".into());}
         if secondary&&(!cfg!(any(target_os="windows",target_os="macos"))||!host||!matches!(profile,Profile::RoutedControl|Profile::RoutedAvControl)){return Err("Experimental secondary display control requires Windows or macOS host control".into());}
         if (resume_from.is_some()||checkpoint_path.is_some())&&!profile.exchange().is_some_and(|(kind,sender)|kind=="file"&&sender!=host){return Err("Checkpoint options require the local file receiver".into());}
@@ -623,9 +643,9 @@ impl SessionManager {
         command.arg("--desktop-session");
         let history=history_path.map(|path|(path,remote_ex_signaling::hex(&pin)));
         if armed{command.arg("--armed-host");}
-        self.spawn(command,profile,host,history,secondary,extended,armed,Some(remote_ex_signaling::hex(&pin)))
+        self.spawn(command,profile,host,history,secondary,extended,armed,Some(remote_ex_signaling::hex(&pin)),automatic)
     }
-    fn spawn(&self,mut command:Command,profile:Profile,host:bool,history:Option<(PathBuf,String)>,secondary:bool,extended:bool,armed:bool,server_scope:Option<String>)->Result<Snapshot,String>{
+    fn spawn(&self,mut command:Command,profile:Profile,host:bool,history:Option<(PathBuf,String)>,secondary:bool,extended:bool,armed:bool,server_scope:Option<String>,automatic:Option<AutoApproval>)->Result<Snapshot,String>{
         let mut worker=locked(&self.worker);
         if worker.as_ref().is_some_and(|w|!w.join.is_finished()){return Err("A remote session is already running".into());}
         if let Some(old)=worker.take(){let _=old.join.join();}
@@ -636,14 +656,14 @@ impl SessionManager {
         }
         let child = command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped())
             .spawn().map_err(|e| format!("Cannot start native media diagnostic: {e}"))?;
-        *locked(&self.shared) = Snapshot { stage: Stage::Starting, active: true, local_key: None, detail: None, profile, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, transfer_paused:false, checkpoint_saved:None, directory_entries:None, clipboard_sent:None, clipboard_received:None, catalog:Vec::new(), catalog_ready:false,catalog_selected:None,manage_review:None,manage_token:None,manage_submitted:false,manage_approved:false,manage_applied:None,secondary_control:secondary,armed,server_scope,extended,stream_quality:None,stream_decoded:None,resume_offset:None, audio_volume:None, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None };
+        *locked(&self.shared) = Snapshot { stage: Stage::Starting, active: true, local_key: None, detail: None, profile, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, transfer_paused:false, checkpoint_saved:None, directory_entries:None, clipboard_sent:None, clipboard_received:None, catalog:Vec::new(), catalog_ready:false,catalog_selected:None,manage_review:None,manage_token:None,manage_submitted:false,manage_approved:false,manage_applied:None,secondary_control:secondary,armed,saved_policy:automatic.is_some(),server_scope,extended,stream_quality:None,stream_decoded:None,resume_offset:None, audio_volume:None, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None };
         let (tx, rx) = mpsc::sync_channel(4);
         let shared = self.shared.clone();
         let stop = Arc::new(AtomicBool::new(false));
         let worker_stop = stop.clone();
         let join = thread::spawn(move || {
             let started=Instant::now();
-            supervise(ChildGuard(child), rx, shared.clone(), profile, host, worker_stop);
+            supervise(ChildGuard(child), rx, shared.clone(), profile, host, worker_stop,automatic);
             if let Some((path,server))=history{
                 let snap=locked(&shared).clone();
                 let mode=match profile{Profile::RoutedTest=>"test",Profile::RoutedView|Profile::RoutedAvView=>"view",Profile::RoutedControl|Profile::RoutedAvControl=>"control",_=>return};
@@ -862,8 +882,28 @@ pub fn routed_prepare(window:WebviewWindow,manager:State<'_,SessionManager>,mana
         if exclusive||slots.exclusive[n]{return Err("Host and content-sharing sessions require exclusive access".into());}
         if persistent&&slots.identity_slot[n]==Some(identity)&&!(shared&&slots.shared[n]){return Err("Choose shared identity in all slots using the same device ID".into());}
     }
-    let result=slots.sessions[i].prepare_routed(&role,url.trim(),server_id.trim(),profile,display_id,relay_only,persistent,storage_consent,ca_path,history,quality.as_deref().unwrap_or("compat"),transfer_path,volume.unwrap_or(75),extra_displays.unwrap_or_default(),identity,resume_from,checkpoint_path,shared,secondary_control.unwrap_or(false),extended.unwrap_or(false),armed.unwrap_or(false))?;
+    let result=slots.sessions[i].prepare_routed(&role,url.trim(),server_id.trim(),profile,display_id,relay_only,persistent,storage_consent,ca_path,history,quality.as_deref().unwrap_or("compat"),transfer_path,volume.unwrap_or(75),extra_displays.unwrap_or_default(),identity,resume_from,checkpoint_path,shared,secondary_control.unwrap_or(false),extended.unwrap_or(false),armed.unwrap_or(false),None)?;
     slots.exclusive[i]=exclusive;slots.identity_slot[i]=persistent.then_some(identity);slots.shared[i]=shared;Ok(result)
+}
+/// Locally activating a persisted, independently scoped policy arms exactly
+/// one visible session in slot zero. No automatic login or repeated rearming.
+#[tauri::command]
+pub async fn host_policy_activate(window:WebviewWindow,manager:State<'_,SessionManager>,managers:State<'_,RoutedManagers>,server_id:String,device_id:String,confirmed:bool)->Result<Snapshot,String>{
+    require_main(&window)?;
+    if !confirmed||!cfg!(any(target_os="windows",target_os="macos")){return Err("Explicit saved host policy activation is required on Windows/macOS".into());}
+    let path=crate::trust::database_path(&window)?;
+    let policy=crate::policy::get(&path,&server_id,&device_id)?;
+    let check=policy.clone();
+    tauri::async_runtime::spawn_blocking(move||crate::policy::verify_display(&check)).await.map_err(|_|"Display verification task failed")??;
+    let mut slots=locked(&managers.slots);
+    if manager.busy()||slots.sessions.iter().any(SessionManager::busy){return Err("Finish all other sessions first".into());}
+    // Re-read the exact policy under the registry lock. A concurrent revoke
+    // either prevents this start or subsequently stops the newly armed child.
+    if crate::policy::get(&path,&server_id,&device_id)?!=policy{return Err("Saved host policy changed".into());}
+    let profile=match policy.mode.as_str(){"view"=>Profile::RoutedView,"control"=>Profile::RoutedControl,_=>return Err("Invalid policy mode".into())};
+    let auto=AutoApproval{peer_key:policy.peer_key.clone(),local_key:policy.host_key.clone(),expires_at:policy.expires_at};
+    let result=slots.sessions[0].prepare_routed("host",&policy.url,&policy.server_id,profile,Some(policy.display_id),policy.relay_only,true,true,None,Some(path),&policy.quality,None,75,Vec::new(),0,None,None,false,false,policy.extended,true,Some(auto))?;
+    slots.exclusive[0]=true;slots.identity_slot[0]=Some(0);slots.shared[0]=false;Ok(result)
 }
 #[tauri::command]
 pub fn lan_confirm(window: WebviewWindow, manager: State<'_, SessionManager>, peer_key: String, approved: bool) -> Result<Snapshot, String> {
@@ -880,6 +920,7 @@ pub fn routed_confirm(window:WebviewWindow,managers:State<'_,RoutedManagers>,slo
     let expected=remote_ex_signaling::hex(&remote_ex_security::fingerprint(&key));
     if expected!=device_id.trim().to_ascii_lowercase(){return Err("Device ID does not match the verified public key".into());}
     let snapshot=manager.snapshot();
+    if snapshot.saved_policy{return Err("Saved policy session has a fixed peer and cannot be manually changed".into());}
     if snapshot.armed{
         let server=snapshot.server_scope.ok_or("Missing armed host server scope")?;
         let trusted=crate::trust::trusted_list(window,server)?;
@@ -914,7 +955,7 @@ mod tests {
     fn control_requires_distinct_consent_and_release_marker() {
         assert_eq!(Profile::Control.consent(true), "ALLOW SCREEN AND INPUT");
         assert_eq!(Profile::Control.consent(false), "ALLOW REMOTE INPUT");
-        let shared = Mutex::new(Snapshot { stage: Stage::Connected, active: true, local_key: None, detail: None, profile: Profile::Control, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, transfer_paused:false, checkpoint_saved:None, directory_entries:None, clipboard_sent:None, clipboard_received:None, catalog:Vec::new(), catalog_ready:false,catalog_selected:None,manage_review:None,manage_token:None,manage_submitted:false,manage_approved:false,manage_applied:None,secondary_control:false,armed:false,server_scope:None,extended:false,stream_quality:None,stream_decoded:None,resume_offset:None, audio_volume:None, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None });
+        let shared = Mutex::new(Snapshot { stage: Stage::Connected, active: true, local_key: None, detail: None, profile: Profile::Control, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, transfer_paused:false, checkpoint_saved:None, directory_entries:None, clipboard_sent:None, clipboard_received:None, catalog:Vec::new(), catalog_ready:false,catalog_selected:None,manage_review:None,manage_token:None,manage_submitted:false,manage_approved:false,manage_applied:None,secondary_control:false,armed:false,saved_policy:false,server_scope:None,extended:false,stream_quality:None,stream_decoded:None,resume_offset:None, audio_volume:None, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None });
         let (mut pass, mut failure) = (false, None);
         stage(&shared, Stage::Stopping, None);
         assert!(locked(&shared).active);
@@ -924,7 +965,7 @@ mod tests {
     }
     #[test]
     fn status_requires_valid_local_key_and_terminal_state() {
-        let shared = Mutex::new(Snapshot { stage: Stage::Starting, active: true, local_key: None, detail: None, profile: Profile::Diagnostic, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, transfer_paused:false, checkpoint_saved:None, directory_entries:None, clipboard_sent:None, clipboard_received:None, catalog:Vec::new(), catalog_ready:false,catalog_selected:None,manage_review:None,manage_token:None,manage_submitted:false,manage_approved:false,manage_applied:None,secondary_control:false,armed:false,server_scope:None,extended:false,stream_quality:None,stream_decoded:None,resume_offset:None, audio_volume:None, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None });
+        let shared = Mutex::new(Snapshot { stage: Stage::Starting, active: true, local_key: None, detail: None, profile: Profile::Diagnostic, input_released: false, device_id: None, peer_id: None, decoded_fps: None, decoded_bps: None, transfer_done:None, transfer_total:None, transfer_verified:false, transfer_paused:false, checkpoint_saved:None, directory_entries:None, clipboard_sent:None, clipboard_received:None, catalog:Vec::new(), catalog_ready:false,catalog_selected:None,manage_review:None,manage_token:None,manage_submitted:false,manage_approved:false,manage_applied:None,secondary_control:false,armed:false,saved_policy:false,server_scope:None,extended:false,stream_quality:None,stream_decoded:None,resume_offset:None, audio_volume:None, network_bps:None, rtt_ms:None, loss_pct:None, route_type:None });
         let (mut pass, mut fail) = (false, None);
         handle_output(&shared, Output::Stdout(format!("KEY {}", "ab".repeat(32))), &mut pass, &mut fail);
         assert_eq!(locked(&shared).stage, Stage::AwaitingApproval);

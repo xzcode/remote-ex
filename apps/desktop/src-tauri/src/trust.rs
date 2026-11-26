@@ -12,8 +12,8 @@ fn canonical_key(s:&str)->Result<PublicKey,String>{
     let bytes=decode_hex::<32>(s).map_err(|_|"Expected full 64-character hexadecimal key")?;
     if bytes==[0;32]{return Err("Zero key is not valid".into());}Ok(bytes)
 }
-fn scope(s:&str)->Result<String,String>{Ok(hex(&canonical_key(s)?))}
-fn open(path:&Path)->Result<Connection,String>{
+pub(crate) fn scope(s:&str)->Result<String,String>{Ok(hex(&canonical_key(s)?))}
+pub(crate) fn open(path:&Path)->Result<Connection,String>{
     let db=Connection::open(path).map_err(|_|"Cannot open trusted device database")?;
     db.busy_timeout(std::time::Duration::from_secs(2)).map_err(|_|"Cannot configure database")?;
     db.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE IF NOT EXISTS trusted_device (
@@ -22,6 +22,12 @@ fn open(path:&Path)->Result<Connection,String>{
       PRIMARY KEY(server_id,device_id), UNIQUE(server_id,label)
     ); CREATE TABLE IF NOT EXISTS device_metadata (
       server_id TEXT NOT NULL,device_id TEXT NOT NULL,group_name TEXT NOT NULL DEFAULT '',note TEXT NOT NULL DEFAULT '',favorite INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY(server_id,device_id), FOREIGN KEY(server_id,device_id) REFERENCES trusted_device(server_id,device_id) ON DELETE CASCADE
+    ); CREATE TABLE IF NOT EXISTS host_policy (
+      server_id TEXT NOT NULL,device_id TEXT NOT NULL,peer_key TEXT NOT NULL,host_key TEXT NOT NULL,url TEXT NOT NULL,
+      display_id INTEGER NOT NULL,display_name TEXT NOT NULL,display_width INTEGER NOT NULL,display_height INTEGER NOT NULL,
+      mode TEXT NOT NULL CHECK(mode IN ('view','control')),quality TEXT NOT NULL,
+      relay_only INTEGER NOT NULL,extended INTEGER NOT NULL,expires_at INTEGER NOT NULL,
       PRIMARY KEY(server_id,device_id), FOREIGN KEY(server_id,device_id) REFERENCES trusted_device(server_id,device_id) ON DELETE CASCADE
     ); CREATE TABLE IF NOT EXISTS session_history (
       id INTEGER PRIMARY KEY,server_id TEXT NOT NULL,device_id TEXT NOT NULL,mode TEXT NOT NULL,ended_at INTEGER NOT NULL,outcome TEXT NOT NULL,duration_sec INTEGER NOT NULL
@@ -35,7 +41,7 @@ pub(crate) fn database_path(window:&WebviewWindow)->Result<std::path::PathBuf,St
     Ok(dir.join("trusted-devices.sqlite3"))
 }
 fn database(window:&WebviewWindow)->Result<Connection,String>{open(&database_path(window)?)} 
-fn list(db:&Connection,server:&str)->Result<Vec<TrustedDevice>,String>{
+pub(crate) fn list(db:&Connection,server:&str)->Result<Vec<TrustedDevice>,String>{
     let server=scope(server)?;
     let mut statement=db.prepare("SELECT d.device_id,d.public_key,d.label,coalesce(m.group_name,''),coalesce(m.note,''),coalesce(m.favorite,0) FROM trusted_device d LEFT JOIN device_metadata m ON d.server_id=m.server_id AND d.device_id=m.device_id WHERE d.server_id=?1 ORDER BY coalesce(m.favorite,0) DESC,coalesce(m.group_name,''),d.label LIMIT 257").map_err(|_|"Cannot read trust records")?;
     let rows=statement.query_map([server],|r|Ok(TrustedDevice{device_id:r.get(0)?,public_key:r.get(1)?,label:r.get(2)?,group_name:r.get(3)?,note:r.get(4)?,favorite:r.get(5)?})).map_err(|_|"Cannot read trust records")?;
