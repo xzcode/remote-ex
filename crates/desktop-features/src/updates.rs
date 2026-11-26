@@ -8,9 +8,9 @@ pub const RELEASES_API:&str="https://api.github.com/repos/xzcode/remote-ex/relea
 #[derive(Deserialize)]
 struct RemoteRelease{tag_name:String,draft:bool,prerelease:bool,assets:Vec<RemoteAsset>}
 #[derive(Deserialize)]
-struct RemoteAsset{name:String,state:String,size:u64}
+struct RemoteAsset{name:String,state:String,size:u64,#[serde(default)]digest:Option<String>}
 #[derive(Debug,Clone,Serialize,PartialEq,Eq)]
-pub struct Asset{pub name:String,pub size:u64}
+pub struct Asset{pub name:String,pub size:u64,pub sha256:Option<String>}
 #[derive(Debug,Clone,Serialize,PartialEq,Eq)]
 pub struct Candidate{pub tag:String,pub prerelease:bool,pub assets:Vec<Asset>}
 #[derive(Debug,Clone,Serialize,PartialEq,Eq)]
@@ -32,6 +32,15 @@ fn suffixes(platform:&str,arch:&str)->Option<&'static [&'static str]>{
         _=>None,
     }
 }
+fn digest(value:Option<&str>)->Option<String>{
+    let s=value?.strip_prefix("sha256:")?;
+    (s.len()==64&&s.bytes().all(|b|b.is_ascii_digit()||(b'a'..=b'f').contains(&b))).then(||s.to_owned())
+}
+/// Build only exact official release-page URLs, never trust a URL from remote metadata.
+pub fn release_page(tag:&str)->Result<String,String>{
+    version(tag).ok_or("Invalid published release tag")?;
+    Ok(format!("{RELEASES_PAGE}/tag/{tag}"))
+}
 pub fn select(json:&[u8],installed:Option<&str>,commit:Option<&str>,platform:&str,arch:&str,include_previews:bool)->Result<Report,String>{
     if json.len()>1024*1024{return Err("Release metadata exceeds limit".into());}
     let rows:Vec<RemoteRelease>=serde_json::from_slice(json).map_err(|_|"Invalid official release response")?;
@@ -49,7 +58,7 @@ pub fn select(json:&[u8],installed:Option<&str>,commit:Option<&str>,platform:&st
         for suffix in suffixes{
             let expected=format!("{PREFIX}{}-{suffix}",row.tag_name);
             let mut matching=row.assets.iter().filter(|a|a.name==expected&&a.state=="uploaded"&&a.size>0&&a.size<=1024*1024*1024);
-            if let Some(a)=matching.next(){if matching.next().is_none(){assets.push(Asset{name:a.name.clone(),size:a.size});}}
+            if let Some(a)=matching.next(){if matching.next().is_none(){assets.push(Asset{name:a.name.clone(),size:a.size,sha256:digest(a.digest.as_deref())});}}
         }
         if assets.is_empty(){continue;}
         if best.as_ref().is_none_or(|(old,_)|v>*old){best=Some((v,Candidate{tag:row.tag_name,prerelease:row.prerelease,assets}));}
@@ -63,6 +72,12 @@ pub fn select(json:&[u8],installed:Option<&str>,commit:Option<&str>,platform:&st
 #[cfg(test)]mod tests{
     use super::*;
     fn rows()->Vec<u8>{br#"[{"tag_name":"v0.1.0-alpha.10","draft":false,"prerelease":true,"assets":[{"name":"Remote-EX-v0.1.0-alpha.10-Windows-x64.zip","state":"uploaded","size":1}]},{"tag_name":"v0.1.0","draft":false,"prerelease":false,"assets":[{"name":"Remote-EX-v0.1.0-Windows-x64.zip","state":"uploaded","size":1}]},{"tag_name":"v9.0.0","draft":true,"prerelease":false,"assets":[{"name":"Remote-EX-v9.0.0-Windows-x64.zip","state":"uploaded","size":1}]}]"#.to_vec()}
+    #[test]fn only_exact_release_links_and_digests(){
+        assert_eq!(release_page("v0.1.0-alpha.1").unwrap(),"https://github.com/xzcode/remote-ex/releases/tag/v0.1.0-alpha.1");
+        assert!(release_page("v1.0.0/../other").is_err());
+        assert_eq!(digest(Some(&format!("sha256:{}","ab".repeat(32)))),Some("ab".repeat(32)));
+        assert!(digest(Some("sha256:bad")).is_none());assert!(digest(Some("https://example.org")).is_none());
+    }
     #[test]fn semantic_order_and_exact_assets(){
         let x=select(&rows(),Some("v0.1.0-alpha.2"),None,"windows","x86_64",true).unwrap();
         assert_eq!(x.status,"update_available");assert_eq!(x.candidate.unwrap().tag,"v0.1.0");

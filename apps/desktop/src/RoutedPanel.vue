@@ -3,6 +3,7 @@ import {computed,ref,watch,onMounted,onBeforeUnmount,nextTick} from "vue";
 import {invoke,isTauri} from "@tauri-apps/api/core";
 import type {TextKey} from "./i18n";
 import {getCurrentWebview} from "@tauri-apps/api/webview";
+import ServerProfiles from "./ServerProfiles.vue";
 type Stage="idle"|"starting"|"awaiting_approval"|"connecting"|"listening"|"connected"|"stopping"|"passed"|"failed"|"canceled";
 type CatalogEntry={parts:string[];directory:boolean;size:number};
 type Change={op:'create_folder';parent:number|null;name:string}|{op:'create_file';parent:number|null;name:string}|{op:'rename';index:number;name:string}|{op:'recycle';index:number}|{op:'restore';index:number;parent:number|null;name:string};
@@ -151,6 +152,7 @@ onBeforeUnmount(()=>{disposed=true;stopDrop?.();if(timer!==undefined)window.clea
  <div class="field">
   <label>{{ t("presenceUrl") }}</label><input v-model="url" placeholder="wss://…/v1/ws" maxlength="512" :disabled="busy||snapshot.active"/>
   <label>{{ t("presenceServerId") }}</label><input v-model="serverId" maxlength="64" class="key-input" :disabled="busy||snapshot.active"/>
+  <ServerProfiles :t="t" :url="url" :server-id="serverId" :disabled="busy||snapshot.active" @apply="p=>{url=p.url;serverId=p.server_id;ca='';trusted=[];chosen='';peerId='';peerKey='';approved=false;}"/>
   <label>{{ t("routedCa") }}</label><input v-model="ca" maxlength="1024" :disabled="busy||snapshot.active"/>
   <label>{{ t("sessionProfile") }}</label><select v-model="mode" :disabled="busy||snapshot.active"><option value="test">{{ t("secureTest") }}</option><option value="view">{{ t("screenView") }}</option><option value="control">{{ t("controlMode") }}</option><option value="av_view">{{ t("avView") }}</option><option value="av_control">{{ t("avControl") }}</option><option value="file">{{ t("exchangeFile") }}</option><option value="directory">{{ t("exchangeDirectory") }}</option><option value="catalog">{{ t("catalogMode") }}</option><option value="catalog_batch">{{ t("catalogBatchMode") }}</option><option value="manage">{{ t("manageMode") }}</option><option value="power">{{ t("powerMode") }}</option><option value="text">{{ t("exchangeText") }}</option><option value="clipboard_sync">{{ t("clipboardSync") }}</option><option value="png">{{ t("exchangeImage") }}</option><option value="audio">{{ t("audioMode") }}</option></select>
   <label>{{ t("lanRole") }}</label><select v-model="role" :disabled="busy||snapshot.active"><option value="controller">{{ t("lanController") }}</option><option value="host">{{ t("lanHost") }}</option></select>

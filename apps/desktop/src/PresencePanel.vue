@@ -3,6 +3,7 @@ import { computed, onMounted, onBeforeUnmount, ref, watch } from "vue";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import type { TextKey } from "./i18n";
 import TrustPanel from "./TrustPanel.vue";
+import ServerProfiles from "./ServerProfiles.vue";
 type Stage = "offline" | "connecting" | "online" | "reconnecting" | "stopping" | "failed";
 type DeviceStatus={device_id:string;online:boolean;busy:boolean};
 type Snapshot = {devices?:DeviceStatus[];checked_at?:number|null;stage:Stage; active:boolean; device_id:string|null; public_key:string|null; retries:number; persistent:boolean; heartbeats:number; declined_requests:number; detail:string|null};
@@ -84,6 +85,7 @@ onBeforeUnmount(()=>{
         <label for="presence-pin">{{ t("presenceServerId") }}</label>
         <input id="presence-pin" v-model="serverId" maxlength="64" spellcheck="false" autocomplete="off" class="key-input" :disabled="busy||snapshot.active"/>
         <p class="muted">{{ t("presencePinHelp") }}</p>
+        <ServerProfiles :t="t" :url="url" :server-id="serverId" :disabled="busy||snapshot.active" @apply="p=>{url=p.url;serverId=p.server_id;}"/>
         <label class="check-label">
           <input type="checkbox" v-model="persistent" :disabled="busy||snapshot.active"/>
           {{ t("presenceStorageConsent") }}

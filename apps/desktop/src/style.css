@@ -63,3 +63,5 @@ label { font-weight: 600; user-select: none; }
 .runtime-elements{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 12px}.runtime-elements code{font-size:12px;border:1px solid var(--border);border-radius:4px;padding:3px 6px;overflow-wrap:anywhere}.runtime-report{width:100%;max-width:100%;box-sizing:border-box;resize:vertical;font-family:monospace;overflow:auto}
 
 .asset-name{overflow-wrap:anywhere;min-width:0}.preference-row>span{overflow-wrap:anywhere;min-width:0;text-align:right}.nav-item{height:auto;min-height:40px;padding-top:8px;padding-bottom:8px;white-space:normal;line-height:1.3}
+
+.server-profiles{border:1px solid var(--border);border-radius:5px;padding:8px 10px;margin:8px 0}.server-profiles summary{cursor:pointer;font-weight:500}.server-profiles .field{margin-top:10px}.server-profiles select{min-width:0;max-width:100%;flex:1}.profile-id{font-family:monospace;overflow-wrap:anywhere}

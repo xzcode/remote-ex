@@ -9,6 +9,7 @@ mod policy;
 mod power_local;
 mod runtime_check;
 mod update;
+mod server_profiles;
 use tauri::Manager;
 
 fn main() {
@@ -25,6 +26,10 @@ fn main() {
             update::build_info,
             update::check_updates,
             update::open_help,
+            update::open_release,
+            server_profiles::server_profiles_list,
+            server_profiles::server_profile_save,
+            server_profiles::server_profile_remove,
             service::startup_status,
             service::startup_change,
             service::stop_all,

@@ -1,0 +1,26 @@
+# Explicit opt-in self-hosted TLS service; no default public host binding.
+# Operator supplies read-only config directory and a reviewed environment file.
+services:
+  rendezvous:
+    image: remote-ex-rendezvous:local
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 512m
+    stop_grace_period: 12s
+    restart: "no"
+    env_file:
+      - ${REMOTE_EX_CONFIG_ENV:?Set path to reviewed private environment file}
+    volumes:
+      - type: bind
+        source: ${REMOTE_EX_CONFIG_DIR:?Set private config directory}
+        target: /etc/remote-ex
+        read_only: true
+    ports:
+      - "${REMOTE_EX_HOST_BIND:-127.0.0.1}:47822:47822"

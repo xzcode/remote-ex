@@ -1,0 +1,52 @@
+name: Signaling container preflight
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'deploy/**'
+      - '.dockerignore'
+      - 'servers/signaling/**'
+      - 'crates/rendezvous-protocol/**'
+      - 'crates/security/**'
+      - '.github/workflows/container-ci.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: signaling-container-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build isolated signaling-only image
+        run: docker build -f deploy/Dockerfile -t remote-ex-rendezvous:ci .
+      - name: Verify non-root no-network configuration and rejection gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(docker image inspect remote-ex-rendezvous:ci --format '{{.Config.User}}')" = 10001:10001
+          args=(--rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges --pids-limit 128 --memory 512m)
+          docker run "${args[@]}" remote-ex-rendezvous:ci --check-config | python3 -c 'import json,sys; p=json.load(sys.stdin); assert p["valid"] and not p["network_started"] and p["mode"]=="loopback_ws"'
+          if docker run "${args[@]}" -e REMOTE_EX_SIGNAL_BIND=0.0.0.0:47822 remote-ex-rendezvous:ci --check-config; then exit 1; fi
+          if docker run "${args[@]}" -e REMOTE_EX_SIGNAL_BIND=0.0.0.0:47822 -e REMOTE_EX_PUBLIC_BIND=1 remote-ex-rendezvous:ci --check-config; then exit 1; fi
+      - name: Local container health and graceful SIGTERM (no published ports)
+        shell: bash
+        run: |
+          set -euo pipefail
+          id="$(docker run -d --network none --read-only --cap-drop ALL --security-opt no-new-privileges --pids-limit 128 --memory 512m remote-ex-rendezvous:ci)"
+          trap 'docker rm -f "$id" >/dev/null 2>&1 || true' EXIT
+          # Use the hosted runner's curl inside the isolated container's
+          # network namespace; no published port or extra runtime utility.
+          pid="$(docker inspect "$id" --format '{{.State.Pid}}')"
+          test "$pid" -gt 1
+          ready=0
+          for i in $(seq 1 20); do
+            if sudo nsenter --target "$pid" --net curl --fail --silent --max-time 1 http://127.0.0.1:47822/healthz | grep -Fxq ok; then ready=1; break; fi
+            sleep 1
+          done
+          test "$ready" = 1
+          docker stop --time 10 "$id" >/dev/null
+          test "$(docker inspect "$id" --format '{{.State.ExitCode}}')" = 0

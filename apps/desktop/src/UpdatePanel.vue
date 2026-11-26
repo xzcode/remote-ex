@@ -5,7 +5,7 @@ import type {TextKey} from "./i18n";
 const props=defineProps<{t:(key:TextKey)=>string;blocked:boolean}>();
 const emit=defineEmits<{active:[boolean]}>();
 type Build={version:string;tag:string|null;commit:string|null;platform:string;arch:string};
-type Candidate={tag:string;prerelease:boolean;assets:{name:string;size:number}[]};
+type Candidate={tag:string;prerelease:boolean;assets:{name:string;size:number;sha256:string|null}[]};
 type Report={installed_tag:string|null;build_commit:string|null;status:string;candidate:Candidate|null;include_previews:boolean};
 const build=ref<Build|null>(null),report=ref<Report|null>(null),previews=ref(true),running=ref(false),error=ref("");
 const native=isTauri();let disposed=false;
@@ -19,7 +19,7 @@ async function check(){
  catch(e){if(!disposed)error.value=String(e);}
  finally{if(!disposed){running.value=false;emit("active",false);}}
 }
-async function open(){if(!native||props.blocked)return;try{await invoke("open_help",{target:"releases",confirmed:true});}catch(e){if(!disposed)error.value=String(e);}}
+async function open(){if(!native||props.blocked)return;try{if(report.value?.candidate)await invoke("open_release",{tag:report.value.candidate.tag,confirmed:true});else await invoke("open_help",{target:"releases",confirmed:true});}catch(e){if(!disposed)error.value=String(e);}}
 </script>
 <template>
 <section class="panel">
@@ -32,7 +32,12 @@ async function open(){if(!native||props.blocked)return;try{await invoke("open_he
   <p role="status"><strong>{{ t(key(report.status)) }}</strong></p>
   <template v-if="report.candidate">
    <p>{{ report.candidate.tag }} · {{ t(report.candidate.prerelease?"updatesPreview":"updatesStable") }}</p>
-   <div v-for="asset in report.candidate.assets" :key="asset.name" class="preference-row"><label class="asset-name">{{ asset.name }}</label><span>{{ (asset.size/1048576).toFixed(1) }} MiB</span></div>
+   <div v-for="asset in report.candidate.assets" :key="asset.name" class="field">
+    <div class="preference-row"><label class="asset-name">{{ asset.name }}</label><span>{{ (asset.size/1048576).toFixed(1) }} MiB</span></div>
+    <label v-if="asset.sha256" class="muted">SHA-256 ({{ t("updatesOfficialDigest") }})</label>
+    <input v-if="asset.sha256" class="key-input" readonly :value="asset.sha256" @focus="($event.target as HTMLInputElement).select()"/>
+    <p v-else class="muted">{{ t("updatesDigestUnavailable") }}</p>
+   </div>
    <p class="muted">{{ t("updatesManual") }}</p>
   </template>
  </div>

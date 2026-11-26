@@ -29,6 +29,8 @@ pub(crate) fn open(path:&Path)->Result<Connection,String>{
       mode TEXT NOT NULL CHECK(mode IN ('view','control')),quality TEXT NOT NULL,
       relay_only INTEGER NOT NULL,extended INTEGER NOT NULL,expires_at INTEGER NOT NULL,
       PRIMARY KEY(server_id,device_id), FOREIGN KEY(server_id,device_id) REFERENCES trusted_device(server_id,device_id) ON DELETE CASCADE
+    ); CREATE TABLE IF NOT EXISTS server_profile (
+      server_id TEXT PRIMARY KEY, label TEXT NOT NULL COLLATE NOCASE UNIQUE, url TEXT NOT NULL UNIQUE
     ); CREATE TABLE IF NOT EXISTS session_history (
       id INTEGER PRIMARY KEY,server_id TEXT NOT NULL,device_id TEXT NOT NULL,mode TEXT NOT NULL,ended_at INTEGER NOT NULL,outcome TEXT NOT NULL,duration_sec INTEGER NOT NULL
     );").map_err(|_|"Cannot initialize trusted devices")?;

@@ -52,3 +52,10 @@ pub fn open_help(window:WebviewWindow,target:String,confirmed:bool)->Result<(),S
     };
     window.app_handle().opener().open_url(url,None::<&str>).map_err(|_|"Cannot open default browser".into())
 }
+
+#[tauri::command]
+pub fn open_release(window:WebviewWindow,tag:String,confirmed:bool)->Result<(),String>{
+    local(&window)?;if !confirmed{return Err("Confirm opening an official release page".into());}
+    let url=updates::release_page(&tag)?;
+    window.app_handle().opener().open_url(url,None::<&str>).map_err(|_|"Cannot open official release page".into())
+}

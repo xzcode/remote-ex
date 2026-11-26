@@ -56,3 +56,12 @@ Settings → Version and updates shows compiled tag/commit and manually checks t
 English and simplified Chinese remain the complete existing application dictionaries. German, French, Spanish, Portuguese, Japanese and Korean are partial additional dictionaries with explicit message counts and English fallback for untranslated instructions/consent text. Native sidecar/viewer, OS dialogs and other hard-coded messages are not fully localized. System language selection respects browser/OS language preferences; unsupported locales fall back to English.
 
 New packaged builds embed their exact source commit and refuse missing or mismatching sidecar manifests; source builds without an embedded commit may remain unverified. DEPENDENCIES.json records resolved build inputs from Rust and frontend lockfiles, including dev/target-specific entries; it is not a full SBOM or licensing/compliance audit.
+
+
+## 7. Saved server configurations and exact release metadata
+
+On Server connection or Device ID connection, expand Saved servers, enter the WSS address and independently verified complete server ID, name the configuration and explicitly save. Select a saved server and click Use this configuration to fill the fields. No connection starts. CA paths, credentials, peer keys and authorization are not stored in server profiles. Removing one profile only removes the address book entry, not previously verified device trust; revoke device pins or policies separately. Profiles cannot silently overwrite existing names, URLs or IDs.
+
+The update panel now shows a validated SHA-256 digest if GitHub includes it in official release metadata and can open the exact release page. Check the downloaded file against the published checksum. This remains manual installation, not cryptographic publisher-signature verification or an automatic updater.
+
+For self-hosting, see [deployment instructions](../deploy/README.md): use the new server `--check-config` option before starting it, or build the optional non-root signaling container. These are development candidates; no server is deployed by the app.

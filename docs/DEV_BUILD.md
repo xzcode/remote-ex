@@ -85,3 +85,8 @@ See [INSTALL.md](INSTALL.md). New builds include a fixed sidecar checksum manife
 ## M5 installation and update candidate
 
 The new development workflow stages NSIS current-user Setup.exe, macOS DMG, and Linux DEB in addition to portable archives. Windows uses an isolated hosted-runner installation/uninstallation fixture; macOS mounts the image read-only and verifies the app; Linux extracts the package, checks linked dependency metadata, manifests and runtime. No physical desktop acceptance or real distro installation is claimed. Build metadata carries the source revision and only an explicitly requested tag. Local runtime refuses wrong/missing manifest for embedded-build revisions. DEPENDENCIES.json records lockfile-resolved build inputs, not an audited SBOM. Manual update discovery and six partial additional locales are available. External official runtime and platform-signing limitations remain. New CI pending; alpha.1 stays unchanged.
+
+
+## M5 second integration
+
+Previous 89ba615 native builds succeeded on all three platforms, including NSIS install/uninstall, mounted DMG check and DEB extraction/runtime fixture. Core and Desktop succeeded, standalone media CI canceled. Current changes include offline server preflight, graceful SIGTERM, container/Compose candidate, local saved server configurations and validated official release digest metadata. Six partial locale dictionaries now contain 221 translated entries each. CI remains pending. No public endpoint or new release configured.
