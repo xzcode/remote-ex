@@ -9,8 +9,8 @@
 | M2 | 信令、设备 ID、认证、ICE、TURN、重连 | 实现待验：M2.1/2 本地信令/WSS 通过历史 CI；本批完成端到端 Noise 路由、可信设备/上线、原生 view/control UI、ICE/STUN/TURN、短期凭据、TLS 准入配置与重新注册代码；最新完整媒体/桌面/native-build、物理跨网及生产评审待验证 | 两个网络下直连与强制中继测试，身份、权限与撤销安全检查 |
 | M3 | 设备、音频、多屏、文件、剪贴板、统计、多会话 | 功能候选：10个工作包均有代码，部分子功能未完成；最新自动化与实机验证待办，详见 M3_FULL_HANDOFF.md | 功能端到端操作和权限测试 |
 | M4 | 无人值守、后台服务、Linux、高级能力 | 四批实现候选；alpha.1 自动验收通过，物理设备与未支持平台能力待验 | 分平台验证权限、服务生命周期和明确限制 |
-| M5 | 多语言/主题、安装包、更新、安全与部署、Release | 预览发布已完成；安装诊断、包校验与运行环境改进开发中 | 正式发布清单及三平台验证；未支持能力明示 |
-| M6 | Web、移动主控、管理端及多中继 | 未开始 | 各平台独立验收 |
+| M5 | 多语言/主题、安装包、更新、安全与部署、Release | alpha.1 已发布；八语言字典、安装器、手动更新校验、部署候选已实现；alpha.2 发布验收中，正式签名与实机验收未完 | 正式发布清单及三平台验证；未支持能力明示 |
+| M6 | Web、移动主控、管理端及多中继 | 规划已细化；未实施 | 各平台独立验收 |
 
 ## M0 执行顺序
 M0.1 产品文档与模块边界；M0.2 媒体引擎和原生渲染 spike；M0.3 平台采集/输入权限 spike；M0.4 构建打包及依赖许可证审查；M0.5 ADR、协议 schema 与版本锁定。
@@ -119,3 +119,8 @@ Previous e98ef583 Core [45763059710](https://github.com/xzcode/remote-ex/actions
 ### M5 fourth integrated batch
 
 98cd04a: Core [45763674546](https://github.com/xzcode/remote-ex/actions/runs/45763674546), Desktop [45763674576](https://github.com/xzcode/remote-ex/actions/runs/45763674576), Native media [45763674522](https://github.com/xzcode/remote-ex/actions/runs/45763674522), Linux [45763674521](https://github.com/xzcode/remote-ex/actions/runs/45763674521) and signaling container [45763674555](https://github.com/xzcode/remote-ex/actions/runs/45763674555) passed; Windows/macOS development build 45763674564 was in progress at integration. New candidate completes 423 UI dictionary keys in all eight languages, adds dictionary completeness CI, local system-font rasterization of fixed routed-viewer toolbar labels (CJK/Latin), cached tiles generated off event loop with legible bitmap fallback, Linux Noto CJK fixture; unifies public/private CA selection across preflight, registration, CLI, and media (certificate-only private roots replace public roots), adds private CA to presence UI; enriches build dependency declaration evidence and review flags, and requires container preflight in a future explicitly authorized release gate. No embedded fonts or runtime redistribution, no signed updater, no final project license, no new release or deployed service. New CI, linguistic review, physical install and M4 real-device gates pending. See [third-party review](THIRD_PARTY_REVIEW.md).
+
+
+### M5 alpha.2 release acceptance candidate
+
+3d98ba8 Core 45765313210, media 45765313251, container 45765313211 and Linux 45765313158 succeeded (including actual installed CJK font fixture, Xvfb and DEB). Desktop 45765313261 failed before compilation because the default working directory was apps/desktop and scripts/ci/check_locales.py was looked up there. This candidate fixes the step working directory and script root resolution, and requests v0.1.0-alpha.2 as an experimental prerelease. Seven exact-commit CI workflows required; each native build stamps its two package hashes and publisher cross-checks all six. RELEASE_BUILD.json and SHA256SUMS.txt record run IDs and verified package hashes. New candidate CI and actual publication pending. See [M5 acceptance](M5_ACCEPTANCE.md), [M6 plan](M6_PLAN.md). No physical acceptance, official publisher signature, final license or public service deployment claimed.

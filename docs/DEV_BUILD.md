@@ -100,3 +100,8 @@ Adds WSS challenge preflight with no registration, official-metadata-bound file 
 ## M5 fourth integration
 
 Core, desktop, media, Linux and signaling-container checks for 98cd04a succeeded. Current changes provide complete eight-language UI dictionary coverage, fixed local system-font rendered routed toolbar with CJK fallback, consistent certificate-only private CA scope in presence/preflight/routed CLI, and dependency-license declaration evidence. Actual CJK rendering fixture and native packages still await new CI. No runtime or font redistribution; signing and legal review incomplete. Published alpha.1 unchanged.
+
+
+## alpha.2 release candidate
+
+Previous 3d98ba8 Linux CJK font, DEB and runtime checks passed; Core, media and container succeeded. Desktop dictionary CI failed due to its working directory, corrected for this candidate. The six package formats now carry build-output evidence matched against the seven required CI run IDs; release publication remains pending until all pass. See M5_ACCEPTANCE.md. No real-device or stable-distribution claim.

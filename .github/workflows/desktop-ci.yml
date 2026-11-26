@@ -2,9 +2,9 @@ name: Desktop checks
 on:
   push:
     branches: [master]
-    paths: ['apps/desktop/**', 'crates/rendezvous-client/**', 'crates/rendezvous-protocol/**', 'crates/security/**', 'crates/signaling/**', '.github/workflows/desktop-ci.yml', '.github/preview-release.json']
+    paths: ['apps/desktop/**', 'crates/rendezvous-client/**', 'crates/rendezvous-protocol/**', 'crates/security/**', 'crates/signaling/**', 'scripts/ci/check_locales.py', '.github/workflows/desktop-ci.yml', '.github/preview-release.json']
   pull_request:
-    paths: ['apps/desktop/**', 'crates/rendezvous-client/**', 'crates/rendezvous-protocol/**', 'crates/security/**', 'crates/signaling/**', '.github/workflows/desktop-ci.yml']
+    paths: ['apps/desktop/**', 'crates/rendezvous-client/**', 'crates/rendezvous-protocol/**', 'crates/security/**', 'crates/signaling/**', 'scripts/ci/check_locales.py', '.github/workflows/desktop-ci.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -25,6 +25,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Verify eight complete UI dictionaries
+        working-directory: .
         shell: bash
         run: python3 scripts/ci/check_locales.py
       - uses: actions/setup-node@v4

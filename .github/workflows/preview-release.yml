@@ -67,6 +67,7 @@ jobs:
             echo 'This commit does not explicitly request a preview.'
             exit 0
           fi
+          : > checked-runs.tsv
           for workflow in core-ci.yml desktop-ci.yml input-ci.yml media-engine-ci.yml development-build.yml linux-x11-ci.yml container-ci.yml; do
             runs="$(gh api --method GET "repos/$REPO/actions/workflows/$workflow/runs" -f head_sha="$HEAD_SHA" -f branch=master -f event=push -F per_page=10)"
             row="$(jq -c --arg sha "$HEAD_SHA" '[.workflow_runs[] | select(.head_sha == $sha and .head_branch == "master" and .event == "push")] | sort_by(.id) | last // empty' <<< "$runs")"
@@ -76,6 +77,7 @@ jobs:
             fi
             id="$(jq -r '.id' <<< "$row")"
             [[ "$id" =~ ^[0-9]+$ ]]
+            printf '%s\t%s\n' "$workflow" "$id" >> checked-runs.tsv
             case "$workflow" in
               development-build.yml) echo "desktop_run=$id" >> "$GITHUB_OUTPUT" ;;
               linux-x11-ci.yml) echo "linux_run=$id" >> "$GITHUB_OUTPUT" ;;
@@ -106,6 +108,8 @@ jobs:
         if: steps.gate.outputs.ready == 'true'
         env:
           TAG: ${{ steps.gate.outputs.tag }}
+          DESKTOP_RUN: ${{ steps.gate.outputs.desktop_run }}
+          LINUX_RUN: ${{ steps.gate.outputs.linux_run }}
         shell: bash
         run: |
           set -euo pipefail
@@ -114,6 +118,38 @@ jobs:
           root = pathlib.Path('release')
           tag = os.environ['TAG']
           sha = os.environ['HEAD_SHA']
+          # Native packaging jobs hash their outputs only after installer and
+          # portable smoke checks. Cross-check all six copied packages, including
+          # the opaque Windows Setup and DMG, against their exact native run.
+          packages = []
+          for platform, arch, run, names in [
+              ('windows','X64',os.environ['DESKTOP_RUN'],['Windows-x64.zip','Windows-x64-Setup.exe']),
+              ('macos','ARM64',os.environ['DESKTOP_RUN'],['macOS-arm64.tar.gz','macOS-arm64.dmg']),
+              ('linux','X64',os.environ['LINUX_RUN'],['Linux-x64.tar.gz','Linux-x64.deb']),
+          ]:
+              source = pathlib.Path('downloads') / platform / 'PACKAGE_EVIDENCE.json'
+              assert 0 < source.stat().st_size <= 16384
+              evidence = json.loads(source.read_text(encoding='utf-8'))
+              assert evidence['schema'] == 1 and evidence['commit'] == sha and evidence['tag'] == tag
+              assert evidence['platform'] == platform and evidence['architecture'] == arch and evidence['run_id'] == run
+              records = evidence['packages']
+              assert len(records) == 2
+              assert {p['name'] for p in records} == {'Remote-EX-dev-'+suffix for suffix in names}
+              for suffix in names:
+                  name = f'Remote-EX-{tag}-{suffix}'
+                  native = next(p for p in records if p['name']=='Remote-EX-dev-'+suffix)
+                  path = root/name
+                  assert 0 < path.stat().st_size == native['size'] <= 1024*1024*1024
+                  with path.open('rb') as stream:
+                      digest = hashlib.file_digest(stream,'sha256').hexdigest()
+                  assert digest == native['sha256']
+                  packages.append({'name':name,'size':native['size'],'sha256':digest,'native_run_id':run,'platform':platform})
+          workflows = dict(line.split('\t',1) for line in pathlib.Path('checked-runs.tsv').read_text().splitlines())
+          assert set(workflows) == {'core-ci.yml','desktop-ci.yml','input-ci.yml','media-engine-ci.yml','development-build.yml','linux-x11-ci.yml','container-ci.yml'}
+          assert workflows['development-build.yml'] == os.environ['DESKTOP_RUN'] and workflows['linux-x11-ci.yml'] == os.environ['LINUX_RUN']
+          build = {'schema':1,'tag':tag,'commit':sha,'prerelease':True,'required_workflow_runs':workflows,
+                   'packages':packages,'physical_device_acceptance':'pending','license_review':'incomplete','publisher_signing':'not_established'}
+          (root/'RELEASE_BUILD.json').write_text(json.dumps(build,indent=2)+'\n',encoding='utf-8')
           cases = [
               ('Windows-x64.zip', {'remote-ex-desktop.exe','routed_control.exe','routed_diagnostic.exe','remote-ex-rendezvous.exe'}, 'x64'),
               ('macOS-arm64.tar.gz', {'Remote EX.app/Contents/MacOS/remote-ex-desktop','Remote EX.app/Contents/MacOS/routed_control','Remote EX.app/Contents/MacOS/remote-ex-mac-audio','remote-ex-rendezvous'}, 'arm64'),
@@ -184,7 +220,7 @@ jobs:
           test -s "release/Remote-EX-$TAG-Windows-x64-Setup.exe"
           test -s "release/Remote-EX-$TAG-macOS-arm64.dmg"
           test "$(dpkg-deb -f "release/Remote-EX-$TAG-Linux-x64.deb" Architecture)" = amd64
-          (cd release && sha256sum Remote-EX-* > SHA256SUMS.txt)
+          (cd release && sha256sum Remote-EX-* RELEASE_BUILD.json > SHA256SUMS.txt)
       - name: Publish the immutable alpha release
         if: steps.gate.outputs.ready == 'true'
         env:
@@ -206,7 +242,8 @@ jobs:
           cat > release-notes.md <<'NOTES'
           ## Remote EX alpha preview / 预览版
 
-          Three platform archives built from the same verified source revision.
+          Six packages built from the same verified source revision.
+          七项同提交 CI 全部通过后发布，三平台安装包与便携包均可下载。
           This is an experimental pre-release, not a production-ready remote desktop.
           Includes portable archives, unsigned current-user Windows Setup,
           an ad-hoc signed macOS app in DMG, and Linux DEB for the build distribution. Native Wayland, real-device input/audio, display
@@ -214,14 +251,22 @@ jobs:
           testing on authorized devices. Physical display privacy and Windows/macOS
           virtual display drivers are not supported. Startup is offline by default.
 
+          ### Changes since alpha.1
+          - Windows Setup, macOS DMG and Linux DEB installers in addition to portable archives.
+          - Local runtime/component checks, official release lookup and downloaded-file SHA-256 verification.
+          - Eight complete 423-key UI dictionaries and system-font routed toolbar rendering with fallback.
+          - Saved WSS server configurations, challenge-only connection preflight and consistent private CA validation.
+          - Self-host signaling container, configuration preflight and graceful shutdown; dependency-license evidence.
+          - Smaller Linux archives; no external GStreamer or fonts redistributed.
+
           ### Packages
-          - Windows x64: extract the ZIP and launch the desktop executable. Requires
+          - Windows x64: run the unsigned per-user Setup.exe or extract the ZIP. Requires
             WebView2 and the matching official GStreamer 1.26.11 MSVC x64 runtime.
-          - macOS ARM64: extract the tar.gz containing Remote EX.app. The app is
+          - macOS ARM64: open the DMG and copy Remote EX.app to Applications, or extract tar.gz. The app is
             ad-hoc signed, not Developer ID signed/notarized; requires the official
             GStreamer 1.26.11 framework and ordinary Screen Recording/Accessibility
             permissions when explicitly sharing or controlling a desktop.
-          - Linux x64: extract the development tar.gz (debug build); needs a
+          - Linux x64: use the DEB on a compatible distribution or extract the development tar.gz (debug build); needs a
             compatible Linux distribution, WebKitGTK, GStreamer and the documented
             desktop/portal dependencies. Real Wayland compositor compatibility is
             experimental.
@@ -229,11 +274,14 @@ jobs:
           Each archive includes a rendezvous-server binary for manual self-hosting.
           No public server is deployed by this release. External GStreamer
           runtimes are not bundled. See the included development build guide.
-          Verify downloads with SHA256SUMS.txt before use.
+          Verify downloads with SHA256SUMS.txt before use. RELEASE_BUILD.json records
+          exact source revision, seven successful workflow IDs and all six package hashes.
+          Checksums and ad-hoc signatures do not establish publisher identity.
+          Third-party license review and real-device acceptance remain incomplete.
           NOTES
           printf '\nSource commit: %s\n' "$HEAD_SHA" >> release-notes.md
           printf '\n[Build and runtime guide](https://github.com/%s/blob/%s/docs/DEV_BUILD.md)\n' "$REPO" "$HEAD_SHA" >> release-notes.md
-          gh release create "$TAG" release/Remote-EX-* release/SHA256SUMS.txt \
+          gh release create "$TAG" release/Remote-EX-* release/SHA256SUMS.txt release/RELEASE_BUILD.json \
             --repo "$REPO" --target "$HEAD_SHA" --title "Remote EX $TAG" \
             --notes-file release-notes.md --prerelease --latest=false
           gh release view "$TAG" --repo "$REPO" --json url,tagName,isPrerelease,assets

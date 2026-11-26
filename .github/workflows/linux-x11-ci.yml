@@ -11,6 +11,7 @@ on:
       - 'scripts/ci/check_bundle.py'
       - 'scripts/ci/build_identity.py'
       - 'scripts/ci/dependency_inventory.py'
+      - 'scripts/ci/package_evidence.py'
       - 'scripts/ci/build-linux-deb.sh'
       - 'docs/INSTALL.md'
       - '.github/workflows/linux-x11-ci.yml'
@@ -92,11 +93,14 @@ jobs:
           tar -C dist/linux-dev -czf dist/Remote-EX-dev-Linux-x64.tar.gz .
       - name: Build and inspect Debian installer
         run: bash scripts/ci/build-linux-deb.sh
+      - name: Record verified Linux package evidence
+        run: python3 scripts/ci/package_evidence.py --platform linux --dir dist
       - uses: actions/upload-artifact@v4
         with:
           name: Remote-EX-dev-Linux-x64
           path: |
             dist/Remote-EX-dev-Linux-x64.tar.gz
             dist/Remote-EX-dev-Linux-x64.deb
+            dist/PACKAGE_EVIDENCE.json
           if-no-files-found: error
           retention-days: 14

@@ -31,3 +31,8 @@ Future explicitly approved previews require six platform formats (three portable
 
 ## Expanded preview gate
 Future explicitly approved previews must also pass Signaling container preflight on the exact candidate revision. Package inventory must include internally consistent declared-license evidence and review flags (not an approval of the licenses). Existing alpha.1 remains immutable. See [third-party review](THIRD_PARTY_REVIEW.md).
+
+
+## alpha.2 candidate
+
+Explicitly requested v0.1.0-alpha.2. The preceding Linux, media, core and container checks passed; desktop dictionary invocation failed due to the working directory and is corrected in this candidate. Publication awaits all seven new same-commit runs. Native jobs produce PACKAGE_EVIDENCE.json after package smoke checks. The publisher matches each file's SHA-256 and byte count against its exact native build evidence, verifies archive manifests/metadata/architecture and writes RELEASE_BUILD.json with seven successful run IDs and six package hashes. SHA256SUMS.txt includes all six packages and RELEASE_BUILD.json. The public prerelease must have eight assets (six packages plus two evidence/checksum files). Existing alpha.1 remains immutable; no signing, licensing or physical-device acceptance claimed. See M5_ACCEPTANCE.md.

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Check all current source dictionary keys, without translation services."""
 import json, pathlib, re
-root = pathlib.Path("apps/desktop/src")
+root = pathlib.Path(__file__).resolve().parents[2] / "apps/desktop/src"
 s = (root/"i18n.ts").read_text(encoding="utf-8")
 en, zh = s.split("export const zh",1)
 pattern = r'(?:^|[,\{]\s*|\n\s*)([A-Za-z]\w*)\s*:\s*("(?:\\.|[^"\\])*")'

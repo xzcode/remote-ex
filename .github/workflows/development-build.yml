@@ -14,6 +14,7 @@ on:
       - 'crates/desktop-features/src/viewer_ui.rs'
       - 'scripts/ci/build_identity.py'
       - 'scripts/ci/dependency_inventory.py'
+      - 'scripts/ci/package_evidence.py'
       - 'scripts/ci/build-windows-installer.ps1'
       - 'scripts/ci/windows-installer.nsi'
       - 'scripts/ci/build-macos-dmg.sh'
@@ -199,6 +200,12 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         run: bash scripts/ci/build-macos-dmg.sh
+      - name: Record verified native package evidence
+        shell: bash
+        run: |
+          platform=macos
+          if [ "$RUNNER_OS" = Windows ]; then platform=windows; fi
+          python3 scripts/ci/package_evidence.py --platform "$platform" --dir artifacts
       - uses: actions/upload-artifact@v4
         with:
           name: Remote-EX-dev-${{ runner.os }}-${{ runner.arch }}

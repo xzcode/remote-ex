@@ -83,3 +83,8 @@ The eight application dictionaries contain all 423 current keys. A dictionary co
 Private CA selection is now consistent across server registration, WSS preflight, routed sessions and registration CLI: an explicitly selected certificate-only PEM replaces public trust roots for that connection. Use an absolute local path, no symlink/private key, at most 256 KiB and 32 certificates; hostname and validity checks remain mandatory. No fallback to public roots after a custom CA validation failure. Server profiles do not save CA paths.
 
 Package DEPENDENCIES.json adds declared-license evidence and triage flags; see [third-party review](THIRD_PARTY_REVIEW.md). External GStreamer and WebView2 setup still require the official runtime.
+
+
+## 10. alpha.2 preview candidate
+
+See the [official Releases page](https://github.com/xzcode/remote-ex/releases) for actual published versions. The next requested alpha.2 is not available until its seven same-commit CI checks and publication complete. For alpha.2, choose the matching Setup.exe/ZIP, DMG/TAR.GZ, or DEB/TAR.GZ. Check SHA256SUMS.txt against your selected exact file; RELEASE_BUILD.json records the revision and build workflow IDs. Review [M5 acceptance](M5_ACCEPTANCE.md) for test coverage and unresolved physical device/signing/license gates. No automatic upgrade or runtime install.
