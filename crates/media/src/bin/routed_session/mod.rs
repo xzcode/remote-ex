@@ -22,13 +22,17 @@ mod catalog;
 mod manage;
 mod runtime_quality;
 mod power;
+#[cfg(feature="ci-browser-control")]
+mod browser_control_fixture;
+#[cfg(feature="ci-browser-control")]
+pub async fn run_browser_control_fixture()->MediaResult<()>{browser_control_fixture::run().await}
 use remote_ex_desktop_features::power::PowerAction;
 static CANCEL:AtomicBool=AtomicBool::new(false);
 fn canceled()->bool{CANCEL.load(Ordering::Acquire)}
 #[derive(Clone,Copy,PartialEq,Eq)]
-enum Profile{Test,View,Control,Exchange(exchange::Mode),Audio(bool),ClipboardSync(bool),Catalog,AvTest,AvView,AvControl,Manage,CatalogBatch,ExtendedTest,ExtendedView,ExtendedControl,ExtendedAvView,ExtendedAvControl,Power(bool)}
+enum Profile{Test,View,Control,Exchange(exchange::Mode),Audio(bool),ClipboardSync(bool),Catalog,AvTest,AvView,AvControl,Manage,CatalogBatch,ExtendedTest,ExtendedView,ExtendedControl,ExtendedAvView,ExtendedAvControl,Power(bool),#[cfg(feature="ci-browser-control")] BrowserControlFixture}
 impl Profile{
-    fn code(self)->u8{match self{Self::Test=>0,Self::View=>1,Self::Control=>2,Self::Exchange(mode)=>mode.code(),Self::Audio(test)=>if test{9}else{10},Self::ClipboardSync(test)=>if test{13}else{14},Self::Catalog=>15,Self::AvTest=>16,Self::AvView=>17,Self::AvControl=>18,Self::Manage=>19,Self::CatalogBatch=>20,Self::ExtendedTest=>21,Self::ExtendedView=>22,Self::ExtendedControl=>23,Self::ExtendedAvView=>24,Self::ExtendedAvControl=>25,Self::Power(test)=>if test{26}else{27}}}
+    fn code(self)->u8{match self{Self::Test=>0,Self::View=>1,Self::Control=>2,Self::Exchange(mode)=>mode.code(),Self::Audio(test)=>if test{9}else{10},Self::ClipboardSync(test)=>if test{13}else{14},Self::Catalog=>15,Self::AvTest=>16,Self::AvView=>17,Self::AvControl=>18,Self::Manage=>19,Self::CatalogBatch=>20,Self::ExtendedTest=>21,Self::ExtendedView=>22,Self::ExtendedControl=>23,Self::ExtendedAvView=>24,Self::ExtendedAvControl=>25,Self::Power(test)=>if test{26}else{27},#[cfg(feature="ci-browser-control")] Self::BrowserControlFixture=>2}}
     fn av(self)->bool{matches!(self,Self::AvTest|Self::AvView|Self::AvControl|Self::ExtendedAvView|Self::ExtendedAvControl)}
     fn native_view(self)->bool{matches!(self,Self::View|Self::AvView|Self::ExtendedView|Self::ExtendedAvView)}
     fn native_control(self)->bool{matches!(self,Self::Control|Self::AvControl|Self::ExtendedControl|Self::ExtendedAvControl)}
@@ -36,6 +40,8 @@ impl Profile{
     fn extended(self)->bool{matches!(self,Self::ExtendedTest|Self::ExtendedView|Self::ExtendedControl|Self::ExtendedAvView|Self::ExtendedAvControl)}
     fn grant(self)->u8{remote_ex_security::profiles::get(self.code()).expect("internal profile code").grant}
     fn consent(self,host:bool)->&'static str{match(self,host){
+        #[cfg(feature="ci-browser-control")]
+        (Self::BrowserControlFixture,_)=>"ALLOW BROWSER INERT TEST",
         (Self::Test,_)=>"ALLOW ROUTED TEST",(Self::View,true)=>"ALLOW ROUTED SCREEN",
         (Self::View,false)=>"ALLOW ROUTED VIEW",(Self::Control,true)=>"ALLOW ROUTED SCREEN AND INPUT",
         (Self::Control,false)=>"ALLOW ROUTED INPUT",
@@ -243,6 +249,10 @@ async fn host(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey,relay_o
     peer.set_description(false,&answer)?;
     ice(&peer,conn,&mut cipher,relay_only).await?;
     ready(&peer,&channel,&answer.sdp,true)?;
+    #[cfg(feature="ci-browser-control")]
+    if profile==Profile::BrowserControlFixture{
+        return browser_control_fixture::serve(&peer,&channel,conn,&mut cipher,&session,gate(&proof)?,config).await;
+    }
     if let Profile::Power(test)=profile{
         wait_data(&peer,&channel,conn,READY).await?;channel.send(READY_ACK)?;
         let review=power::host(&peer,&channel,conn,sid).await?;

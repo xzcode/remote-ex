@@ -9,6 +9,8 @@ publish = false
 
 [features]
 default = []
+# Separate CI-only inert browser control host; never select in release builds.
+ci-browser-control = []
 local-screen = ["dep:xcap"]
 native-x11-view = ["local-screen", "dep:fontdb", "dep:ab_glyph", "dep:winit", "dep:softbuffer", "dep:font8x8", "dep:x11rb", "dep:ashpd", "dep:futures-util"]
 native-control = ["local-screen", "dep:fontdb", "dep:ab_glyph", "remote-ex-input/native", "remote-ex-security/native-vault", "dep:minifb", "dep:arboard", "dep:winit", "dep:softbuffer", "dep:font8x8", "dep:windows-sys"]
@@ -75,3 +77,8 @@ required-features = ["native-control"]
 name = "routed_x11_view"
 path = "src/bin/routed_x11_view.rs"
 required-features = ["native-x11-view"]
+
+[[bin]]
+name = "browser_control_fixture"
+path = "src/bin/browser_control_fixture.rs"
+required-features = ["ci-browser-control"]

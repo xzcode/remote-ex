@@ -13,7 +13,8 @@
     "test:input-browser": "node test-input-browser.mjs",
     "test:touch": "node test-touch.mjs",
     "test:session-policy": "node test-session-policy.mjs",
-    "test:connection-book": "node test-connection-book.mjs"
+    "test:connection-book": "node test-connection-book.mjs",
+    "test:control-wss": "node test-control-wss.mjs"
   },
   "devDependencies": {
     "playwright": "1.56.1"

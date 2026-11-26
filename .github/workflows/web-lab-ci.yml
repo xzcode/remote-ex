@@ -4,6 +4,7 @@ on:
     branches: [master]
     paths:
       - 'apps/web/**'
+      - 'crates/media/**'
       - 'crates/security/**'
       - 'servers/signaling/**'
       - 'crates/rendezvous-protocol/**'
@@ -96,6 +97,15 @@ jobs:
         if: ${{ !cancelled() && steps.native_host.outcome == 'success' }}
         working-directory: apps/web
         run: timeout 110s npm run test:native-wss
+      - name: Build separate inert browser control host (no native features)
+        if: ${{ !cancelled() && steps.native_host.outcome == 'success' }}
+        id: control_fixture
+        run: |
+          cargo build --manifest-path crates/media/Cargo.toml --no-default-features --features ci-browser-control --bin browser_control_fixture
+      - name: Authenticated browser control and host-confirmed held-input release
+        if: ${{ !cancelled() && steps.control_fixture.outcome == 'success' }}
+        working-directory: apps/web
+        run: timeout 125s npm run test:control-wss
       - name: Build real X11 view candidate
         if: ${{ !cancelled() && steps.native_host.outcome == 'success' }}
         id: x11_host

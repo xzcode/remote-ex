@@ -183,3 +183,8 @@ f41c864 complete Web CI passed actual independent native VP8 and authorized Xvfb
 ### M6 tenth candidate — extended foreground sessions and runtime quality
 
 Existing profiles 22/23, bilateral 420s route lease and 300s local consent; operator/user explicit opt-in, no silent fallback or renewal. Native quality D2/D3, bounded actual decoder dimensions and full-resolution-only input activation/release, mobile asset staging. Added pure policy and actual Xvfb >30s/quality-switch CI candidate. d8a052a Core/container and iOS simulator job passed, Android and latest browser integration pending. Physical devices, real input/TURN, operations and signing remain open. See [handoff](M6_EXTENDED_HANDOFF.md).
+
+
+### M6 eleventh candidate — actual browser control protocol acceptance
+
+6c84eeb Core and both offline mobile jobs passed. New separate feature-gated, loopback-only inert host shares native profile 2 auth/media and Dispatcher; Chromium uses real controller UI, verifies saved details require fresh consent, explicit activation, geometry, key/button/wheel, host-confirmed ReleaseAll while held, and route close. No OS injection or desktop permission bypass. Latest integration CI pending. See [control acceptance](M6_CONTROL_ACCEPTANCE.md).
