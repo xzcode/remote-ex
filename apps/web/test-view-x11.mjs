@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {chromium,webkit} from "playwright";
 import {stage} from "../../scripts/stage-mobile-client.mjs";
 import {prepare,listen} from "../../deploy/controller-site.mjs";
+import {verifyWebKitPixels} from "../../scripts/ci/webkit-receiver-pixels.mjs";
 import {serve} from "./serve.mjs";
 import {spawn,execFileSync} from "node:child_process";
 import {mkdtempSync,mkdirSync,writeFileSync,rmSync} from "node:fs";
@@ -76,7 +77,10 @@ try{
         await stage(dir,{endpoint,ice:{stun:null,turn:[],relayOnly:false},control:false,extended:false});
         const reviewed=await prepare(dir,{REMOTE_EX_SITE_HOST:"localhost",REMOTE_EX_SITE_PORT:String(sitePort),REMOTE_EX_SITE_TLS_CERT:certs.cert,REMOTE_EX_SITE_TLS_KEY:certs.key});
         web={server:await listen(reviewed),url:"https://localhost:"+sitePort};
-        browser=await webkit.launch({headless:true});
+        // WebKit headless already works without DISPLAY in the identity CI.
+        // Do not allow its renderer to share the native sender's Xvfb.
+        const browserEnv=Object.fromEntries(Object.entries(process.env).filter(([name])=>!["DISPLAY","XAUTHORITY","WAYLAND_DISPLAY","WAYLAND_SOCKET"].includes(name)));
+        browser=await webkit.launch({headless:true,env:browserEnv});
     }else{
         web=await serve(0,null,endpoint,{stun:relay?.stun??null,turn:relay?[relay.turn]:[],relayOnly,control:false,extended});
         browser=await chromium.launch({headless:true,env:{...process.env,HOME:home,XDG_CONFIG_HOME:path.join(home,".config"),XDG_DATA_HOME:path.join(home,".local/share")},args:["--disable-background-networking","--disable-features=WebRtcHideLocalIpsWithMdns","--autoplay-policy=no-user-gesture-required"]});
@@ -132,8 +136,12 @@ try{
     await page.waitForFunction(()=>Number(document.querySelector("#view-frames").textContent)>=10,{},{timeout:10000});
     assert.equal(await page.locator("#view-resolution").textContent(),"960 × 540");
     if(relayOnly)assert.equal(await page.locator("#view-route").textContent(),"Transport: TURN relay");
-    const green=await page.evaluate(()=>{const v=document.querySelector("#view-video");const c=document.createElement("canvas");c.width=v.videoWidth;c.height=v.videoHeight;const ctx=c.getContext("2d");ctx.drawImage(v,0,0);const pixel=ctx.getImageData(480,270,1,1).data;return pixel[1]>120&&pixel[1]>pixel[0]+50&&pixel[1]>pixel[2]+25;});
-    assert(green,"Actual captured Xvfb background absent");
+    if(useWebKit){
+        await verifyWebKitPixels(page);
+    }else{
+        const green=await page.evaluate(()=>{const v=document.querySelector("#view-video");const c=document.createElement("canvas");c.width=v.videoWidth;c.height=v.videoHeight;const ctx=c.getContext("2d");ctx.drawImage(v,0,0);const pixel=ctx.getImageData(480,270,1,1).data;return pixel[1]>120&&pixel[1]>pixel[0]+50&&pixel[1]>pixel[2]+25;});
+        assert(green,"Actual captured Xvfb background absent");
+    }
     assert(await page.locator("#view-next").isDisabled()); // exactly one approved display
     if(extended){
         const start=Date.now();
