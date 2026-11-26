@@ -1005,13 +1005,13 @@ pub fn routed_audio_volume(window:WebviewWindow,managers:State<'_,RoutedManagers
 #[tauri::command]
 pub async fn select_transfer_file(window:WebviewWindow,receive:bool,directory:Option<bool>)->Result<Option<String>,String>{
     require_main(&window)?;
-    #[cfg(any(target_os="windows",target_os="macos"))]
+    #[cfg(any(target_os="windows",target_os="macos",target_os="linux"))]
     {
         let dialog=rfd::AsyncFileDialog::new();
         let file=if directory.unwrap_or(false){dialog.pick_folder().await}else if receive{dialog.save_file().await}else{dialog.pick_file().await};
         file.map(|f|f.path().to_str().map(str::to_owned).ok_or("Unsupported local path".to_owned())).transpose()
     }
-    #[cfg(not(any(target_os="windows",target_os="macos")))]
+    #[cfg(not(any(target_os="windows",target_os="macos",target_os="linux")))]
     {let _=(receive,directory);Err("Native file selection unavailable".into())}
 }
 #[tauri::command]

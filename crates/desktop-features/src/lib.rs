@@ -16,3 +16,5 @@ pub mod bundle;
 pub mod runtime;
 
 pub mod updates;
+
+pub mod viewer_ui;

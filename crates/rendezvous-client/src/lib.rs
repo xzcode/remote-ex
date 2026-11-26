@@ -66,17 +66,8 @@ impl Connection {
         Self::register_scoped(endpoint,identity,roots,true).await
     }
     async fn register_scoped(endpoint:Endpoint,identity:&DeviceIdentity,roots:rustls::RootCertStore,controller_only:bool)->Result<Self>{
-        let tls=rustls::ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
-            .with_safe_default_protocol_versions().map_err(|_|"Invalid TLS configuration")?
-            .with_root_certificates(roots).with_no_client_auth();
-        let cfg=WebSocketConfig::default().max_message_size(Some(MAX_MESSAGE)).max_frame_size(Some(MAX_MESSAGE)).max_write_buffer_size(2*MAX_MESSAGE);
-        let (ws,_)=timeout(CONNECT_LIMIT,connect_async_tls_with_config(endpoint.url.as_str(),Some(cfg),true,Some(Connector::Rustls(Arc::new(tls)))))
-            .await.map_err(|_|"Signaling connection timed out")?.map_err(|_|"Signaling connection or TLS verification failed")?;
-        let mut conn=Self{ws,device_id:hex(&identity.fingerprint()),failed:false,pending:VecDeque::new(),last_ping:Instant::now(),ping_pending:None};
-        let Server::Challenge{server,nonce}=conn.receive(IO_LIMIT).await? else{return Err("Expected registration challenge".into());};
-        let server=decode_hex::<32>(&server).map_err(|_|"Invalid server identity")?;
-        let nonce=decode_hex::<32>(&nonce).map_err(|_|"Invalid registration nonce")?;
-        if endpoint.expected.is_some_and(|expected|expected!=server){return Err("Configured server identity mismatch".into());}
+        let(mut conn,server,nonce)=Self::open_challenge(endpoint,roots).await?;
+        conn.device_id=hex(&identity.fingerprint());
         let public_key=hex(&identity.public_key());
         let registration=if controller_only{Client::RegisterController{public_key,signature:hex(&identity.sign_controller_registration(&server,&nonce))}}
             else{Client::Register{public_key,signature:hex(&identity.sign_registration(&server,&nonce))}};
@@ -85,6 +76,35 @@ impl Connection {
             Server::Registered{device_id} if device_id==conn.device_id=>Ok(conn),
             _=>Err("Server rejected registration or changed the device identity".into()),
         }
+    }
+    async fn open_challenge(endpoint:Endpoint,roots:rustls::RootCertStore)->Result<(Self,[u8;32],[u8;32])>{
+        let tls=rustls::ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+            .with_safe_default_protocol_versions().map_err(|_|"Invalid TLS configuration")?
+            .with_root_certificates(roots).with_no_client_auth();
+        let cfg=WebSocketConfig::default().max_message_size(Some(MAX_MESSAGE)).max_frame_size(Some(MAX_MESSAGE)).max_write_buffer_size(2*MAX_MESSAGE);
+        let (ws,_)=timeout(CONNECT_LIMIT,connect_async_tls_with_config(endpoint.url.as_str(),Some(cfg),true,Some(Connector::Rustls(Arc::new(tls)))))
+            .await.map_err(|_|"Signaling connection timed out")?.map_err(|_|"Signaling connection or TLS verification failed")?;
+        let mut conn=Self{ws,device_id:String::new(),failed:false,pending:VecDeque::new(),last_ping:Instant::now(),ping_pending:None};
+        let Server::Challenge{server,nonce}=conn.receive(IO_LIMIT).await? else{return Err("Expected registration challenge".into());};
+        let server=decode_hex::<32>(&server).map_err(|_|"Invalid server identity")?;
+        let nonce=decode_hex::<32>(&nonce).map_err(|_|"Invalid registration nonce")?;
+        if endpoint.expected.is_some_and(|expected|expected!=server){return Err("Configured server identity mismatch".into());}
+        if server==[0;32]||nonce==[0;32]{return Err("Invalid zero server challenge".into());}
+        Ok((conn,server,nonce))
+
+    }
+    /// Verify the exact WSS endpoint, certificate chain/hostname and expected
+    /// server challenge ID without generating or sending a device identity.
+    /// No registration, enrollment check, ICE or media is performed.
+    pub async fn preflight(endpoint:Endpoint)->Result<()>{
+        let roots=rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+        Self::preflight_with_roots(endpoint,roots).await
+    }
+    pub async fn preflight_with_roots(endpoint:Endpoint,roots:rustls::RootCertStore)->Result<()>{
+        if endpoint.url.scheme()!="wss"||endpoint.expected.is_none(){return Err("Preflight requires a pinned WSS endpoint".into());}
+        let(mut conn,_,_)=Self::open_challenge(endpoint,roots).await?;
+        // Drop the socket immediately; never send a registration proof.
+        conn.failed=true;drop(conn);Ok(())
     }
     pub fn device_id(&self)->&str{&self.device_id}
     async fn send_inner(&mut self,message:Client)->Result<()>{

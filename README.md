@@ -101,3 +101,6 @@ M5 installer/update candidate: see [installation guide](docs/INSTALL.md). New CI
 
 
 M5 second candidate adds [self-host configuration preflight and container setup](deploy/README.md), saved server address/ID profiles, expanded partial locale dictionaries and official release digest display. The previously verified installer development artifacts at 89ba615 are separate from the published alpha.1. New implementation and container CI are not physical-device acceptance.
+
+
+M5 third candidate: check WSS server identity without registering, verify a downloaded release file against official metadata, and use a responsive localized routed-viewer toolbar. See [installation and usage](docs/INSTALL.md). New build acceptance pending.

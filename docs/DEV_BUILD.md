@@ -90,3 +90,8 @@ The new development workflow stages NSIS current-user Setup.exe, macOS DMG, and 
 ## M5 second integration
 
 Previous 89ba615 native builds succeeded on all three platforms, including NSIS install/uninstall, mounted DMG check and DEB extraction/runtime fixture. Core and Desktop succeeded, standalone media CI canceled. Current changes include offline server preflight, graceful SIGTERM, container/Compose candidate, local saved server configurations and validated official release digest metadata. Six partial locale dictionaries now contain 221 translated entries each. CI remains pending. No public endpoint or new release configured.
+
+
+## M5 third integration
+
+Adds WSS challenge preflight with no registration, official-metadata-bound file verification, Linux native portal file picker, localized responsive routed viewer toolbar, and 287 translated entries per additional locale. Core/container checks of e98ef583 succeeded; remaining prior/native and current CI must be verified. This is not a signed updater, actual installation acceptance or full native localization. The published alpha.1 is unchanged.

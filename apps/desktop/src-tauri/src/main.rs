@@ -10,6 +10,8 @@ mod power_local;
 mod runtime_check;
 mod update;
 mod server_profiles;
+mod connection_check;
+mod viewer_locale;
 use tauri::Manager;
 
 fn main() {
@@ -27,6 +29,9 @@ fn main() {
             update::check_updates,
             update::open_help,
             update::open_release,
+            update::verify_release_archive,
+            viewer_locale::set_viewer_locale,
+            connection_check::server_preflight,
             server_profiles::server_profiles_list,
             server_profiles::server_profile_save,
             server_profiles::server_profile_remove,

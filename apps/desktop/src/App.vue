@@ -39,6 +39,7 @@ const t = (key: TextKey) => translate(locale.value,key);
 const buildLabel=ref("Remote EX");
 onMounted(()=>{window.addEventListener("languagechange",refreshLanguage);if(native)void invoke<{version:string;tag:string|null;commit:string|null}>("build_info").then(b=>{buildLabel.value=b.tag??(b.version+" · "+(b.commit?.slice(0,8)??"dev"));}).catch(()=>{});});
 onBeforeUnmount(()=>window.removeEventListener("languagechange",refreshLanguage));
+watch(locale,value=>{if(native)void invoke("set_viewer_locale",{locale:value}).catch(()=>{});},{immediate:true});
 watch([language, theme,locale], ([lang, mode]) => {
   try {
     localStorage.setItem("remote-ex.language", lang);

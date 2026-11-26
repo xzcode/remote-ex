@@ -26,6 +26,10 @@ async fn real_tls_registration_requires_trusted_certificate_hostname_and_server_
     let bad_name=format!("wss://127.0.0.1:{port}/v1/ws");
     assert!(Connection::register_with_roots(Endpoint::secure(&bad_name,[7;32]).unwrap(),&id,roots.clone()).await.is_err());
     assert!(Connection::register_with_roots(Endpoint::secure(&url,[8;32]).unwrap(),&id,roots.clone()).await.is_err());
+    assert!(Connection::preflight_with_roots(Endpoint::secure(&url,[7;32]).unwrap(),roots.clone()).await.is_ok());
+    assert!(Connection::preflight_with_roots(Endpoint::secure(&url,[8;32]).unwrap(),roots.clone()).await.is_err());
+    assert!(Connection::preflight_with_roots(Endpoint::secure(&bad_name,[7;32]).unwrap(),roots.clone()).await.is_err());
+    assert!(Connection::preflight_with_roots(Endpoint::secure(&url,[7;32]).unwrap(),rustls::RootCertStore::empty()).await.is_err());
     let mut conn=Connection::register_with_roots(Endpoint::secure(&url,[7;32]).unwrap(),&id,roots.clone()).await.unwrap();
     assert_eq!(conn.device_id(),remote_ex_signaling::hex(&id.fingerprint()));
     assert!(Connection::register_with_roots(Endpoint::secure(&url,[7;32]).unwrap(),&id,roots).await.is_err());
@@ -204,4 +208,36 @@ async fn shared_controller_identity_is_scoped_to_each_authenticated_socket(){
     c2.close().await.unwrap();c3.close().await.unwrap();h1.close().await.unwrap();h2.close().await.unwrap();
     handle.graceful_shutdown(Some(Duration::from_secs(1)));
     tokio::time::timeout(Duration::from_secs(3),task).await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn preflight_closes_without_sending_device_registration(){
+    use axum::{extract::ws::{Message,WebSocketUpgrade},routing::get,Router};
+    let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    // WSS-only is checked before opening even a loopback plaintext socket.
+    let url=format!("ws://{}/v1/ws",listener.local_addr().unwrap());
+    assert!(Connection::preflight(Endpoint::development(&url).unwrap()).await.is_err());
+    assert!(tokio::time::timeout(Duration::from_millis(100),listener.accept()).await.is_err());
+    let _=rustls::crypto::ring::default_provider().install_default();
+    let rcgen::CertifiedKey{cert,key_pair}=rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+    let mut roots=rustls::RootCertStore::empty();roots.add(cert.der().clone()).unwrap();
+    let cfg=RustlsConfig::from_pem(cert.pem().into_bytes(),key_pair.serialize_pem().into_bytes()).await.unwrap();
+    let listener=std::net::TcpListener::bind("127.0.0.1:0").unwrap();listener.set_nonblocking(true).unwrap();
+    let port=listener.local_addr().unwrap().port();
+    let (tx,mut rx)=tokio::sync::mpsc::channel(1);
+    let app=Router::new().route("/v1/ws",get(move|ws:WebSocketUpgrade|{
+        let tx=tx.clone();
+        async move{ws.on_upgrade(move|mut sock|async move{
+            let message=serde_json::to_string(&remote_ex_rendezvous::protocol::ServerFrame{version:remote_ex_rendezvous::protocol::VERSION,message:Server::Challenge{server:"07".repeat(32),nonce:"08".repeat(32)}}).unwrap();
+            if sock.send(Message::Text(message.into())).await.is_err(){let _=tx.send(false).await;return;}
+            let no_registration=matches!(tokio::time::timeout(Duration::from_secs(3),sock.recv()).await,Ok(None)|Ok(Some(Err(_)))|Ok(Some(Ok(Message::Close(_)))));
+            let _=tx.send(no_registration).await;
+        })}
+    }));
+    let handle=axum_server::Handle::new();let server=axum_server::from_tcp_rustls(listener,cfg).unwrap().handle(handle.clone());
+    let task=tokio::spawn(async move{server.serve(app.into_make_service()).await.unwrap();});
+    tokio::time::timeout(Duration::from_secs(3),handle.listening()).await.unwrap().unwrap();
+    Connection::preflight_with_roots(Endpoint::secure(&format!("wss://localhost:{port}/v1/ws"),[7;32]).unwrap(),roots).await.unwrap();
+    assert_eq!(tokio::time::timeout(Duration::from_secs(4),rx.recv()).await.unwrap(),Some(true));
+    handle.graceful_shutdown(Some(Duration::from_secs(1)));tokio::time::timeout(Duration::from_secs(3),task).await.unwrap().unwrap();
 }

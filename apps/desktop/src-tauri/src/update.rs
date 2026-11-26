@@ -6,6 +6,10 @@ use std::{sync::Mutex,time::{Duration,Instant}};
 use tauri::{Manager,WebviewWindow};
 use tauri_plugin_opener::OpenerExt;
 static LAST:Mutex<Option<Instant>>=Mutex::new(None);
+// Only metadata fetched successfully from the fixed official API can be used
+// by the local archive checker; no caller-supplied hashes or paths.
+static VERIFIED_METADATA:Mutex<Option<(Instant,updates::Candidate)>>=Mutex::new(None);
+static VERIFY_BUSY:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
 #[derive(Serialize)]
 pub struct BuildInfo{version:String,tag:Option<String>,commit:Option<String>,platform:String,arch:String}
 fn local(window:&WebviewWindow)->Result<(),String>{
@@ -37,7 +41,9 @@ pub async fn check_updates(window:WebviewWindow,include_previews:bool,confirmed:
         if bytes.len().saturating_add(chunk.len())>MAX{return Err("Release response exceeds limit".into());}bytes.extend_from_slice(&chunk);
     }
     let b=current();
-    updates::select(&bytes,b.tag.as_deref(),b.commit.as_deref(),&b.platform,&b.arch,include_previews)
+    let report=updates::select(&bytes,b.tag.as_deref(),b.commit.as_deref(),&b.platform,&b.arch,include_previews)?;
+    *VERIFIED_METADATA.lock().map_err(|_|"Release metadata unavailable")?=report.candidate.clone().map(|candidate|(Instant::now(),candidate));
+    Ok(report)
 }
 /// Fixed local buttons only; never accept arbitrary URLs or open downloaded binaries.
 #[tauri::command]
@@ -58,4 +64,23 @@ pub fn open_release(window:WebviewWindow,tag:String,confirmed:bool)->Result<(),S
     local(&window)?;if !confirmed{return Err("Confirm opening an official release page".into());}
     let url=updates::release_page(&tag)?;
     window.app_handle().opener().open_url(url,None::<&str>).map_err(|_|"Cannot open official release page".into())
+}
+
+#[derive(Serialize)]
+pub struct ArchiveCheck{asset:String,matches:bool}
+struct BusyGuard;
+impl Drop for BusyGuard{fn drop(&mut self){VERIFY_BUSY.store(false,std::sync::atomic::Ordering::Release);}}
+#[tauri::command]
+pub async fn verify_release_archive(window:WebviewWindow,tag:String,asset_name:String,confirmed:bool)->Result<Option<ArchiveCheck>,String>{
+    local(&window)?;if !confirmed{return Err("Explicit local archive verification required".into());}
+    if window.state::<crate::lan::SessionManager>().busy()||window.state::<crate::lan::RoutedManagers>().any_busy()||window.state::<crate::presence::PresenceManager>().busy(){return Err("Finish active sessions before verifying an archive".into());}
+    let asset={let saved=VERIFIED_METADATA.lock().map_err(|_|"Release metadata unavailable")?;let (at,candidate)=saved.as_ref().ok_or("Check official release metadata first")?;
+        if at.elapsed()>Duration::from_secs(900)||candidate.tag!=tag{return Err("Refresh official release metadata first".into());}
+        candidate.assets.iter().find(|a|a.name==asset_name&&a.sha256.is_some()).cloned().ok_or("No matching official release digest")?};
+    if VERIFY_BUSY.compare_exchange(false,true,std::sync::atomic::Ordering::AcqRel,std::sync::atomic::Ordering::Acquire).is_err(){return Err("Archive verification already running".into());}
+    let _guard=BusyGuard;
+    let Some(file)=rfd::AsyncFileDialog::new().set_title("Remote EX — verify downloaded release archive").pick_file().await else{return Ok(None);};
+    let path=file.path().to_path_buf();
+    let result=tauri::async_runtime::spawn_blocking(move||updates::check_archive(&path,&asset).map(|matches|ArchiveCheck{asset:asset.name,matches})).await.map_err(|_|"Archive verification interrupted")??;
+    Ok(Some(result))
 }

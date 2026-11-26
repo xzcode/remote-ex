@@ -9,13 +9,22 @@ type Candidate={tag:string;prerelease:boolean;assets:{name:string;size:number;sh
 type Report={installed_tag:string|null;build_commit:string|null;status:string;candidate:Candidate|null;include_previews:boolean};
 const build=ref<Build|null>(null),report=ref<Report|null>(null),previews=ref(true),running=ref(false),error=ref("");
 const native=isTauri();let disposed=false;
+const verification=ref<{asset:string;matches:boolean}|null>(null);
 const key=(status:string):TextKey=>({development:"updatesDevReport",update_available:"updatesAvailable",up_to_date:"updatesCurrent",installed_newer:"updatesNewer",no_compatible_release:"updatesNoRelease"} as Record<string,TextKey>)[status]??"updatesNoRelease";
 onMounted(()=>{if(native)void invoke<Build>("build_info").then(b=>{if(!disposed){build.value=b;previews.value=!b.tag||b.tag.includes("-");}}).catch(e=>{if(!disposed)error.value=String(e);});});
 onBeforeUnmount(()=>{disposed=true;if(running.value)emit("active",false);});
 async function check(){
  if(!native||props.blocked||running.value)return;
- running.value=true;emit("active",true);report.value=null;error.value="";
+ running.value=true;emit("active",true);report.value=null;verification.value=null;error.value="";
  try{const r=await invoke<Report>("check_updates",{includePreviews:previews.value,confirmed:true});if(!disposed)report.value=r;}
+ catch(e){if(!disposed)error.value=String(e);}
+ finally{if(!disposed){running.value=false;emit("active",false);}}
+}
+async function verify(assetName:string){
+ const tag=report.value?.candidate?.tag;
+ if(!native||props.blocked||running.value||!tag)return;
+ running.value=true;emit("active",true);verification.value=null;error.value="";
+ try{const result=await invoke<{asset:string;matches:boolean}|null>("verify_release_archive",{tag,assetName,confirmed:true});if(!disposed)verification.value=result;}
  catch(e){if(!disposed)error.value=String(e);}
  finally{if(!disposed){running.value=false;emit("active",false);}}
 }
@@ -37,6 +46,8 @@ async function open(){if(!native||props.blocked)return;try{if(report.value?.cand
     <label v-if="asset.sha256" class="muted">SHA-256 ({{ t("updatesOfficialDigest") }})</label>
     <input v-if="asset.sha256" class="key-input" readonly :value="asset.sha256" @focus="($event.target as HTMLInputElement).select()"/>
     <p v-else class="muted">{{ t("updatesDigestUnavailable") }}</p>
+    <button v-if="asset.sha256" :disabled="blocked||running" @click="verify(asset.name)">{{ t("updatesVerifyArchive") }}</button>
+    <p v-if="verification?.asset===asset.name" :class="verification.matches?'muted':'error'" role="status">{{ t(verification.matches?"updatesVerifyPassed":"updatesVerifyFailed") }}</p>
    </div>
    <p class="muted">{{ t("updatesManual") }}</p>
   </template>

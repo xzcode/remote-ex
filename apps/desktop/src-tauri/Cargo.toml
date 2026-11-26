@@ -17,6 +17,10 @@ tauri-plugin-autostart = "=2.5.1"
 # Rust-only fixed official release/runtime links and explicit HTTPS metadata.
 tauri-plugin-opener = "2"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-pemfile = "2"
+webpki-roots = "1"
+sha2 = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 xcap = "=0.9.10"
@@ -36,4 +40,5 @@ remote-ex-rendezvous-protocol = { path = "../../../crates/rendezvous-protocol" }
 rfd = { version = "0.15", default-features = false }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "tokio"] }
 ashpd = { version = "=0.14.1", default-features = false, features = ["async-io", "screencast", "remote_desktop"] }

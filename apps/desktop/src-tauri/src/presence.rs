@@ -94,6 +94,7 @@ impl PresenceManager{
         });
         Ok(state.snapshot.clone())
     }
+    pub(crate) fn busy(&self)->bool{locked(&self.inner).snapshot.active}
     pub fn request_stop(&self){
         let mut state=locked(&self.inner);
         if state.snapshot.stage.active(){

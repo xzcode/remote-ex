@@ -4,6 +4,7 @@ use super::*;
 use font8x8::{BASIC_FONTS,UnicodeFonts};
 use prost::Message as _;
 use remote_ex_desktop_features::viewport::{self,Rect};
+use remote_ex_desktop_features::viewer_ui::{self,Locale,Toolbar};
 use remote_ex_protocol::{InputEnvelope,VERSION,input_envelope::Event,Key,PointerButton,PointerMove,Scroll,ReleaseAll};
 use softbuffer::Surface;
 use std::{collections::BTreeSet,num::NonZeroU32,rc::Rc};
@@ -24,7 +25,7 @@ struct Viewer<'a>{
     peer:&'a Peer,channel:&'a ControlChannel,session:[u8;16],geometry:Rect,
     allow_input:bool,input_enabled:bool,av:bool,volume:u8,screens:u8,view_index:Option<u8>,switch_pending:bool,
     window:Option<Rc<Window>>,surface:Option<Surface<Rc<Window>,Rc<Window>>>,
-    size:PhysicalSize<u32>,toolbar:u32,scale:u32,fit:Option<Rect>,last_cursor:Option<(f64,f64)>,
+    size:PhysicalSize<u32>,toolbar:Toolbar,locale:Locale,scale:u32,fit:Option<Rect>,last_cursor:Option<(f64,f64)>,
     focused:bool,armed:bool,physical_keys:BTreeSet<u16>,physical_buttons:BTreeSet<u8>,
     sent_keys:BTreeSet<u16>,sent_buttons:BTreeSet<u8>,previous:Option<(u32,u32)>,seq:u64,
     pixels:Vec<u32>,frames:u32,metric_frames:u32,metric_bytes:u64,last_metric:Instant,last_frame:Instant,
@@ -46,9 +47,9 @@ impl Viewer<'_>{
     fn layout(&mut self,size:PhysicalSize<u32>)->MediaResult<()>{
         self.disarm()?;self.size=size;
         self.scale=self.window.as_ref().map(|w|w.scale_factor().round().clamp(1.0,3.0)as u32).unwrap_or(1);
-        self.toolbar=(32*self.scale).min(size.height);
+        self.toolbar=viewer_ui::toolbar(size.width,size.height,self.scale,!self.allow_input&&self.screens>1,self.extended);
         let config=self.peer.config();
-        self.fit=viewport::fit((config.width,config.height),Rect{x:0,y:self.toolbar,width:size.width,height:size.height.saturating_sub(self.toolbar)});
+        self.fit=viewport::fit((config.width,config.height),Rect{x:0,y:self.toolbar.height,width:size.width,height:size.height.saturating_sub(self.toolbar.height)});
         self.last_cursor=None;
         if size.width==0||size.height==0{return Ok(());}
         if u64::from(size.width)*u64::from(size.height)>MAX_WINDOW_PIXELS{return Err("Viewer window exceeds safe pixel limit".into());}
@@ -137,7 +138,7 @@ impl Viewer<'_>{
     }
     fn paint(&mut self)->MediaResult<()>{
         let(w,h)=(self.size.width,self.size.height);if w==0||h==0{return Ok(());}
-        let config=self.peer.config();let scale=self.scale;let cell=112*scale;
+        let config=self.peer.config();let scale=self.scale;
         let mut buffer=self.surface.as_mut().ok_or("Missing rendering surface")?.buffer_mut().map_err(error)?;
         buffer.fill(0x101418);
         if let Some(f)=self.fit{
@@ -149,15 +150,24 @@ impl Viewer<'_>{
                 }
             }
         }
-        let labels=["Disconnect","Fullscreen",if !self.allow_input{"View only"}else if self.input_enabled{"Pause input"}else{"Enable input"},if self.screens>1{if self.switch_pending{"Switching..."}else{"Next screen"}}else{""},if !self.extended{""}else if self.quality_pending.is_some(){"Changing..."}else{match self.quality_mode{0=>"Quality Auto",1=>"Quality Full",2=>"Quality Mid",_=>"Quality Low"}}];
-        for(i,label)in labels.iter().enumerate(){
-            let x=i as u32*cell;if x>=w||label.is_empty(){continue;}
-            for y in 0..self.toolbar{for xx in x..(x+cell-1).min(w){buffer[(y*w+xx)as usize]=if i==0{0x742d32}else{0x263441};}}
-            draw_text(&mut buffer,w,h,x+5*scale,9*scale,label,scale);
+        let l=self.locale.labels();
+        let labels=[l[0],l[1],if !self.allow_input{l[2]}else if self.input_enabled{l[3]}else{l[4]},if self.switch_pending{l[6]}else{l[5]},if self.quality_pending.is_some(){l[11]}else{match self.quality_mode{0=>l[7],1=>l[8],2=>l[9],_=>l[10]}}];
+        for(i,rect)in self.toolbar.actions.iter().enumerate(){
+            let Some(r)=rect else{continue;};
+            let color=if i==0{0x742d32}else if i==2&&self.allow_input&&self.input_enabled{0x2d5141}else{0x263441};
+            for y in r.y..r.y+r.height.saturating_sub(1){for x in r.x..r.x+r.width.saturating_sub(1){buffer[(y*w+x)as usize]=color;}}
+            let text_width=(labels[i].len()as u32)*8*scale;
+            let x=r.x+(r.width.saturating_sub(text_width))/2;
+            let y=r.y+(r.height.saturating_sub(8*scale))/2;
+            let max_chars=(r.width/(8*scale))as usize;
+            let label=&labels[i][..labels[i].len().min(max_chars)];
+            draw_text(&mut buffer,w,h,x,y,label,scale);
         }
         let summary=if let Some(i)=self.view_index{if i==self.screens{format!("All | {:.0} fps",self.fps)}else{format!("{}/{} | {:.0} fps",i+1,self.screens,self.fps)}}else{format!("{:.0} fps",self.fps)};
-        let offset=if self.extended{5}else{4};
-        if offset*cell<w{draw_text(&mut buffer,w,h,offset*cell+5*scale,9*scale,&summary,scale);}
+        if let Some(r)=self.toolbar.summary{
+            let max_chars=(r.width/(8*scale))as usize;
+            draw_text(&mut buffer,w,h,r.x,r.y+((r.height.saturating_sub(8*scale))/2),&summary[..summary.len().min(max_chars)],scale);
+        }
         buffer.present().map_err(error)
     }
     fn fail(&mut self,el:&ActiveEventLoop,e:String){self.error=Some(e);el.exit();}
@@ -180,7 +190,7 @@ impl ApplicationHandler for Viewer<'_>{
         if self.window.is_some(){return;}
         let c=self.peer.config();
         let result:MediaResult<()>= (||{
-            let window=Rc::new(el.create_window(Window::default_attributes().with_title("Remote EX - Esc disconnects, F11 fullscreen")
+            let window=Rc::new(el.create_window(Window::default_attributes().with_title(self.locale.title())
                 .with_inner_size(LogicalSize::new(c.width.min(1440),c.height.min(900)+32))
                 .with_min_inner_size(LogicalSize::new(450u32,180u32))).map_err(error)?);
             let context=softbuffer::Context::new(window.clone()).map_err(error)?;
@@ -203,10 +213,10 @@ impl ApplicationHandler for Viewer<'_>{
                 WindowEvent::CursorMoved{position,..}=>{self.last_cursor=Some((position.x,position.y));self.reconcile()?;}
                 WindowEvent::MouseInput{state,button,..}=>{
                     if let Some((x,y))=self.last_cursor{
-                        if y>=0.0&&y<f64::from(self.toolbar){
+                        if y>=0.0&&y<f64::from(self.toolbar.height){
                             self.disarm()?;
                             if state==ElementState::Pressed&&button==MouseButton::Left&&self.focused&&x>=0.0{
-                                self.local_action((x as u32)/(112*self.scale),el)?;
+                                if let Some(action)=self.toolbar.hit(x,y){self.local_action(action,el)?;}
                             }
                             let code=match button{MouseButton::Left=>1,MouseButton::Middle=>2,MouseButton::Right=>3,_=>0};
                             if code!=0{if state==ElementState::Pressed{self.physical_buttons.insert(code);}else{self.physical_buttons.remove(&code);}}
@@ -258,7 +268,7 @@ pub(super) fn run(peer:&Peer,channel:&ControlChannel,session:[u8;16],geometry:Ge
     let event_loop:EventLoop<()>=EventLoop::new().map_err(error)?;
     let mut v=Viewer{peer,channel,session,geometry:Rect{x:geometry.x,y:geometry.y,width:geometry.width,height:geometry.height},
         allow_input,input_enabled:allow_input,av,volume:audio::VOLUME.load(Ordering::Acquire),screens,view_index:None,switch_pending:false,window:None,surface:None,size:PhysicalSize::new(0,0),
-        toolbar:0,scale:1,fit:None,last_cursor:None,focused:false,armed:false,physical_keys:BTreeSet::new(),physical_buttons:BTreeSet::new(),
+        toolbar:viewer_ui::toolbar(0,0,1,false,false),locale:std::env::var("REMOTE_EX_VIEWER_LOCALE").ok().as_deref().and_then(Locale::parse).unwrap_or(Locale::En),scale:1,fit:None,last_cursor:None,focused:false,armed:false,physical_keys:BTreeSet::new(),physical_buttons:BTreeSet::new(),
         sent_keys:BTreeSet::new(),sent_buttons:BTreeSet::new(),previous:None,seq:0,pixels:vec![0;(c.width*c.height)as usize],
         frames:0,metric_frames:0,metric_bytes:0,last_metric:now,last_frame:now,stats:Default::default(),started:now,
         heartbeat:now-Duration::from_secs(1),released:false,error:None,next_frame:now,fps:0.,extended,quality_mode:0,quality_pending:None,actual_stream:None};

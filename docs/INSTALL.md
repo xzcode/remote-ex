@@ -65,3 +65,12 @@ On Server connection or Device ID connection, expand Saved servers, enter the WS
 The update panel now shows a validated SHA-256 digest if GitHub includes it in official release metadata and can open the exact release page. Check the downloaded file against the published checksum. This remains manual installation, not cryptographic publisher-signature verification or an automatic updater.
 
 For self-hosting, see [deployment instructions](../deploy/README.md): use the new server `--check-config` option before starting it, or build the optional non-root signaling container. These are development candidates; no server is deployed by the app.
+
+
+## 8. WSS preflight, downloaded-file check and native viewer
+
+Before registering, click Check WSS connection on the server or routed connection page. The exact entered endpoint must pass ordinary TLS certificate/hostname validation and return the independently configured server ID. No device identity is sent and no registration occurs. Routed mode can use a certificate-only private CA file; this is not a TURN, enrollment, media or performance test. Time shown is elapsed handshake time, not network RTT. Do not use a result for an endpoint whose address/ID/CA has changed.
+
+In Version and updates, explicitly check releases first, then choose Verify downloaded file next to an asset with an official SHA-256 digest. Select the exact matching filename in the native file dialog. The application compares bounded file size and hash against recently fetched official metadata without unpacking or running the file. No private file path or content is uploaded. Matching digest does not establish publisher signature. Linux dialog requires a functional XDG file chooser portal; it does not imply Linux content-exchange modes are supported.
+
+New native routed view/control windows wrap local toolbar buttons when narrow, preserving the separate picture/input rectangle. Desktop language is propagated to new viewer processes. European language toolbar labels use compact bitmap-safe ASCII; Chinese/Japanese/Korean use English bitmap labels with localized native window title/legend until CJK text rendering is implemented. Legacy LAN viewer, native errors and OS dialogs remain partially localized.

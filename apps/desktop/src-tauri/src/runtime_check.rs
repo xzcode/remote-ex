@@ -51,6 +51,7 @@ fn installed_gstreamer_bin()->Option<PathBuf>{
 pub(crate) fn media_command(path:&Path)->Command{
     #[allow(unused_mut)]
     let mut command=Command::new(path);
+    command.env("REMOTE_EX_VIEWER_LOCALE",crate::viewer_locale::current().code());
     #[cfg(windows)]
     {
         // Scope to this child. Do not modify global PATH, use a shell, or
