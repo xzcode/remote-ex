@@ -55,7 +55,7 @@ try{
     await page.reload({waitUntil:"networkidle"}); // registration uses the persisted key
     const serverId=randomBytes(32).toString("hex"),env=Object.fromEntries(Object.entries(process.env).filter(([name])=>!name.startsWith("REMOTE_EX_")));
     const exe=fileURLToPath(new URL("../../crates/media/target/debug/routed_diagnostic",import.meta.url));
-    host=spawn(exe,["--host",endpoint,serverId,"--ca",certs.ca,"--defer-test-registration"],{env,stdio:["pipe","pipe","inherit"]});
+    host=spawn(exe,["--host",endpoint,serverId,"--ca",certs.ca,"--desktop-session","--defer-test-registration"],{env,stdio:["pipe","pipe","inherit"]});
     const hostExit=once(host,"exit");hostExit.catch(()=>{});
     const read=reader(host);
     const hostKey=(await read("KEY ")).slice(4);

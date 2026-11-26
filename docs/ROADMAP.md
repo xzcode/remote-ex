@@ -153,3 +153,8 @@ Shared 28-profile v1 table now drives routed grants and signature validation wit
 ### M6 fifth candidate — independent native VP8 ↔ browser fixture
 
 c757557 Web CI Rust tests passed; full browser result pending when work started. New CI-only enrolled localhost WSS fixture connects the persisted browser key (after reload) to the independent no-feature Rust/GStreamer synthetic host, uses native profile 0 quality/SDP/encrypted ICE, negotiated data channel, DTLS certificate verification and requires 30 decoded 960x540 frames, pixel evidence, fixed inert input release, and route closure. Handles native ICE end-of-candidates and bounded config/offer races. No actual desktop capture, user input, public connection or new release; interoperability remains pending CI. See [handoff](M6_NATIVE_MEDIA_HANDOFF.md).
+
+
+### M6 sixth candidate — explicit browser read-only controller and actual X11 fixture
+
+c757557 Web CI passed in full; 25c8be4 Rust/WASM and two-browser WSS passed at integration time; native build pending. Corrected missing supervised flag for independent synthetic host fixture. New source-only opt-in view UI, controller-only profile-1 WASM, full key/pin and one-shot approval, compat VP8, signed encrypted ICE and view metadata, host readiness/DTLS gate, read-only layout switching, bounded heartbeat/stop/closure; native temporary supervised view enrollment barrier. CI adds actual authorized Xvfb capture test. Direct ICE only, no real input or external deployment, not in alpha.2. See [handoff](M6_WEB_VIEW_HANDOFF.md).

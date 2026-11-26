@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Remote EX — Read-only Web controller</title><link rel="stylesheet" href="style.css"></head>
+<body>
+<header class="top"><div><strong>Remote EX</strong><span class="muted"> / Web controller</span></div><span class="tag">M6 · view only · experimental</span></header>
+<main>
+<section class="intro"><h1>Connect to an approved desktop</h1><p>Only read-only viewing is supported. A host must separately approve this browser's full public key and screen sharing. No keyboard, mouse, audio, clipboard or files are sent.</p></section>
+<div class="view-grid">
+<section class="card">
+<h2>Connection</h2>
+<label for="view-endpoint">Operator-configured WSS endpoint</label><input id="view-endpoint" class="identity-value" readonly>
+<label for="view-server">Server ID (64 lowercase hexadecimal characters)</label><input id="view-server" class="identity-value" spellcheck="false" autocomplete="off" maxlength="64">
+<label for="view-host">Host Ed25519 public key (64 hexadecimal characters)</label><input id="view-host" class="identity-value" spellcheck="false" autocomplete="off" maxlength="64">
+<p class="muted">Obtain both values independently from your administrator and host. The page does not discover or trust unknown devices automatically.</p>
+<label for="view-id">Your browser device ID</label><input id="view-id" class="identity-value" readonly>
+<label for="view-public">Your browser public key</label><input id="view-public" class="identity-value" readonly>
+<p><a id="view-manage" href="identity.html">Manage browser identity</a></p>
+<label class="view-consent"><input id="view-consent" type="checkbox" disabled> I verified the identities and request one read-only session (up to 30 seconds after approval).</label>
+<div class="buttons"><button id="view-connect" class="primary" disabled>Connect</button><button id="view-disconnect" disabled>Disconnect</button></div>
+<p id="view-status" role="status" data-state="idle">Loading configuration…</p>
+</section>
+<section class="card">
+<div class="row"><h2>Remote screen</h2><button id="view-next" disabled>Next approved display</button></div>
+<div class="view-screen"><video id="view-video" muted playsinline autoplay hidden aria-label="Approved remote screen"></video><p id="view-placeholder" class="muted">No active screen sharing</p></div>
+<div class="metrics"><div><span>Frames</span><strong id="view-frames">—</strong></div><div><span>Resolution</span><strong id="view-resolution">—</strong></div><div><span>Remaining</span><strong id="view-time">—</strong></div></div>
+<p class="muted" id="view-layout">No approved displays</p>
+</section>
+</div>
+<p class="muted">Direct ICE only; no default server, automatic reconnect or background viewing. Leaving or hiding this page disconnects. The host can revoke sharing independently.</p>
+<p><a href="/">Back to the local diagnostic lab</a></p>
+</main><script type="module" src="view-page.js"></script></body></html>

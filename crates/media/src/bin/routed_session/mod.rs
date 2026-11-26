@@ -479,13 +479,14 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
     let url=a.next().ok_or("Missing WSS URL")?;
     let pin=decode_hex::<32>(&a.next().ok_or("Missing server ID")?).map_err(error)?;
     let endpoint=Endpoint::secure(&url,pin)?;
-    let mut ca=None;let mut relay_only=false;let mut profile=Profile::Test;let mut display=None;let mut supervised=false;let mut persistent=false;let mut defer_test_registration=false;let mut quality="compat".to_owned();let mut exchange_path=None;let mut volume=75u8;let mut extra_displays=Vec::new();let mut identity_slot=None;let mut resume=exchange::ResumeOptions::default();let mut shared_controller=false;let mut secondary=false;let mut extended=false;let mut armed=false;let mut armed_test=false;let mut armed_wait=300u64;let mut policy_display=None;let mut portal_source=None;let mut power_action=None;
+    let mut ca=None;let mut relay_only=false;let mut profile=Profile::Test;let mut display=None;let mut supervised=false;let mut persistent=false;let mut defer_test_registration=false;let mut enroll_before_register=false;let mut quality="compat".to_owned();let mut exchange_path=None;let mut volume=75u8;let mut extra_displays=Vec::new();let mut identity_slot=None;let mut resume=exchange::ResumeOptions::default();let mut shared_controller=false;let mut secondary=false;let mut extended=false;let mut armed=false;let mut armed_test=false;let mut armed_wait=300u64;let mut policy_display=None;let mut portal_source=None;let mut power_action=None;
     while let Some(arg)=a.next(){match arg.as_str(){
         "--ca" if ca.is_none()=>ca=Some(a.next().ok_or("Missing CA path")?),
         "--relay-only" if !relay_only=>relay_only=true,
         "--quality"=>{quality=a.next().ok_or("Missing quality preset")?;remote_ex_desktop_features::quality::preset(&quality)?;},
         "--desktop-session" if !supervised=>supervised=true,
         "--defer-test-registration" if !native_allowed&&!defer_test_registration=>defer_test_registration=true,
+        "--enroll-before-register" if native_allowed&&host&&!enroll_before_register=>enroll_before_register=true,
         "--persistent" if !persistent=>persistent=true,
         "--shared-controller" if !shared_controller=>shared_controller=true,
         "--secondary-control" if !secondary&&native_allowed&&host=>secondary=true,
@@ -561,6 +562,7 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
     if shared_controller&&(host||!(profile.synthetic()||profile.native_view()||profile.native_control())||persistent&&identity_slot.unwrap_or(0)!=0){return Err("Shared identity is only for outgoing view/control/test using slot one identity".into());}
     if identity_slot.is_some()&&!persistent{return Err("Identity slot requires explicit persistent storage opt-in".into());}
     if defer_test_registration&&(!supervised||persistent||profile!=Profile::Test){return Err("Test registration barrier requires synthetic temporary supervised mode".into());}
+    if enroll_before_register&&(!supervised||persistent||armed||profile!=Profile::View){return Err("Enrollment wait requires a temporary one-shot supervised view-only host".into());}
     if native_allowed&&profile==Profile::Test{return Err("Choose a separate view, control or exchange profile".into());}
     if matches!(profile,Profile::Power(_)){
         if !supervised||armed||extended||secondary||portal_source.is_some()||shared_controller{return Err("Power requests require a separate visible, one-time reviewed session".into());}
@@ -614,6 +616,10 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
     // opening the TLS endpoint. This barrier exists only in the inert binary.
     if defer_test_registration && (input()?!="REGISTER TEST"||canceled()){
         return Err("Test enrollment canceled".into());
+    }
+    if enroll_before_register{
+        out(&format!("ENROLL {}",hex(&id.fingerprint())))?;
+        if input()?!="REGISTER DEVICE"||canceled(){return Err("Local enrollment canceled".into());}
     }
     let mut conn=match (shared_controller,ca){
         (true,Some(path))=>Connection::register_controller_with_roots(endpoint,&id,roots(&path)?).await?,

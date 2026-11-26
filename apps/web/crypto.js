@@ -1,4 +1,5 @@
-// Fixed, synthetic-only lab. Native WebCrypto handles identity signatures.
+// Native WebCrypto handles identity signatures; the fixture and read-only
+// controller use separate explicit profile gates.
 // The Rust WASM module handles the existing Snow Noise state and proof gate.
 // No storage, remote address, network session, or arbitrary signing UI.
 const encoder=new TextEncoder();

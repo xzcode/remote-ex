@@ -7,7 +7,7 @@ use remote_ex_security::profiles::MAX_SEALED_CLEAR;
 pub(super) struct IceItem{mline:u32,candidate:String}
 #[derive(Serialize,Deserialize)]
 #[serde(tag="type",rename_all="snake_case",deny_unknown_fields)]
-enum Record{Quality{preset:String},IceBatch{items:Vec<IceItem>}}
+enum Record{Quality{preset:String},IceBatch{items:Vec<IceItem>},Geometry{x:u32,y:u32,width:u32,height:u32},ViewLayout{count:u8}}
 fn encode(record:&Record)->Result<Vec<u8>>{
     let b=serde_json::to_vec(record).map_err(|_|"Invalid native fixture record")?;
     if b.len()>MAX_SEALED_CLEAR{return Err("Native fixture record too large".into());}Ok(b)
@@ -36,8 +36,26 @@ pub(super) fn check_ice(data:&[u8])->Result<String>{
     match decode(data)?{Record::IceBatch{items} if valid(&items)=>serde_json::to_string(&items).map_err(|_|"Invalid ICE fixture items".into()),
         _=>Err("Unexpected native fixture ICE".into())}
 }
+pub(super) fn check_geometry(data:&[u8])->Result<String>{
+    match decode(data)?{
+        Record::Geometry{x,y,width,height} if width>=2&&height>=2
+            &&x.checked_add(width).is_some_and(|n|n<=960)&&y.checked_add(height).is_some_and(|n|n<=540)
+            =>serde_json::to_string(&serde_json::json!({"x":x,"y":y,"width":width,"height":height})).map_err(|_|"Invalid geometry".into()),
+        _=>Err("View geometry exceeds compat canvas".into())
+    }
+}
+pub(super) fn check_layout(data:&[u8])->Result<u8>{
+    match decode(data)?{Record::ViewLayout{count} if (1..=4).contains(&count)=>Ok(count),_=>Err("Invalid authorized display layout".into())}
+}
 #[cfg(test)]mod tests{
     use super::*;
+    #[test]fn view_metadata_bounds(){
+        assert!(check_geometry(br#"{"type":"geometry","x":120,"y":0,"width":720,"height":540}"#).is_ok());
+        assert!(check_geometry(br#"{"type":"geometry","x":250,"y":0,"width":720,"height":540}"#).is_err());
+        assert!(check_geometry(br#"{"type":"geometry","x":0,"y":0,"width":0,"height":540}"#).is_err());
+        assert_eq!(check_layout(br#"{"type":"view_layout","count":4}"#).unwrap(),4);
+        assert!(check_layout(br#"{"type":"view_layout","count":5}"#).is_err());
+    }
     #[test]fn native_record_shapes_and_rejections(){
         assert_eq!(quality().unwrap(),br#"{"type":"quality","preset":"compat"}"#);
         assert!(check_quality(br#"{"type":"quality","preset":"high"}"#).is_err());

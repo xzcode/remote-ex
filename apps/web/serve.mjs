@@ -29,7 +29,14 @@ export const headers={
 };
 // fixtureEndpoint is used only by the disposable integration harness. The
 // normal command and distributed archive have neither this route nor WSS CSP.
-export async function serve(port=0,fixtureEndpoint=null){
+// Viewer is separately opted in by the local operator. The configured
+// endpoint is fixed for the life of this process, not a user-input proxy.
+export function viewEndpoint(value){
+ const u=new URL(value);
+ if(typeof value!=="string"||value.length>512||u.protocol!=="wss:"||u.pathname!=="/v1/ws"||!u.hostname||u.username||u.password||u.search||u.hash||u.href!==value||!/^[a-zA-Z0-9.:\[\]-]+$/.test(u.host))throw Error("Use exact WSS endpoint /v1/ws, no credentials or parameters");
+ return u;
+}
+export async function serve(port=0,fixtureEndpoint=null,viewer=null){
  if(!Number.isInteger(port)||port<0||port>65535)throw Error("Invalid local port");
  const table=new Map(routes);
  const policy={...headers};
@@ -40,6 +47,15 @@ export async function serve(port=0,fixtureEndpoint=null){
     table.set("/native-wss-fixture.js",["native-wss-fixture.js","text/javascript; charset=utf-8"]);
     policy["Content-Security-Policy"]=policy["Content-Security-Policy"].replace("connect-src 'self'","connect-src 'self' "+endpoint.origin);
  }
+ if(viewer!==null){
+    const ep=viewEndpoint(viewer);
+    if(fixtureEndpoint!==null&&fixtureEndpoint!==viewer)throw Error("Only one WSS endpoint allowed");
+    table.set("/view.html",["view.html","text/html; charset=utf-8"]);
+    table.set("/view-page.js",["view-page.js","text/javascript; charset=utf-8"]);
+    table.set("/view-session.js",["view-session.js","text/javascript; charset=utf-8"]);
+    table.set("/view-config.json",[null,"application/json; charset=utf-8"]);
+    if(fixtureEndpoint===null)policy["Content-Security-Policy"]=policy["Content-Security-Policy"].replace("connect-src 'self'","connect-src 'self' "+ep.origin);
+ }
  const server=http.createServer(async(req,res)=>{
     const validHost=req.headers.host===`127.0.0.1:${server.address()?.port}`;
     if(!validHost||req.method!=="GET"||!table.has(req.url)){
@@ -47,7 +63,7 @@ export async function serve(port=0,fixtureEndpoint=null){
     }
     const [file,type]=table.get(req.url);
     try{
-      const data=await readFile(path.resolve(root,file));
+      const data=file===null?Buffer.from(JSON.stringify({schema:1,mode:"direct-read-only",endpoint:viewer})):await readFile(path.resolve(root,file));
       if(data.length>16*1024*1024)throw Error("Fixture asset exceeds bound");
       res.writeHead(200,{"Content-Type":type,"Content-Length":data.length,...policy});res.end(data);
     }catch{res.writeHead(503,{"Content-Type":"text/plain",...policy});res.end("Build the local WASM fixture first.");}
@@ -58,6 +74,9 @@ export async function serve(port=0,fixtureEndpoint=null){
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(path.resolve(process.argv[1])).href){
  const port=Number(process.argv[2]??8080);
- const {server,url}=await serve(port);console.log("Local synthetic-only lab:",url);
+ const args=process.argv.slice(3);
+ if(args.length!==0&&(args.length!==2||args[0]!=="--view"))throw Error("Usage: node serve.mjs [port] [--view wss://host/v1/ws]");
+ const viewer=args.length===2?args[1]:null;
+ const {server,url}=await serve(port,null,viewer);console.log(viewer?"Local read-only viewer: "+url+"/view.html":"Local synthetic-only lab: "+url);
  for(const sig of ["SIGINT","SIGTERM"])process.once(sig,()=>server.close(()=>process.exit(0)));
 }
