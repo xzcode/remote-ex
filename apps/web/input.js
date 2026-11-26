@@ -79,11 +79,13 @@ export class SurfaceInput{
                 else v.setPointerCapture(e.pointerId);
             }),{passive:false});
             this.listen(v,"pointermove",safe(e=>{
-                if(!this.enabled(e)||!this.touch.current)return;
+                if(!this.touch.current)return;
+                if(!this.enabled(e)){this.disable();return;}
                 e.preventDefault();if(!this.touch.move(e.pointerId,this.point(e),e.clientX,e.clientY,performance.now()))this.disable();
             }),{passive:false});
             this.listen(v,"pointerup",safe(e=>{
                 if(!this.touch.current)return;
+                if(!this.enabled(e)){this.disable();return;}
                 e.preventDefault();if(!this.touch.end(e.pointerId,this.point(e),e.clientX,e.clientY))this.disable();
             }),{passive:false});
             this.listen(v,"lostpointercapture",safe(e=>{if(this.touch.current?.id===e.pointerId)this.disable();}));
@@ -91,7 +93,7 @@ export class SurfaceInput{
         }
         this.listen(v,"pointermove",e=>{if(!this.enabled(e)||e.pointerType!=="mouse")return;const p=this.point(e);if(!p){if(this.buttons.size)this.disable();return;}const now=performance.now();if(now-this.lastMove>=25){this.lastMove=now;this.emit("move",p);}});
         this.listen(v,"pointerdown",e=>{if(!this.enabled(e)||e.pointerType!=="mouse")return;const p=this.point(e),b=button(e);if(!p||!b||this.buttons.has(b))return;e.preventDefault();if(this.emit("move",p)&&this.emit("button",{button:b,down:true}))this.buttons.add(b);});
-        this.listen(window,"pointerup",e=>{if(!this.active||!e.isTrusted)return;const b=button(e);if(this.buttons.has(b)){e.preventDefault();this.emit("button",{button:b,down:false});this.buttons.delete(b);}});
+        this.listen(window,"pointerup",e=>{if(!this.active||!e.isTrusted||e.pointerType!=="mouse")return;const b=button(e);if(this.buttons.has(b)){e.preventDefault();this.emit("button",{button:b,down:false});this.buttons.delete(b);}});
         this.listen(v,"pointerleave",()=>{if(this.buttons.size)this.disable();});
         this.listen(v,"pointercancel",()=>this.disable());
         this.listen(v,"contextmenu",e=>{if(this.enabled(e))e.preventDefault();});
@@ -100,10 +102,15 @@ export class SurfaceInput{
         this.listen(v,"wheel",e=>{if(!this.enabled(e))return;const p=this.point(e);if(!p)return;e.preventDefault();const x=wheel(e.deltaX,e.deltaMode),y=wheel(e.deltaY,e.deltaMode);if((x||y)&&this.emit("move",p))this.emit("scroll",{x,y});},{passive:false});
         this.listen(v,"blur",()=>this.disable());this.listen(window,"blur",()=>this.disable());
     }
+    releaseTouchCapture(){
+        const id=this.touch?.current?.id;
+        this.touch?.cancel();
+        if(id!==undefined)try{if(this.video.hasPointerCapture(id))this.video.releasePointerCapture(id);}catch{}
+    }
     disable(){
         if(!this.active)return;
         this.active=false;for(const remove of this.handlers.splice(0))remove();
-        this.touch?.cancel();this.video.classList.remove("touch-active");this.emit("release");this.keys.clear();this.buttons.clear();this.video.removeAttribute("tabindex");this.onDisabled();
+        this.releaseTouchCapture();this.video.classList.remove("touch-active");this.emit("release");this.keys.clear();this.buttons.clear();this.video.removeAttribute("tabindex");this.onDisabled();
     }
-    dispose(){this.active=false;for(const remove of this.handlers.splice(0))remove();this.touch?.cancel();this.video.classList.remove("touch-active");this.keys.clear();this.buttons.clear();this.video.removeAttribute("tabindex");}
+    dispose(){this.active=false;for(const remove of this.handlers.splice(0))remove();this.releaseTouchCapture();this.video.classList.remove("touch-active");this.keys.clear();this.buttons.clear();this.video.removeAttribute("tabindex");}
 }

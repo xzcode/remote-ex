@@ -77,6 +77,8 @@ jobs:
           npm run test:wasm-loader
           node --check test-mobile-capabilities.mjs
           node test-mobile-capabilities.mjs
+          node --check test-touch-browser.mjs
+          node test-touch-browser.mjs
           npm run test:touch
           npm run test:session-policy
           npm run test:connection-book
