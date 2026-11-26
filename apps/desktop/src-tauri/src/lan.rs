@@ -346,7 +346,7 @@ fn handle_output(shared: &Mutex<Snapshot>, output: Output, pass: &mut bool, fail
     }
 }
 #[derive(Clone)]
-struct AutoApproval{peer_key:String,local_key:String,expires_at:u64}
+struct AutoApproval{peer_key:String,local_key:String,expires_at:u64,display_width:u32,display_height:u32,display_name:String}
 fn supervise(
     mut child: ChildGuard, commands: Receiver<WorkerCommand>, shared: Arc<Mutex<Snapshot>>,
     profile: Profile, host: bool, stop: Arc<AtomicBool>, automatic:Option<AutoApproval>,
@@ -643,6 +643,7 @@ impl SessionManager {
         command.arg("--desktop-session");
         let history=history_path.map(|path|(path,remote_ex_signaling::hex(&pin)));
         if armed{command.arg("--armed-host");}
+        if let Some(a)=&automatic{command.arg("--policy-display").arg(a.display_width.to_string()).arg(a.display_height.to_string()).arg(&a.display_name); }
         self.spawn(command,profile,host,history,secondary,extended,armed,Some(remote_ex_signaling::hex(&pin)),automatic)
     }
     fn spawn(&self,mut command:Command,profile:Profile,host:bool,history:Option<(PathBuf,String)>,secondary:bool,extended:bool,armed:bool,server_scope:Option<String>,automatic:Option<AutoApproval>)->Result<Snapshot,String>{
@@ -901,7 +902,7 @@ pub async fn host_policy_activate(window:WebviewWindow,manager:State<'_,SessionM
     // either prevents this start or subsequently stops the newly armed child.
     if crate::policy::get(&path,&server_id,&device_id)?!=policy{return Err("Saved host policy changed".into());}
     let profile=match policy.mode.as_str(){"view"=>Profile::RoutedView,"control"=>Profile::RoutedControl,_=>return Err("Invalid policy mode".into())};
-    let auto=AutoApproval{peer_key:policy.peer_key.clone(),local_key:policy.host_key.clone(),expires_at:policy.expires_at};
+    let auto=AutoApproval{peer_key:policy.peer_key.clone(),local_key:policy.host_key.clone(),expires_at:policy.expires_at,display_width:policy.display_width,display_height:policy.display_height,display_name:policy.display_name.clone()};
     let result=slots.sessions[0].prepare_routed("host",&policy.url,&policy.server_id,profile,Some(policy.display_id),policy.relay_only,true,true,None,Some(path),&policy.quality,None,75,Vec::new(),0,None,None,false,false,policy.extended,true,Some(auto))?;
     slots.exclusive[0]=true;slots.identity_slot[0]=Some(0);slots.shared[0]=false;Ok(result)
 }

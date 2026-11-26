@@ -172,7 +172,7 @@ async fn serve<B:Backend>(peer:&Peer,channel:&ControlChannel,conn:&mut Connectio
     out("PASS ROUTED HOST: native session ended, input released")
 }
 pub(super) async fn host(peer:&Peer,channel:&ControlChannel,conn:&mut Connection,cipher:&mut RouteCipher,
-    session:&str,gate:SessionGate,profile:Profile,display:u32,extra_displays:Vec<u32>,secondary:bool)->MediaResult<()>{
+    session:&str,gate:SessionGate,profile:Profile,display:u32,extra_displays:Vec<u32>,secondary:bool,policy_display:Option<(u32,u32,String)>)->MediaResult<()>{
     if canceled(){return Err("Authorization revoked".into());}
     let input=profile.native_control();
     permissions(input)?;
@@ -182,7 +182,13 @@ pub(super) async fn host(peer:&Peer,channel:&ControlChannel,conn:&mut Connection
     let mut ids=vec![display];ids.extend(extra_displays);
     if ids.len()>4||ids.iter().enumerate().any(|(i,d)|ids[..i].contains(d)){return Err("Invalid approved display list".into());}
     let mut displays=Vec::new();
-    for d in ids{let(_,a)=monitor(d,None,input,secondary)?;displays.push((d,a));}
+    for d in ids{
+        let(m,a)=monitor(d,None,input,secondary)?;
+        if let Some((w,h,name))=&policy_display{
+            if a.width!=*w||a.height!=*h||m.name().map_err(error)?.as_str()!=name.as_str(){return Err("Saved policy display changed while waiting; no capture authorized".into());}
+        }
+        displays.push((d,a));
+    }
     let area=displays[0].1;
     let geometry=Geometry::from_area(area,config)?;
     cipher.send(conn,geometry.signal()).await?;

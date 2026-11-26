@@ -193,7 +193,7 @@ async fn wait_data(peer:&Peer,channel:&ControlChannel,conn:&mut Connection,expec
 }
 async fn finish(conn:&mut Connection,session:&str)->MediaResult<()>{conn.finish_route(session).await}
 
-async fn host(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey,relay_only:bool,profile:Profile,display:Option<u32>,extra_displays:Vec<u32>,quality:&str,exchange_path:Option<&std::path::Path>,volume:u8,resume:&exchange::ResumeOptions,secondary:bool,armed:bool)->MediaResult<()>{
+async fn host(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey,relay_only:bool,profile:Profile,display:Option<u32>,extra_displays:Vec<u32>,quality:&str,exchange_path:Option<&std::path::Path>,volume:u8,resume:&exchange::ResumeOptions,secondary:bool,armed:bool,policy_display:Option<(u32,u32,String)>)->MediaResult<()>{
     let grant=profile.grant();
     let event=if armed{out("LISTENING ARMED 300")?;conn.wait_armed_incoming(Duration::from_secs(300),canceled).await?}else{recv(conn).await?};
     if canceled(){return Err("Local consent revoked".into());}
@@ -268,7 +268,7 @@ async fn host(conn:&mut Connection,id:&DeviceIdentity,expected:PublicKey,relay_o
     }
     if !profile.synthetic(){
         #[cfg(any(all(feature="native-control",any(target_os="windows",target_os="macos")),all(feature="native-x11-view",target_os="linux")))]
-        {return native::host(&peer,&channel,conn,&mut cipher,&session,gate(&proof)?,profile,display.ok_or("Select a display")?,extra_displays,secondary).await;}
+        {return native::host(&peer,&channel,conn,&mut cipher,&session,gate(&proof)?,profile,display.ok_or("Select a display")?,extra_displays,secondary,policy_display).await;}
         #[cfg(not(any(all(feature="native-control",any(target_os="windows",target_os="macos")),all(feature="native-x11-view",target_os="linux"))))]
         {let _=(display,extra_displays,secondary);return Err("Native routed mode unavailable".into());}
     }
@@ -460,7 +460,7 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
     let url=a.next().ok_or("Missing WSS URL")?;
     let pin=decode_hex::<32>(&a.next().ok_or("Missing server ID")?).map_err(error)?;
     let endpoint=Endpoint::secure(&url,pin)?;
-    let mut ca=None;let mut relay_only=false;let mut profile=Profile::Test;let mut display=None;let mut supervised=false;let mut persistent=false;let mut defer_test_registration=false;let mut quality="compat".to_owned();let mut exchange_path=None;let mut volume=75u8;let mut extra_displays=Vec::new();let mut identity_slot=None;let mut resume=exchange::ResumeOptions::default();let mut shared_controller=false;let mut secondary=false;let mut extended=false;let mut armed=false;let mut armed_test=false;
+    let mut ca=None;let mut relay_only=false;let mut profile=Profile::Test;let mut display=None;let mut supervised=false;let mut persistent=false;let mut defer_test_registration=false;let mut quality="compat".to_owned();let mut exchange_path=None;let mut volume=75u8;let mut extra_displays=Vec::new();let mut identity_slot=None;let mut resume=exchange::ResumeOptions::default();let mut shared_controller=false;let mut secondary=false;let mut extended=false;let mut armed=false;let mut armed_test=false;let mut policy_display=None;
     while let Some(arg)=a.next(){match arg.as_str(){
         "--ca" if ca.is_none()=>ca=Some(a.next().ok_or("Missing CA path")?),
         "--relay-only" if !relay_only=>relay_only=true,
@@ -472,6 +472,13 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
         "--secondary-control" if !secondary&&native_allowed&&host=>secondary=true,
         "--extended" if !extended&&native_allowed=>extended=true,
         "--armed-host" if !armed&&native_allowed&&host=>armed=true,
+        "--policy-display" if policy_display.is_none()&&native_allowed&&host=>{
+            let w=a.next().ok_or("Missing policy display width")?.parse::<u32>().map_err(error)?;
+            let h=a.next().ok_or("Missing policy display height")?.parse::<u32>().map_err(error)?;
+            let name=a.next().ok_or("Missing policy display name")?;
+            if w==0||h==0||u64::from(w)*u64::from(h)>32_000_000||name.len()>512||name.chars().any(char::is_control){return Err("Invalid saved policy display".into());}
+            policy_display=Some((w,h,name));
+        },
         "--armed-test" if !armed_test&&!native_allowed&&host=>armed_test=true,
         "--extended-test" if !native_allowed&&profile==Profile::Test=>profile=Profile::ExtendedTest,
         "--identity-slot" if identity_slot.is_none()=>{
@@ -509,6 +516,7 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
         if !supervised{return Err("Extended sessions require visible desktop supervision".into());}
     }
     if armed&&(!supervised||!persistent||!host||!(profile.native_view()||profile.native_control())||profile.av()){return Err("Arming requires persistent identity, explicit visible supervision and a screen-only view/control profile".into());}
+    if policy_display.is_some()&&(!armed||!extra_displays.is_empty()||secondary){return Err("Saved host policy requires one exact approved display".into());}
     if armed_test&&(!supervised||persistent||profile!=Profile::Test){return Err("Armed test requires temporary supervised synthetic host".into());}
     if cfg!(target_os="linux")&&native_allowed&&(!(profile.native_view()||profile.native_control())||profile.av()||persistent||armed||secondary){return Err("Linux X11 candidate supports temporary supervised screen view/control only".into());}
     if cfg!(target_os="linux")&&native_allowed{remote_ex_desktop_features::platform::require_linux_x11()?;if !supervised{return Err("Linux X11 sessions require explicit desktop supervision".into());}}
@@ -633,7 +641,7 @@ pub async fn run(native_allowed:bool)->MediaResult<()>{
         });
     }
     if host{
-        let result=self::host(&mut conn,&id,expected,relay_only,profile,display,extra_displays,&quality,exchange_path.as_deref(),volume,&resume,secondary,armed||armed_test).await;
+        let result=self::host(&mut conn,&id,expected,relay_only,profile,display,extra_displays,&quality,exchange_path.as_deref(),volume,&resume,secondary,armed||armed_test,policy_display).await;
         let close=conn.close().await;result?;close
     }else{controller(conn,&id,expected,relay_only,profile,&quality,exchange_path.as_deref(),volume,&resume).await}
 }

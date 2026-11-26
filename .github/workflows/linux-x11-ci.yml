@@ -52,7 +52,7 @@ jobs:
           cargo test -p remote-ex-desktop-features
       - name: Build Linux development desktop and package
         run: |
-          cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml
+          (cd apps/desktop && npm run tauri build -- --debug --no-bundle)
           mkdir -p dist/linux-dev
           cp apps/desktop/src-tauri/target/debug/remote-ex-desktop dist/linux-dev/
           cp crates/media/target/debug/routed_x11_view dist/linux-dev/
