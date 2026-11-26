@@ -14,18 +14,19 @@ import {randomBytes} from "node:crypto";
 import {freePort,certificates,installRoot,ready,stopChild} from "./wss-test-support.mjs";
 
 const root=mkdtempSync(path.join(tmpdir(),"remote-ex-web-wss-"));
-let browser,fixture,wrong,child;
+let browser,fixture,second,wrong,child;
 try{
  const home=path.join(root,"home");mkdirSync(home,{mode:0o700});
  const certs=certificates(root);installRoot(home,certs.ca);
  const port=await freePort(),endpoint=`wss://127.0.0.1:${port}/v1/ws`;
  fixture=await serve(0,endpoint);
+ second=await serve(0,endpoint);
  wrong=await serve(0,endpoint);
  browser=await chromium.launch({headless:true,env:{...process.env,HOME:home,XDG_CONFIG_HOME:path.join(home,".config"),XDG_DATA_HOME:path.join(home,".local/share")},args:["--disable-background-networking","--autoplay-policy=no-user-gesture-required"]});
  const context=await browser.newContext({permissions:[],ignoreHTTPSErrors:false});
  const unexpected=[];
  await context.route("**/*",route=>{
-    if(![fixture.url,wrong.url].includes(new URL(route.request().url()).origin)){unexpected.push("unexpected HTTP origin");return route.abort();}
+    if(![fixture.url,second.url,wrong.url].includes(new URL(route.request().url()).origin)){unexpected.push("unexpected HTTP origin");return route.abort();}
     return route.continue();
  });
  await context.addInitScript(()=>{
@@ -41,14 +42,16 @@ try{
  const allow=path.join(root,"allowed.txt");writeFileSync(allow,ids.join("\n")+"\n",{mode:0o600});
  const serverId=randomBytes(32).toString("hex"),wrongId=(serverId[0]==="0"?"1":"0")+serverId.slice(1);
  const env=Object.fromEntries(Object.entries(process.env).filter(([name])=>!name.startsWith("REMOTE_EX_")));
- Object.assign(env,{REMOTE_EX_SIGNAL_BIND:`127.0.0.1:${port}`,REMOTE_EX_TLS_CERT:certs.cert,REMOTE_EX_TLS_KEY:certs.key,REMOTE_EX_SERVER_ID:serverId,REMOTE_EX_ALLOWED_DEVICES_FILE:allow,REMOTE_EX_WEB_ORIGIN:fixture.url});
+ Object.assign(env,{REMOTE_EX_SIGNAL_BIND:`127.0.0.1:${port}`,REMOTE_EX_TLS_CERT:certs.cert,REMOTE_EX_TLS_KEY:certs.key,REMOTE_EX_SERVER_ID:serverId,REMOTE_EX_ALLOWED_DEVICES_FILE:allow,REMOTE_EX_WEB_ORIGINS:[fixture.url,second.url].join(",")});
  const exe=fileURLToPath(new URL("../../target/debug/remote-ex-rendezvous",import.meta.url));
  const preflight=JSON.parse(execFileSync(exe,["--check-config"],{env,encoding:"utf8",timeout:10000}));
- assert.equal(preflight.mode,"wss");assert.equal(preflight.network_started,false);assert.equal(preflight.enrolled_count,2);assert.equal(preflight.web_origin_configured,true);
+ assert.equal(preflight.mode,"wss");assert.equal(preflight.network_started,false);assert.equal(preflight.enrolled_count,2);assert.equal(preflight.web_origin_configured,true);assert.equal(preflight.web_origin_count,2);
  child=spawn(exe,[],{env,stdio:["ignore","pipe","inherit"]});await ready(child);
  const probe=(tab,id)=>tab.evaluate(async({endpoint,id})=>{const lab=await import("/wss-fixture.js");return lab.probe(endpoint,id);},{endpoint,id});
  assert.deepEqual(await probe(page,serverId),{challengeSeen:true,matched:true});
  assert.deepEqual(await probe(page,wrongId),{challengeSeen:true,matched:false});
+ await other.goto(second.url,{waitUntil:"networkidle"});
+ assert.deepEqual(await probe(other,serverId),{challengeSeen:true,matched:true});
  await other.goto(wrong.url,{waitUntil:"networkidle"});
  assert.deepEqual(await probe(other,serverId),{challengeSeen:false,matched:false});
  await other.close();
@@ -64,6 +67,6 @@ try{
 }finally{
  await browser?.close();
  await stopChild(child);
- for(const s of [fixture,wrong])if(s)await new Promise(resolve=>s.server.close(resolve));
+ for(const s of [fixture,second,wrong])if(s)await new Promise(resolve=>s.server.close(resolve));
  rmSync(root,{recursive:true,force:true});
 }

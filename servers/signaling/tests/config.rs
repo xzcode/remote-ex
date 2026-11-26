@@ -24,6 +24,7 @@ fn preflight_never_binds_and_rejects_insecure_configuration(){
         vec![("REMOTE_EX_RELAY_REGION","asia")],
         vec![("REMOTE_EX_WEB_ORIGIN","https://remote.example.net")],
         vec![("REMOTE_EX_WEB_ORIGIN","*")],
+        vec![("REMOTE_EX_WEB_ORIGINS","https://one.example.net,https://two.example.net")],
     ]{assert!(!check(&vars).status.success());}
 }
 #[test]
@@ -38,6 +39,11 @@ fn enrolled_tls_checks_cert_allowlist_and_turn_without_printing_secrets(){
     let vars=[("REMOTE_EX_SIGNAL_BIND","0.0.0.0:47822"),("REMOTE_EX_PUBLIC_BIND","1"),("REMOTE_EX_TLS_CERT",cert.as_str()),("REMOTE_EX_TLS_KEY",key.as_str()),("REMOTE_EX_SERVER_ID",id.as_str()),("REMOTE_EX_ALLOWED_DEVICES_FILE",allow.as_str()),("REMOTE_EX_STUN_URL","stun://relay.example.net:3478"),("REMOTE_EX_TURN_URL","turns://relay.example.net:5349"),("REMOTE_EX_TURN_SECRET_FILE",secret.as_str())];
     let out=check(&vars);assert!(!String::from_utf8_lossy(&out.stdout).contains(secret_text));assert!(!String::from_utf8_lossy(&out.stdout).contains(&id));
     let r=report(out);assert_eq!(r["mode"],"wss");assert_eq!(r["enrolled_count"],1);assert_eq!(r["turn_configured"],true);assert_eq!(r["relay_count"],1);assert_eq!(r["eligible_relay_count"],1);
+    let mut multi=vars.to_vec();multi.push(("REMOTE_EX_WEB_ORIGINS","https://appassets.androidplatform.net,https://mobile.example.net"));
+    let r=report(check(&multi));assert_eq!(r["web_origin_count"],2);assert_eq!(r["web_origin_configured"],true);
+    assert!(!r.to_string().contains("mobile.example.net"));
+    multi.push(("REMOTE_EX_WEB_ORIGIN","https://mobile.example.net"));assert!(!check(&multi).status.success());
+    let mut invalid=vars.to_vec();invalid.push(("REMOTE_EX_WEB_ORIGINS","https://mobile.example.net,https://mobile.example.net"));assert!(!check(&invalid).status.success());
     std::fs::write(&allow,"# empty").unwrap();assert!(!check(&vars).status.success());
     std::fs::write(&allow,"cd".repeat(32)).unwrap();std::fs::write(&secret,"short").unwrap();assert!(!check(&vars).status.success());
 }

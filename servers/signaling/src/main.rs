@@ -7,7 +7,7 @@ use remote_ex_rendezvous::turn::IceIssuer;
 type Error=Box<dyn std::error::Error>;
 struct Settings{
     address:SocketAddr,public:bool,allowed:Option<HashSet<String>>,
-    tls:Option<(axum::Router,RustlsConfig)>,stun:bool,turn:bool,relay_count:usize,eligible_relay_count:usize,web_origin_configured:bool,
+    tls:Option<(axum::Router,RustlsConfig)>,stun:bool,turn:bool,relay_count:usize,eligible_relay_count:usize,web_origin_configured:bool,web_origin_count:usize,
 }
 fn optional(name:&str)->Result<Option<String>,Error>{
     match std::env::var(name){
@@ -26,9 +26,17 @@ async fn settings()->Result<Settings,Error>{
     if public&&address.port()==0{return Err("Public deployment requires a fixed nonzero port".into());}
     let allowed=optional("REMOTE_EX_ALLOWED_DEVICES_FILE")?.map(|p|allowlist(&p)).transpose()?;
     if public&&allowed.is_none(){return Err("Public signaling requires a nonempty explicit device allowlist".into());}
-    let web=optional("REMOTE_EX_WEB_ORIGIN")?;
-    let web_origin_configured=web.is_some();
-    let web=web.as_deref().map(|v|remote_ex_rendezvous::web_origin::WebOrigin::parse(v,local&&!public)).transpose()?;
+    use remote_ex_rendezvous::web_origin::WebOrigin;
+    let single=optional("REMOTE_EX_WEB_ORIGIN")?;
+    let multiple=optional("REMOTE_EX_WEB_ORIGINS")?;
+    let web=match (single.as_deref(),multiple.as_deref()){
+        (Some(_),Some(_))=>return Err("Choose either REMOTE_EX_WEB_ORIGIN or REMOTE_EX_WEB_ORIGINS, not both".into()),
+        (Some(v),None)=>Some(WebOrigin::parse(v,local&&!public)?),
+        (None,Some(v))=>Some(WebOrigin::parse_list(v,local&&!public)?),
+        (None,None)=>None,
+    };
+    let web_origin_count=web.as_ref().map_or(0,WebOrigin::count);
+    let web_origin_configured=web_origin_count!=0;
     if web_origin_configured&&allowed.is_none(){return Err("Web origin requires explicit device enrollment".into());}
     let cert=optional("REMOTE_EX_TLS_CERT")?;let key=optional("REMOTE_EX_TLS_KEY")?;let identity=optional("REMOTE_EX_SERVER_ID")?;
     let stun=optional("REMOTE_EX_STUN_URL")?.is_some();
@@ -55,7 +63,7 @@ async fn settings()->Result<Settings,Error>{
         }
         _=>return Err("Set all of REMOTE_EX_TLS_CERT, REMOTE_EX_TLS_KEY, and REMOTE_EX_SERVER_ID or none for local-only plaintext development".into()),
     };
-    Ok(Settings{address,public,allowed,tls,stun,turn,relay_count,eligible_relay_count,web_origin_configured})
+    Ok(Settings{address,public,allowed,tls,stun,turn,relay_count,eligible_relay_count,web_origin_configured,web_origin_count})
 }
 async fn shutdown_signal(){
     #[cfg(unix)]
@@ -78,7 +86,7 @@ async fn main()->Result<(),Error>{
     };
     let settings=settings().await?;
     if check{
-        println!("{}",serde_json::json!({"schema":1,"valid":true,"mode":if settings.tls.is_some(){"wss"}else{"loopback_ws"},"public_opt_in":settings.public,"enrollment_required":settings.allowed.is_some(),"enrolled_count":settings.allowed.as_ref().map_or(0,HashSet::len),"stun_configured":settings.stun,"turn_configured":settings.turn,"relay_count":settings.relay_count,"eligible_relay_count":settings.eligible_relay_count,"web_origin_configured":settings.web_origin_configured,"network_started":false}));
+        println!("{}",serde_json::json!({"schema":1,"valid":true,"mode":if settings.tls.is_some(){"wss"}else{"loopback_ws"},"public_opt_in":settings.public,"enrollment_required":settings.allowed.is_some(),"enrolled_count":settings.allowed.as_ref().map_or(0,HashSet::len),"stun_configured":settings.stun,"turn_configured":settings.turn,"relay_count":settings.relay_count,"eligible_relay_count":settings.eligible_relay_count,"web_origin_configured":settings.web_origin_configured,"web_origin_count":settings.web_origin_count,"network_started":false}));
         return Ok(());
     }
     match settings.tls{

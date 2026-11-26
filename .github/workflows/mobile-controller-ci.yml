@@ -8,6 +8,7 @@ on:
       - 'crates/security/**'
       - 'scripts/stage-mobile-client.mjs'
       - 'scripts/test-mobile-stage.mjs'
+      - 'scripts/configure-ios-controller.py'
       - '.github/workflows/mobile-controller-ci.yml'
   workflow_dispatch:
 permissions:
@@ -53,10 +54,18 @@ jobs:
           assert "connect-src 'self';" in json.loads((p/"headers.json").read_text())["Content-Security-Policy"]
           assert not list(p.glob("*fixture*"))
           PY
+      - name: Provision Android SDK tools
+        uses: android-actions/setup-android@v4
+        with:
+          cmdline-tools-version: '12266719'
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+          log-accepted-android-sdk-licenses: 'false'
       - name: Android debug compile (offline config, not a release)
         working-directory: apps/mobile/android
         run: |
-          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+          command -v sdkmanager
+          test -f "$ANDROID_HOME/platforms/android-35/android.jar"
+          test -x "$ANDROID_HOME/build-tools/35.0.0/aapt"
           gradle --no-daemon :app:assembleDebug
       - name: Inspect APK assets and permissions
         run: |
@@ -75,5 +84,59 @@ jobs:
         with:
           name: Remote-EX-Android-offline-debug-candidate
           path: apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+
+  ios:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check offline and configured iOS manifests
+        run: |
+          python3 - <<'PY'
+          import importlib.util, plistlib, tempfile
+          from pathlib import Path
+          spec=importlib.util.spec_from_file_location("ios_config","scripts/configure-ios-controller.py")
+          m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+          data=plistlib.loads(m.SOURCE.read_bytes())
+          assert not data["RemoteEXControllerOrigin"] and not data["WKAppBoundDomains"]
+          assert "NSAppTransportSecurity" not in data
+          for bad in ("http://example.net","https://example.net/","https://example.net:8443","https://user@example.net","https://127.0.0.1","https://bad..example.net","https://*.example.net"):
+              try: m.origin_host(bad)
+              except ValueError: pass
+              else: raise AssertionError(bad)
+          with tempfile.TemporaryDirectory() as d:
+              out=Path(d)/"Reviewed.plist";m.stage(out,"https://mobile.example.invalid")
+              v=plistlib.loads(out.read_bytes())
+              assert v["WKAppBoundDomains"]==["mobile.example.invalid"]
+              assert v["RemoteEXControllerOrigin"]=="https://mobile.example.invalid"
+              try: m.stage(out,"https://other.example.invalid")
+              except FileExistsError: pass
+              else: raise AssertionError("overwrite accepted")
+          PY
+          plutil -lint apps/mobile/ios/Info.plist
+          plutil -lint apps/mobile/ios/RemoteEX.xcodeproj/project.pbxproj
+      - name: Build unsigned offline simulator app
+        run: |
+          xcodebuild -project apps/mobile/ios/RemoteEX.xcodeproj -scheme RemoteEX -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath build/ios-derived CODE_SIGNING_ALLOWED=NO build
+          test -f build/ios-derived/Build/Products/Debug-iphonesimulator/RemoteEX.app/RemoteEX
+      - name: Inspect simulator candidate
+        run: |
+          python3 - <<'PY'
+          import plistlib
+          from pathlib import Path
+          p=Path("build/ios-derived/Build/Products/Debug-iphonesimulator/RemoteEX.app/Info.plist")
+          v=plistlib.loads(p.read_bytes())
+          assert not v["RemoteEXControllerOrigin"] and not v["WKAppBoundDomains"]
+          assert "NSAppTransportSecurity" not in v
+          assert "UIBackgroundModes" not in v
+          assert not any(k in v for k in ("NSCameraUsageDescription","NSMicrophoneUsageDescription"))
+          PY
+          ditto -c -k --keepParent build/ios-derived/Build/Products/Debug-iphonesimulator/RemoteEX.app /tmp/RemoteEX-iOS-simulator.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Remote-EX-iOS-offline-simulator-candidate
+          path: /tmp/RemoteEX-iOS-simulator.zip
           if-no-files-found: error
           retention-days: 14

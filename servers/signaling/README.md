@@ -27,3 +27,5 @@ M3 shared outgoing controller registration uses a separately signed RegisterCont
 
 
 M6 first candidate adds offline protocol/allowlist management and bounded operator TURN pool. See deploy/README.md and docs/M6_FIRST_HANDOFF.md. No live management endpoint or deployed service. Alpha.2 is published; these new features need new builds.
+
+M6 multi-client configuration adds REMOTE_EX_WEB_ORIGINS (up to eight exact entries, mutually exclusive with REMOTE_EX_WEB_ORIGIN). TLS, device allowlist, signed registration and local host approval remain required. No configuration is enabled by default; see deploy/README.md.

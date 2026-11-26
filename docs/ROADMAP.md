@@ -173,3 +173,8 @@ c757557 Web CI passed in full; 25c8be4 Rust/WASM and two-browser WSS passed at i
 ### M6 Android packaging candidate
 
 Shared mobile asset staging, explicit operator endpoint/ICE policy, offline default Android private WebView shell and debug APK CI. No background session, native mobile host, Android hardware-backed keys, native iOS app or physical acceptance. See [mobile build](../apps/mobile/README.md).
+
+
+### M6 ninth candidate — iOS shell, multi-origin enrollment and Android SDK repair
+
+f41c864 complete Web CI passed actual independent native VP8 and authorized Xvfb capture. Android 8b79c8b WASM/staging passed; SDK command missing before APK compile. Candidate provisions SDK tools, adds offline-default iOS 17+ WKWebView project and unsigned simulator build, plus mutually exclusive bounded exact multi-Origin configuration, preflight count and browser tests. Actual mobile compatibility/control, full input/relay acceptance, production deployment and signing remain open.
