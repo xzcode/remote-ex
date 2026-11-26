@@ -16,3 +16,8 @@ Profile metadata is shared in crates/security/src/profiles.rs. Codes 0–27 and 
 
 ## Browser implementation gate
 The fixed public-vector WebCrypto check is only the first portion of M6.4. Before any real WebRTC media or input, establish independent browser-equivalent Noise state, authenticated route and SDP verification with actual DTLS binding, ephemeral/persistent identity storage, explicit consent/revocation, resource bounds and compatibility fixtures. Fail closed if a primitive or browser API is unavailable.
+
+
+## Local browser compatibility lab candidate
+
+The isolated apps/web/crypto crate reuses the existing Rust RouteBinding verifier and Snow NN implementation for fixed synthetic profile 0, with actual browser WebCrypto signatures and a terminal proof/replay gate. The native fixture responder is test-only and speaks a fixed bounded stdin/stdout sequence. The browser lab independently signs exact generated SDP, checks actual connected local and remote DTLS certificate fingerprints, then attaches a generated canvas track to a same-page local peer connection. It does not implement external encrypted v1 signaling or remote media. New CI must verify the actual WASM build and Chromium execution before any interoperability claim. The lab does not expose generic encryption, input dispatch, or arbitrary remote endpoints.

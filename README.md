@@ -47,6 +47,8 @@
 - [M5 验收与 alpha.2 发布交接](docs/M5_ACCEPTANCE.md)
 - [M6 实施计划](docs/M6_PLAN.md)
 - [M6 第一批交接](docs/M6_FIRST_HANDOFF.md)
+- [M6 第二批交接与浏览器实验](docs/M6_WEB_LAB_HANDOFF.md)
+- [Web 本机合成媒体实验](apps/web/README.md)
 - [跨端协议 v1 基线](docs/protocol/V1_CONTRACT.md)
 - [输入适配说明](crates/input/README.md)
 - [LAN 信令诊断](crates/signaling/README.md)

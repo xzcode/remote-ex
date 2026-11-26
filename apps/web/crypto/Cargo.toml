@@ -1,0 +1,33 @@
+[package]
+name = "remote-ex-web-crypto"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Keep WASM-specific entropy and bindings out of the native workspace.
+[workspace]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+remote-ex-security = { path = "../../../crates/security" }
+snow = { version = "=0.10.0", default-features = false, features = ["default-resolver", "use-chacha20poly1305", "use-blake2", "use-curve25519", "use-getrandom"] }
+wasm-bindgen = "=0.2.106"
+zeroize = "1"
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
+rand_core = { version = "0.6", features = ["getrandom"], optional = true }
+
+[features]
+fixture-cli = ["dep:serde", "dep:serde_json", "dep:rand_core"]
+
+[[bin]]
+name = "native_fixture"
+path = "src/bin/native_fixture.rs"
+required-features = ["fixture-cli"]
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# Security uses rand_core 0.6/getrandom 0.2; Snow uses getrandom 0.3.
+getrandom_02 = { package = "getrandom", version = "0.2", features = ["js"] }
+getrandom_03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }

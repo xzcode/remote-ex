@@ -10,7 +10,7 @@
 | M3 | 设备、音频、多屏、文件、剪贴板、统计、多会话 | 功能候选：10个工作包均有代码，部分子功能未完成；最新自动化与实机验证待办，详见 M3_FULL_HANDOFF.md | 功能端到端操作和权限测试 |
 | M4 | 无人值守、后台服务、Linux、高级能力 | 四批实现候选；alpha.1 自动验收通过，物理设备与未支持平台能力待验 | 分平台验证权限、服务生命周期和明确限制 |
 | M5 | 多语言/主题、安装包、更新、安全与部署、Release | alpha.1 已发布；八语言字典、安装器、手动更新校验、部署候选已实现；alpha.2 已发布，七项 CI 通过；正式签名与实机验收未完 | 正式发布清单及三平台验证；未支持能力明示 |
-| M6 | Web、移动主控、管理端及多中继 | M6.1–3 第一批实现候选；WebCrypto 向量检查已纳入 CI，真实 Web/移动主控未实现 | 各平台独立验收 |
+| M6 | Web、移动主控、管理端及多中继 | M6.1–3 第一批六项 CI 已过；M6.4/5 浏览器 WASM/合成媒体实验已编码，待浏览器 CI；真实 Web/移动主控未实现 | 各平台独立验收 |
 
 ## M0 执行顺序
 M0.1 产品文档与模块边界；M0.2 媒体引擎和原生渲染 spike；M0.3 平台采集/输入权限 spike；M0.4 构建打包及依赖许可证审查；M0.5 ADR、协议 schema 与版本锁定。
@@ -133,3 +133,8 @@ Previous e98ef583 Core [45763059710](https://github.com/xzcode/remote-ex/actions
 ### M6 first integrated candidate
 
 Shared 28-profile v1 table now drives routed grants and signature validation without changing code values or legacy profile-0 verifier semantics. Offline --protocol-info, public deterministic Rust/WebCrypto fixture vectors, local staged allowlist creation/enrollment/revocation/diff, shared startup parser, and bounded operator-configured TURN pool with region/priority/route-stable choice. All new checks pending; no DNS health probes, active config changes, auto restart, live management endpoint, browser/mobile real session or new release. See [M6 first handoff](M6_FIRST_HANDOFF.md).
+
+
+### M6 second candidate — browser compatibility laboratory
+
+02031a8 completed all six applicable workflows successfully: [Core](https://github.com/xzcode/remote-ex/actions/runs/45770433146), [Desktop](https://github.com/xzcode/remote-ex/actions/runs/45770433415), [Native input](https://github.com/xzcode/remote-ex/actions/runs/45770433231), [Native media](https://github.com/xzcode/remote-ex/actions/runs/45770433201), [Linux](https://github.com/xzcode/remote-ex/actions/runs/45770433259), [Container](https://github.com/xzcode/remote-ex/actions/runs/45770433169). The shared contract, offline enrollment staging and relay selection fixtures passed. The new isolated apps/web lab uses actual Snow 0.10.0 in Rust WASM, browser WebCrypto non-extractable ephemeral Ed25519, fixed profile-0 mutual route signatures and replay rejection, native Rust responder ↔ Chromium WASM initiator fixture, same-page WebRTC generated canvas video only after exact signed SDP and connected transport certificate fingerprints match, decoder and actual pixel verification, explicit 30-second consent, stop/visibility cleanup. A loopback-only static server and real Chromium workflow build/test/package the lab; new results pending. Not external WSS signaling, true desktop viewing/control, persistent key storage, Web/mobile platform acceptance or a new release. See M6_WEB_LAB_HANDOFF.md.

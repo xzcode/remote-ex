@@ -11,3 +11,8 @@
 | M6.5–10 | 规划保持 | 未实现 |
 
 M6 不改变旧 v1 消息或既有 profile 权限。管理命令无网络、自动应用、重启或授予桌面访问权限；撤销计划需要管理员实际部署与重启后才生效。TURN pool 只对新 source build 生效；无公网管理端口、无真实 endpoint/credential、无自动 DNS 探测。实际 DNS/防火墙/证书和 relay 隔离仍需管理员复核。核心及新自动化结果待确认，未标记 M6 验收完成。下一批优先补实测跨端 Noise/WebCrypto 与管理运行状态安全设计，再推进浏览器合成媒体候选。旧 Release 保持不变。
+
+
+## First batch verification
+
+02031a8 all six applicable runs passed: Core 45770433146, Desktop 45770433415, Native input 45770433231, Native media 45770433201, Linux 45770433259, Container 45770433169. New browser synthetic lab is documented in M6_WEB_LAB_HANDOFF.md; real cross-network relay health/failover and full client interoperation remain unverified.

@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Remote EX — Web compatibility lab</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top"><div><strong>Remote EX</strong><span class="muted"> / Web compatibility lab</span></div><span class="tag">M6 · experimental</span></header>
+<main>
+<section class="intro"><h1>Browser connection laboratory</h1><p>This isolated demonstration uses two peer connections inside the same page, generated identities and a synthetic video source. It does not connect to a desktop, use a public signaling server, or request capture and input permissions.</p></section>
+<section class="card">
+  <div class="row"><h2>Authenticated synthetic video</h2><span id="status" role="status" data-state="idle">Idle</span></div>
+  <div class="grid">
+    <div class="screen"><div class="screen-label">Generated source</div><canvas id="source" width="320" height="180" aria-label="Generated test source"></canvas></div>
+    <div class="screen"><div class="screen-label">Decoded WebRTC video</div><video id="remote" playsinline muted autoplay aria-label="Synthetic received video"></video></div>
+  </div>
+  <div class="metrics">
+    <div><span>Received frames</span><strong id="frames">—</strong></div>
+    <div><span>Resolution</span><strong id="resolution">—</strong></div>
+    <div><span>Media transport</span><strong id="transport">—</strong></div>
+  </div>
+  <div class="actions"><label><input id="consent" type="checkbox"> I authorize a local, synthetic-only test for up to 30 seconds.</label><div class="buttons"><button id="start" disabled>Start local test</button><button id="stop" disabled>Disconnect</button></div></div>
+  <p id="error" class="error" role="alert"></p>
+</section>
+<section class="card"><h2>Verification stages</h2><ol id="steps">
+<li data-step="vectors">Browser WebCrypto public vectors</li>
+<li data-step="identity">Non-extractable ephemeral Ed25519 keys</li>
+<li data-step="noise">WASM Snow mutual proof and replay rejection</li>
+<li data-step="sdp">Exact generated SDP and mutual signatures</li>
+<li data-step="dtls">Actual connected DTLS certificates match signed fingerprints</li>
+<li data-step="video">Generated video decoded via WebRTC</li>
+</ol><p class="muted">No STUN/TURN or external endpoint is configured. Host ICE candidates are negotiated only between these two local peer connections. The test is not a desktop/Web interoperability or real-device acceptance result.</p></section>
+</main>
+<script type="module" src="app.js"></script>
+</body></html>

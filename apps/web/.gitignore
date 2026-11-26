@@ -1,0 +1,5 @@
+/pkg/
+/dist/
+/node_modules/
+/crypto/target/
+/crypto/Cargo.lock

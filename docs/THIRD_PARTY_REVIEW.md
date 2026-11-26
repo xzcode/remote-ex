@@ -22,3 +22,8 @@ Review flags: declared_review_pending, copyleft_or_reciprocal_review, special_te
 5. Complete authorized real-device install/session acceptance and deployment review.
 
 An alpha candidate is still experimental, not proof of completed distribution review.
+
+
+## M6 browser lab candidate
+
+The isolated apps/web/crypto crate selects Snow 0.10.0's existing NN primitive features (https://docs.rs/crate/snow/0.10.0/features), wasm-bindgen 0.2.106 (https://crates.io/crates/wasm-bindgen), and JS entropy features for getrandom 0.2 and 0.3 (https://docs.rs/getrandom/0.3.4/getrandom/#webassembly-support). Browser WebCrypto generates non-extractable ephemeral fixture signing keys. Playwright 1.56.1/Chromium are CI tooling only; neither browser nor native fixture executable is bundled. Review resolved package graph, notices and WASM distribution obligations before public product release. No audited browser cryptography claim.
