@@ -1,0 +1,9 @@
+{
+  "endpoint": "wss://your-signaling.example.invalid/v1/ws",
+  "ice": {
+    "stun": null,
+    "turn": [],
+    "relayOnly": false
+  },
+  "control": false
+}

@@ -168,3 +168,8 @@ c757557 Web CI passed in full; 25c8be4 Rust/WASM and two-browser WSS passed at i
 ### M6 eighth candidate — mobile touch controller
 
 48733f2 Core, Native Media and Linux X11 CI passed. New explicit touch modes, single pointer lifecycle, compatibility page and narrow-screen UI. Pure touch test and CI added. Physical phone/browser acceptance, native mobile packaging and original browser-native integration still pending. See [mobile handoff](M6_MOBILE_HANDOFF.md).
+
+
+### M6 Android packaging candidate
+
+Shared mobile asset staging, explicit operator endpoint/ICE policy, offline default Android private WebView shell and debug APK CI. No background session, native mobile host, Android hardware-backed keys, native iOS app or physical acceptance. See [mobile build](../apps/mobile/README.md).

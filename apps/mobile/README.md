@@ -1,0 +1,21 @@
+# Mobile controller candidate
+
+Android reuses the existing browser WebCrypto/WASM/VP8 path in a private packaged WebView origin. iOS uses the HTTPS browser candidate first; no iOS native application, signing or App Store package exists.
+
+## Build Android
+Use JDK 17, Gradle 8.9, Android SDK platform 35, build-tools 35.0.0, Node 22 and the existing WASM build commands in apps/web/README.md. From repository root, build WASM and then:
+- Create the staging parent with mkdir -p build.
+- Run node scripts/stage-mobile-client.mjs build/mobile-assets for an offline capability/identity build. To enable a server, pass a separately reviewed operator JSON (see operator-config.json.example) as the final argument. Use a fresh staging directory when changing configuration. Never put private keys, passwords or temporary credentials in the file.
+- From apps/mobile/android run gradle --no-daemon :app:assembleDebug.
+- Install the debug APK on an authorized Android device for testing. The declared minimum is Android 8, not a compatibility promise. A current WebView must support non-extractable Ed25519, WASM, WebRTC, IndexedDB and connected DTLS stats.
+
+The app intercepts fixed bundled files under https://appassets.androidplatform.net with restrictive headers. No JS bridge, file/content access, external navigation, mixed content, certificate-error bypass, local capture or background service. Android declares INTERNET only. Backgrounding destroys WebView sessions; resuming returns to the mobile landing. Origin-local IndexedDB identity persists, but is not a hardware-backed Android Keystore identity. Backup is disabled. No default server. Enroll independently verified device ID and key, with TLS and exact REMOTE_EX_WEB_ORIGIN=https://appassets.androidplatform.net. The current server supports one configured Web Origin; use a separately reviewed deployment for each required origin instead of weakening the policy.
+
+## Touch UI
+With independently approved profile-2 permission and decoded media, select mouse/keyboard or touch click, drag, right click or scroll, then enable input. A single finger within the authorized display geometry is accepted. Multi-touch, focus loss, cancellation or out-of-bounds dragging release and disable input. The native dispatcher independently cleans up on transport loss. No text/IME injection, background input, clipboard, file transfer or mobile host mode.
+
+## iOS and Android browsers
+Stage the same assets into a separate clean directory using the approved operator config. Serve only those files under a trusted HTTPS origin with the exact headers.json response headers, correct application/wasm MIME type and the matching signaling Web Origin. Do not expose the localhost diagnostic server as a proxy. The Safari/iOS browser must separately pass capability checks, persistent identity reload, actual VP8/WebRTC and DTLS statistics, and touch lifecycle. No native iOS app or signing completed. A native iOS implementation requires review of WebRTC, secure keys, device lifecycle and Apple signing/build conditions.
+
+## Acceptance
+CI builds a debug APK with no endpoint and checks packaged assets. Actual Android install, WebView capability, identity persistence, background/relaunch, authorized media and input, and cross-network relay require device tests. No public deployment or new release.

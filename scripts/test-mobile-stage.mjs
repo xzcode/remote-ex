@@ -1,0 +1,14 @@
+import assert from "node:assert/strict";
+import {config,policyFor} from "./stage-mobile-client.mjs";
+assert.deepEqual(config(null),{schema:1,mode:"disabled"});
+assert.match(policyFor(config(null))["Content-Security-Policy"],/connect-src 'self';/);
+const endpoint="wss://signal.example.invalid/v1/ws",ice={stun:null,turn:[],relayOnly:false};
+const v=config({endpoint,ice,control:false});
+assert.equal(v.endpoint,endpoint);
+assert.match(policyFor(v)["Content-Security-Policy"],/connect-src 'self' wss:\/\/signal\.example\.invalid;/);
+assert.throws(()=>config({endpoint:"ws://signal.example.invalid/v1/ws",ice,control:false}));
+assert.throws(()=>config({endpoint,ice,control:true,privateKey:"not allowed"}));
+assert.throws(()=>config({endpoint:"wss://user:pass@signal.example.invalid/v1/ws",ice,control:false}));
+assert.throws(()=>config({endpoint,ice,control:"true"}));
+assert.throws(()=>config({endpoint,ice:{...ice,relayOnly:true},control:false}));
+console.log("PASS mobile staging config and restricted origin policy");

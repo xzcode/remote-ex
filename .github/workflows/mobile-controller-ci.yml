@@ -1,0 +1,79 @@
+name: Mobile controller candidate
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'apps/mobile/**'
+      - 'apps/web/**'
+      - 'crates/security/**'
+      - 'scripts/stage-mobile-client.mjs'
+      - 'scripts/test-mobile-stage.mjs'
+      - '.github/workflows/mobile-controller-ci.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: mobile-controller-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  android:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Verify mobile gestures, ICE and asset configuration
+        run: |
+          (cd apps/web && npm run test:touch && npm run test:policy-input && node --check mobile.js)
+          node scripts/test-mobile-stage.mjs
+      - name: Build existing WASM session core
+        run: |
+          rustup target add wasm32-unknown-unknown
+          cargo install wasm-bindgen-cli --version 0.2.106 --locked
+          RUSTFLAGS='--cfg getrandom_backend="wasm_js"' cargo build --release --manifest-path apps/web/crypto/Cargo.toml --target wasm32-unknown-unknown
+          wasm-bindgen --target web --out-dir apps/web/pkg --out-name noise apps/web/crypto/target/wasm32-unknown-unknown/release/remote_ex_web_crypto.wasm
+      - name: Stage offline Android development assets
+        run: |
+          mkdir -p build
+          node scripts/stage-mobile-client.mjs build/mobile-assets
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path("build/mobile-assets")
+          assert json.loads((p/"view-config.json").read_text()) == {"schema":1,"mode":"disabled"}
+          assert "connect-src 'self';" in json.loads((p/"headers.json").read_text())["Content-Security-Policy"]
+          assert not list(p.glob("*fixture*"))
+          PY
+      - name: Android debug compile (offline config, not a release)
+        working-directory: apps/mobile/android
+        run: |
+          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+          gradle --no-daemon :app:assembleDebug
+      - name: Inspect APK assets and permissions
+        run: |
+          python3 - <<'PY'
+          import json, zipfile
+          from pathlib import Path
+          p=Path("apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk")
+          with zipfile.ZipFile(p) as z:
+              assert json.loads(z.read("assets/view-config.json")) == {"schema":1,"mode":"disabled"}
+              for n in ("mobile.html","view.html","touch.js","pkg/noise_bg.wasm","headers.json"):
+                  assert z.getinfo("assets/"+n).file_size > 0
+              assert not any("fixture" in n for n in z.namelist() if n.startswith("assets/"))
+          PY
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump permissions apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Remote-EX-Android-offline-debug-candidate
+          path: apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
