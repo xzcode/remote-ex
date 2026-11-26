@@ -27,3 +27,7 @@ The Xcode project targets iOS 17 or later. It opens only a build-time reviewed H
 ## Extended sessions and saved details
 
 The optional operator config `extended: true` allows a separately selected and approved 300-second foreground session with existing native profile 22/23 and a bilateral 420-second routing lease. Default is 30 seconds; no auto-reconnect or lease renewal. Runtime quality uses the native Auto/Full/Balanced/Low protocol. Input is deliberately disabled at reduced decoder resolution and released on a quality change; reactivate explicitly at full size. Saved connections contain only a name and exact server/host details in origin-local storage, never a session grant, key secret, credential, mode or reconnect setting. Loading a saved entry resets control, duration and consent. Run `node scripts/verify-mobile-stage.mjs build/mobile-assets` before staging assets for use.
+
+## Runtime acceptance (CI only)
+
+The mobile workflow also builds a separate Android instrumentation APK and installs the offline client on a fresh API 36 emulator to check actual WebView secure context/capabilities, origin-local identity lifecycle and background destruction. The iOS job attempts actual simulator install and launch/relaunch of the offline app. These steps run after build artifacts are uploaded; an unavailable emulator, missing required API or failed probe is a test failure, not a compatibility pass. No production APK test code or signing changes. Actual authorized physical remote sessions remain separate; see docs/M6_MOBILE_RUNTIME_ACCEPTANCE.md.
