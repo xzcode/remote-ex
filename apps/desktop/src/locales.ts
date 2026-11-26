@@ -12,6 +12,22 @@ type Row=[TextKey,string,string,string,string,string,string];
 // The settings page reports coverage; new untranslated keys fall back to
 // the original English until their translations are added.
 const rows:Row[]=[
+["workspace","Arbeitsbereich","Espace de travail","Área de trabajo","Área de trabalho","ワークスペース","작업 공간"],
+["management","Verwaltung","Gestion","Administración","Gerenciamento","管理","관리"],
+["workspaceWelcome","Bereit zur Verbindung","Prêt à se connecter","Listo para conectar","Pronto para conectar","接続を開始","연결 준비"],
+["workspaceWelcomeNote","Eine ausgehende Verbindung wählen oder dieses Gerät für eine bestätigte eingehende Sitzung vorbereiten.","Choisir une connexion sortante ou préparer cet appareil pour une session entrante approuvée.","Elija una conexión saliente o prepare este dispositivo para una sesión entrante aprobada.","Escolha uma conexão de saída ou prepare este dispositivo para uma sessão de entrada aprovada.","接続先を選ぶか、この端末を承認付きの受信セッション用に準備します。","발신 연결을 선택하거나 승인된 수신 세션을 위해 이 장치를 준비하세요."],
+["workspaceReceive","Fernzugriff erlauben","Autoriser l’accès distant","Permitir acceso remoto","Permitir acesso remoto","リモートアクセスを許可","원격 접근 허용"],
+["workspaceReceiveNote","Dieses Gerät vorbereiten und seine geprüfte Identität teilen. Jede Sitzung erfordert lokale Zustimmung.","Préparer cet appareil et partager son identité vérifiée. Chaque session exige une approbation locale.","Prepare este dispositivo y comparta su identidad verificada. Cada sesión requiere aprobación local.","Prepare este dispositivo e compartilhe sua identidade verificada. Cada sessão requer aprovação local.","端末を準備し、確認済みの識別情報を共有します。各セッションにはローカル承認が必要です。","장치를 준비하고 확인된 신원을 공유하세요. 각 세션에는 로컬 승인이 필요합니다."],
+["workspacePrepareHost","Dieses Gerät vorbereiten","Préparer cet appareil","Preparar este dispositivo","Preparar este dispositivo","この端末を準備","이 장치 준비"],
+["workspaceConnect","Mit Gerät verbinden","Se connecter à un appareil","Conectar a un dispositivo","Conectar a um dispositivo","端末に接続","장치에 연결"],
+["workspaceReviewInvite","Einladung prüfen","Vérifier l’invitation","Revisar invitación","Revisar convite","招待を確認","초대 확인"],
+["workspaceShortcuts","Schnellzugriff","Accès rapide","Acceso rápido","Acesso rápido","クイックアクセス","빠른 접근"],
+["workspaceLan","LAN-Verbindung","Connexion LAN","Conexión LAN","Conexão LAN","LAN 接続","LAN 연결"],
+["workspaceSessionActive","Sitzung aktiv","Session active","Sesión activa","Sessão ativa","セッション中","세션 활성"],
+["workspaceScopeNotice","Gespeicherten Server wählen oder geprüfte ID für lokale Einträge eingeben.","Sélectionner un serveur enregistré ou saisir son ID vérifié pour consulter les données locales.","Seleccione un servidor guardado o introduzca su ID verificado para ver los registros locales.","Selecione um servidor salvo ou insira seu ID verificado para ver registros locais.","保存済みサーバーを選ぶか、確認済み ID を入力してローカル記録を表示します。","저장된 서버를 선택하거나 확인된 ID를 입력하여 로컬 기록을 보세요."],
+["workspaceNoMatch","Keine passenden Geräte.","Aucun appareil correspondant.","No hay dispositivos coincidentes.","Nenhum dispositivo correspondente.","該当する端末がありません。","일치하는 장치가 없습니다."],
+["workspaceHistoryEmpty","Keine gespeicherten Sitzungen für diesen Server.","Aucune session enregistrée pour ce serveur.","No hay sesiones guardadas para este servidor.","Nenhuma sessão salva para este servidor.","このサーバーの保存済みセッションはありません。","이 서버에 저장된 세션이 없습니다."],
+["workspaceGray","Sanftes Grau","Gris doux","Gris suave","Cinza suave","ソフトグレー","부드러운 회색"],
 ["localePartial","Teilübersetzung: Nicht übersetzte Hinweise und Einwilligungen bleiben auf Englisch.","Traduction partielle : les instructions et consentements non traduits restent en anglais.","Traducción parcial: las instrucciones y los consentimientos sin traducir se muestran en inglés.","Tradução parcial: instruções e consentimentos não traduzidos permanecem em inglês.","一部翻訳：未翻訳の説明と同意文は英語で表示されます。","부분 번역: 번역되지 않은 안내 및 동의 문구는 영어로 표시됩니다."],
 ["localeCoverage","Übersetzte Meldungen","Messages traduits","Mensajes traducidos","Mensagens traduzidas","翻訳済みメッセージ","번역된 메시지"],
 ["remote","Fernsteuerung","Contrôle à distance","Control remoto","Controle remoto","リモート操作","원격 제어"],

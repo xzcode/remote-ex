@@ -14,9 +14,9 @@ type PowerReview={action:PowerAction;token:string};
 type Snapshot={privacy_available?:boolean;privacy_paused?:boolean;privacy_pending?:boolean|null;power_review?:PowerReview|null;power_approved?:boolean;power_accepted?:PowerAction|null;power_os_submitted?:boolean;stage:Stage;active:boolean;local_key:string|null;device_id:string|null;detail:string|null;profile:string;input_released:boolean;decoded_fps?:number|null;decoded_bps?:number|null;transfer_done?:number|null;transfer_total?:number|null;transfer_verified?:boolean;transfer_paused?:boolean;checkpoint_saved?:number|null;directory_entries?:number|null;clipboard_sent?:number|null;clipboard_received?:number|null;catalog?:CatalogEntry[];catalog_ready?:boolean;catalog_selected?:number|null;manage_review?:FileReview|null;manage_token?:string|null;manage_submitted?:boolean;manage_approved?:boolean;manage_applied?:number|null;armed?:boolean;extended?:boolean;stream_quality?:string|null;stream_decoded?:string|null;resume_offset?:number|null;audio_volume?:number|null;network_bps?:number|null;rtt_ms?:number|null;loss_pct?:number|null;route_type?:string|null};
 type Device={device_id:string;public_key:string;label:string};
 type Display={id:number;name:string;width:number;height:number;primary:boolean};
-const props=defineProps<{t:(key:TextKey)=>string;slot:number;visible:boolean}>();
+const props=defineProps<{t:(key:TextKey)=>string;slot:number;visible:boolean;initialMode?:"view"|"file";initialRole?:"host"|"controller";initialInvitation?:string}>();
 const emit=defineEmits<{active:[value:boolean]}>();
-const native=isTauri(),role=ref<"host"|"controller">("controller"),mode=ref<"test"|"view"|"control"|"file"|"text"|"png"|"audio"|"directory"|"clipboard_sync"|"catalog"|"catalog_batch"|"av_view"|"av_control"|"manage"|"power">("test");
+const native=isTauri(),role=ref<"host"|"controller">(props.initialRole??"controller"),mode=ref<"test"|"view"|"control"|"file"|"text"|"png"|"audio"|"directory"|"clipboard_sync"|"catalog"|"catalog_batch"|"av_view"|"av_control"|"manage"|"power">(props.initialMode??"view");
 type PlatformCaps={os:string;desktop_session:string;portal_sources:string[];portal_version:number|null;portal_detail:string|null;wayland_portal:boolean;portal_control:boolean};
 const platform=ref<PlatformCaps|null>(null),portalSource=ref("");
 const powerAction=ref<PowerAction>("restart"),powerConfirmed=ref(false);
@@ -137,7 +137,7 @@ function prepare(){
 }
 function confirm(){if(!canConfirm.value)return;submitted.value=true;return command("routed_confirm",{deviceId:peerId.value.trim(),peerKey:peerKey.value.trim(),approved:true});}
 let stopDrop:(()=>void)|undefined;
-onMounted(()=>{void poll();if(native)void invoke<PlatformCaps>("platform_capabilities").then(c=>{if(!disposed){platform.value=c;if(c.os==="linux"){persistent.value=false;sharedIdentity.value=false;}}}).catch(e=>{if(!disposed)error.value=String(e);});timer=window.setInterval(poll,400);if(native)void getCurrentWebview().onDragDropEvent(event=>{
+onMounted(()=>{void poll();if(native&&props.initialInvitation){invitation.value=props.initialInvitation;void readInvitation();}if(native)void invoke<PlatformCaps>("platform_capabilities").then(c=>{if(!disposed){platform.value=c;if(c.os==="linux"){persistent.value=false;sharedIdentity.value=false;}}}).catch(e=>{if(!disposed)error.value=String(e);});timer=window.setInterval(poll,400);if(native)void getCurrentWebview().onDragDropEvent(event=>{
  if(event.payload.type!=="drop"||!props.visible||busy.value||snapshot.value.active||role.value!==sender.value||!["file","directory"].includes(mode.value))return;
  if(event.payload.paths.length!==1){error.value=props.t("dropSingle");return;}
  transferPath.value=event.payload.paths[0]??"";approved.value=false;
@@ -149,7 +149,7 @@ onBeforeUnmount(()=>{disposed=true;stopDrop?.();if(timer!==undefined)window.clea
  <header class="preview-head"><h2>{{ t("routedTitle") }}</h2><span class="status" role="status">{{ status }}</span></header>
  <p>{{ t("routedDescription") }}</p>
  <div v-if="snapshot.active&&isDisplay" class="view-notice">{{ t(role==="host"?"routedHostNotice":"controlControllerNotice") }}</div>
- <div class="field"><label>{{ t("invitationCode") }}</label><textarea v-model="invitation" maxlength="2048" :readonly="snapshot.active" rows="2"/><div class="actions"><button :disabled="busy||snapshot.active||!invitation.trim()" @click="readInvitation">{{ t("invitationImport") }}</button><button :disabled="busy||role!=='host'||!snapshot.device_id||isExchange||mode==='audio'||mode==='clipboard_sync'||mode==='catalog'||mode==='catalog_batch'||mode==='manage'||mode==='power'" @click="makeInvitation">{{ t("invitationCreate") }}</button></div><p class="muted">{{ t("invitationNotice") }}</p></div>
+ <details class="connection-section" :open="!!initialInvitation||undefined"><summary>{{ t("invitationCode") }}</summary><div class="field"><label>{{ t("invitationCode") }}</label><textarea v-model="invitation" maxlength="2048" :readonly="snapshot.active" rows="2"/><div class="actions"><button :disabled="busy||snapshot.active||!invitation.trim()" @click="readInvitation">{{ t("invitationImport") }}</button><button :disabled="busy||role!=='host'||!snapshot.device_id||isExchange||mode==='audio'||mode==='clipboard_sync'||mode==='catalog'||mode==='catalog_batch'||mode==='manage'||mode==='power'" @click="makeInvitation">{{ t("invitationCreate") }}</button></div><p class="muted">{{ t("invitationNotice") }}</p></div></details>
  <div class="field">
   <label>{{ t("presenceUrl") }}</label><input v-model="url" placeholder="wss://…/v1/ws" maxlength="512" :disabled="busy||snapshot.active"/>
   <label>{{ t("presenceServerId") }}</label><input v-model="serverId" maxlength="64" class="key-input" :disabled="busy||snapshot.active"/>
