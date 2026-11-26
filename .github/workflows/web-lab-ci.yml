@@ -5,6 +5,10 @@ on:
     paths:
       - 'apps/web/**'
       - 'crates/security/**'
+      - 'servers/signaling/**'
+      - 'crates/rendezvous-protocol/**'
+      - 'crates/rendezvous-client/**'
+      - 'crates/signaling/**'
       - 'docs/protocol/**'
       - '.github/workflows/web-lab-ci.yml'
   pull_request:
@@ -21,7 +25,8 @@ concurrency:
   cancel-in-progress: true
 jobs:
   lab:
-    runs-on: ubuntu-latest
+    # Playwright 1.56.1 cannot install Chromium on the new 26.04 runner.
+    runs-on: ubuntu-24.04
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
@@ -40,16 +45,28 @@ jobs:
           RUSTFLAGS='--cfg getrandom_backend="wasm_js"' cargo build --release --manifest-path apps/web/crypto/Cargo.toml --target wasm32-unknown-unknown
           wasm-bindgen --target web --out-dir apps/web/pkg --out-name noise apps/web/crypto/target/wasm32-unknown-unknown/release/remote_ex_web_crypto.wasm
       - name: Install pinned Chromium test tooling
+        id: browser_tooling
         working-directory: apps/web
         run: |
           npm install --ignore-scripts --no-audit --no-fund
           npx playwright install --with-deps chromium
+      - name: Build disposable enrolled WSS fixture
+        id: wss_fixture
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y openssl libnss3-tools
+          cargo build -p remote-ex-rendezvous
       - name: Browser module syntax and authenticated synthetic media
         working-directory: apps/web
         run: |
           node --check crypto.js
           node --check app.js
+          node --check wss-fixture.js
           npm test
+      - name: Real enrolled WSS and encrypted synthetic media fixture
+        if: ${{ !cancelled() && steps.browser_tooling.outcome == 'success' && steps.wss_fixture.outcome == 'success' }}
+        working-directory: apps/web
+        run: npm run test:wss
       - name: Stage private local-only diagnostic bundle
         run: |
           mkdir -p apps/web/dist/pkg

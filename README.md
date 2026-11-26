@@ -48,6 +48,7 @@
 - [M6 实施计划](docs/M6_PLAN.md)
 - [M6 第一批交接](docs/M6_FIRST_HANDOFF.md)
 - [M6 第二批交接与浏览器实验](docs/M6_WEB_LAB_HANDOFF.md)
+- [M6 第三批 WSS 与加密合成媒体交接](docs/M6_WSS_HANDOFF.md)
 - [Web 本机合成媒体实验](apps/web/README.md)
 - [跨端协议 v1 基线](docs/protocol/V1_CONTRACT.md)
 - [输入适配说明](crates/input/README.md)

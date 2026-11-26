@@ -25,6 +25,7 @@ hmac = "0.12"
 sha1 = "0.10"
 base64 = "0.22"
 zeroize = "1"
+url = "2"
 
 [dev-dependencies]
 remote-ex-rendezvous-client = { path = "../../crates/rendezvous-client" }

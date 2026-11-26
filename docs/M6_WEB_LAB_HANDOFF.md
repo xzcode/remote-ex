@@ -17,3 +17,8 @@
 
 ## 待验收
 新 Web CI 尚待执行结果。需要实际编译 WASM、验证原生↔浏览器握手及 Chromium DTLS 证书字段/帧。其他浏览器、WebKit/Safari、Android/iOS、持久密钥、真实桌面互通与跨网络 P2P/TURN 均未完成。M6.4/5 为候选而非阶段关闭；M6.6–10 尚未开始。本轮不自动发布/部署任何 Web 服务。
+
+
+## 上一批 CI 实测与第三批补充
+
+[Core CI 45773246555](https://github.com/xzcode/remote-ex/actions/runs/45773246555) 成功。[Web lab 45773246513](https://github.com/xzcode/remote-ex/actions/runs/45773246513) 原生 Rust synthetic Noise proof/replay fixture、wasm32 编译及绑定生成均通过；Playwright 1.56.1 安装浏览器依赖时，ubuntu-latest 对应 Ubuntu 26.04 不受支持，因此 Chromium 步骤未执行。第三批将 Web workflow 固定在 Ubuntu 24.04，并补真实 WSS/TLS 和加密 SDP 合成媒体 fixture；见 M6_WSS_HANDOFF.md。新结果仍待验证，不得把之前编译通过说成实际浏览器互通。

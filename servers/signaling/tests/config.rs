@@ -22,6 +22,8 @@ fn preflight_never_binds_and_rejects_insecure_configuration(){
         vec![("REMOTE_EX_STUN_URL","stun://localhost:3478")],
         vec![("REMOTE_EX_RELAY_POOL_FILE","missing.json")],
         vec![("REMOTE_EX_RELAY_REGION","asia")],
+        vec![("REMOTE_EX_WEB_ORIGIN","https://remote.example.net")],
+        vec![("REMOTE_EX_WEB_ORIGIN","*")],
     ]{assert!(!check(&vars).status.success());}
 }
 #[test]

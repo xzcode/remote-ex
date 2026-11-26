@@ -24,19 +24,29 @@ export const headers={
  "Referrer-Policy":"no-referrer",
  "Cache-Control":"no-store"
 };
-export async function serve(port=0){
+// fixtureEndpoint is used only by the disposable integration harness. The
+// normal command and distributed archive have neither this route nor WSS CSP.
+export async function serve(port=0,fixtureEndpoint=null){
  if(!Number.isInteger(port)||port<0||port>65535)throw Error("Invalid local port");
+ const table=new Map(routes);
+ const policy={...headers};
+ if(fixtureEndpoint!==null){
+    const endpoint=new URL(fixtureEndpoint);
+    if(endpoint.protocol!=="wss:"||endpoint.hostname!=="127.0.0.1"||!endpoint.port||endpoint.pathname!=="/v1/ws"||endpoint.username||endpoint.password||endpoint.search||endpoint.hash||endpoint.href!==fixtureEndpoint)throw Error("Only the exact local WSS fixture is allowed");
+    table.set("/wss-fixture.js",["wss-fixture.js","text/javascript; charset=utf-8"]);
+    policy["Content-Security-Policy"]=policy["Content-Security-Policy"].replace("connect-src 'self'","connect-src 'self' "+endpoint.origin);
+ }
  const server=http.createServer(async(req,res)=>{
     const validHost=req.headers.host===`127.0.0.1:${server.address()?.port}`;
-    if(!validHost||req.method!=="GET"||!routes.has(req.url)){
-      res.writeHead(404,{"Content-Type":"text/plain",...headers});res.end("Not found");return;
+    if(!validHost||req.method!=="GET"||!table.has(req.url)){
+      res.writeHead(404,{"Content-Type":"text/plain",...policy});res.end("Not found");return;
     }
-    const [file,type]=routes.get(req.url);
+    const [file,type]=table.get(req.url);
     try{
       const data=await readFile(path.resolve(root,file));
       if(data.length>16*1024*1024)throw Error("Fixture asset exceeds bound");
-      res.writeHead(200,{"Content-Type":type,"Content-Length":data.length,...headers});res.end(data);
-    }catch{res.writeHead(503,{"Content-Type":"text/plain",...headers});res.end("Build the local WASM fixture first.");}
+      res.writeHead(200,{"Content-Type":type,"Content-Length":data.length,...policy});res.end(data);
+    }catch{res.writeHead(503,{"Content-Type":"text/plain",...policy});res.end("Build the local WASM fixture first.");}
  });
  server.requestTimeout=5000;server.headersTimeout=5000;server.keepAliveTimeout=1000;
  await new Promise((resolve,reject)=>{server.once("error",reject);server.listen(port,"127.0.0.1",resolve);});

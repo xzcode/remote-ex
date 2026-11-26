@@ -1,12 +1,15 @@
 #![forbid(unsafe_code)]
 //! Isolated synthetic-only Noise compatibility spike. Never opens a socket,
 //! accepts an arbitrary application payload, grants input or registers devices.
+//! The routed fixture additionally permits a closed offer/answer/proof sequence.
 //! Identity signatures are supplied by the local WebCrypto fixture; both
 //! expected keys are known from creation. Only fixed profile 0 is accepted.
 use remote_ex_security::{Role,route_binding::RouteBinding,profiles::NOISE_PATTERN};
 use snow::{Builder,HandshakeState,TransportState};
 use wasm_bindgen::prelude::*;
 use zeroize::Zeroizing;
+mod fixture_sdp;
+use fixture_sdp::SdpState;
 const FIXTURE:&[u8]=b"Remote EX/browser/fixture-only/v1";
 type Result<T>=std::result::Result<T,String>;
 fn exact<const N:usize>(bytes:&[u8])->Result<[u8;N]>{bytes.try_into().map_err(|_|"Invalid fixture field length".into())}
@@ -14,6 +17,7 @@ fn noise<T>(v:std::result::Result<T,snow::Error>)->Result<T>{v.map_err(|_|"Fixtu
 struct Peer{
     binding:RouteBinding,role:Role,handshake:Option<HandshakeState>,transport:Option<TransportState>,
     hash:Option<[u8;32]>,step:u8,proof_sent:bool,proof_received:bool,failed:bool,
+    sdp:SdpState,fixture_used:bool,
 }
 impl Peer{
     fn new(role:Role,session:&[u8],controller:&[u8],host:&[u8],cn:&[u8],hn:&[u8])->Result<Self>{
@@ -24,7 +28,7 @@ impl Peer{
         let b=Builder::new(NOISE_PATTERN.parse().map_err(|_|"Noise pattern unavailable")?);
         let b=noise(b.prologue(&context))?;
         let hs=if role==Role::Controller{noise(b.build_initiator())?}else{noise(b.build_responder())?};
-        Ok(Self{binding,role,handshake:Some(hs),transport:None,hash:None,step:0,proof_sent:false,proof_received:false,failed:false})
+        Ok(Self{binding,role,handshake:Some(hs),transport:None,hash:None,step:0,proof_sent:false,proof_received:false,failed:false,sdp:SdpState::default(),fixture_used:false})
     }
     fn run<T>(&mut self,f:impl FnOnce(&mut Self)->Result<T>)->Result<T>{
         if self.failed{return Err("Fixture closed".into());}
@@ -32,7 +36,7 @@ impl Peer{
         if r.is_err(){self.close();}
         r
     }
-    fn close(&mut self){self.failed=true;self.handshake=None;self.transport=None;self.hash=None;self.proof_sent=false;self.proof_received=false;}
+    fn close(&mut self){self.failed=true;self.handshake=None;self.transport=None;self.hash=None;self.proof_sent=false;self.proof_received=false;self.sdp=SdpState::default();}
     fn finish(&mut self)->Result<()>{
         let hs=self.handshake.take().ok_or("No fixture handshake")?;
         if !hs.is_handshake_finished(){return Err("Incomplete fixture handshake".into());}
@@ -76,17 +80,51 @@ impl Peer{
     })}
     fn ready(&self)->bool{!self.failed&&self.proof_sent&&self.proof_received&&self.transport.is_some()}
     fn send_fixture(&mut self)->Result<Vec<u8>>{self.run(|s|{
-        if !s.ready(){return Err("Mutual fixture proof required".into());}
+        if !s.ready()||s.sdp.started(){return Err("Mutual fixture proof required; record types cannot be mixed".into());}
+        s.fixture_used=true;
         let mut out=vec![0;FIXTURE.len()+16];
         let n=noise(s.transport.as_mut().ok_or("Transport unavailable")?.write_message(FIXTURE,&mut out))?;
         if n!=out.len(){return Err("Invalid fixture ciphertext length".into());}Ok(out)
     })}
     fn receive_fixture(&mut self,packet:&[u8])->Result<()>{self.run(|s|{
-        if !s.ready()||packet.len()!=FIXTURE.len()+16{return Err("Invalid fixture record".into());}
+        if !s.ready()||s.sdp.started()||packet.len()!=FIXTURE.len()+16{return Err("Invalid fixture record".into());}
+        s.fixture_used=true;
         let mut out=Zeroizing::new(vec![0;packet.len()]);
         let n=noise(s.transport.as_mut().ok_or("Transport unavailable")?.read_message(packet,&mut out))?;
         if &out[..n]!=FIXTURE{return Err("Unexpected fixture plaintext".into());}Ok(())
     })}
+    fn send_sdp(&mut self,sdp:&str)->Result<Vec<u8>>{self.run(|s|{
+        if !s.ready()||s.fixture_used{return Err("Mutual proof required for SDP fixture".into());}
+        let clear=Zeroizing::new(s.sdp.send_description(s.role,sdp)?);
+        s.seal_sdp(&clear)
+    })}
+    fn receive_sdp(&mut self,packet:&[u8])->Result<String>{self.run(|s|{
+        if !s.ready()||s.fixture_used{return Err("Mutual proof required for SDP fixture".into());}
+        let clear=s.open_sdp(packet)?;
+        s.sdp.receive_description(s.role,&clear)
+    })}
+    fn send_sdp_proof(&mut self,signature:&[u8])->Result<Vec<u8>>{self.run(|s|{
+        if !s.ready()||s.fixture_used{return Err("Mutual proof required for SDP signature".into());}
+        let clear=Zeroizing::new(s.sdp.send_proof(s.role,&s.binding,exact(signature)?)?);
+        s.seal_sdp(&clear)
+    })}
+    fn receive_sdp_proof(&mut self,packet:&[u8])->Result<()>{self.run(|s|{
+        if !s.ready()||s.fixture_used{return Err("Mutual proof required for SDP signature".into());}
+        let clear=s.open_sdp(packet)?;
+        s.sdp.receive_proof(s.role,&s.binding,&clear)
+    })}
+    fn seal_sdp(&mut self,clear:&[u8])->Result<Vec<u8>>{
+        if clear.is_empty()||clear.len()>remote_ex_security::profiles::MAX_SEALED_CLEAR{return Err("SDP fixture exceeds record limit".into());}
+        let mut out=vec![0;clear.len()+16];
+        let n=noise(self.transport.as_mut().ok_or("Transport unavailable")?.write_message(clear,&mut out))?;
+        if n!=out.len(){return Err("Invalid fixture ciphertext length".into());}Ok(out)
+    }
+    fn open_sdp(&mut self,packet:&[u8])->Result<Zeroizing<Vec<u8>>>{
+        if packet.len()<17||packet.len()>remote_ex_security::profiles::MAX_SEALED_CLEAR+16{return Err("Invalid encrypted SDP record length".into());}
+        let mut out=Zeroizing::new(vec![0;packet.len()]);
+        let n=noise(self.transport.as_mut().ok_or("Transport unavailable")?.read_message(packet,&mut out))?;
+        out.truncate(n);Ok(out)
+    }
 }
 #[wasm_bindgen]
 pub struct FixturePeer{inner:Peer}
@@ -105,6 +143,11 @@ impl FixturePeer{
     pub fn ready(&self)->bool{self.inner.ready()}
     pub fn send_fixture(&mut self)->std::result::Result<Vec<u8>,JsValue>{js(self.inner.send_fixture())}
     pub fn receive_fixture(&mut self,packet:&[u8])->std::result::Result<(),JsValue>{js(self.inner.receive_fixture(packet))}
+    pub fn send_sdp(&mut self,sdp:&str)->std::result::Result<Vec<u8>,JsValue>{js(self.inner.send_sdp(sdp))}
+    pub fn receive_sdp(&mut self,packet:&[u8])->std::result::Result<String,JsValue>{js(self.inner.receive_sdp(packet))}
+    pub fn send_sdp_proof(&mut self,signature:&[u8])->std::result::Result<Vec<u8>,JsValue>{js(self.inner.send_sdp_proof(signature))}
+    pub fn receive_sdp_proof(&mut self,packet:&[u8])->std::result::Result<(),JsValue>{js(self.inner.receive_sdp_proof(packet))}
+    pub fn sdp_verified(&self)->bool{self.inner.ready()&&self.inner.sdp.verified()}
     pub fn close(&mut self){self.inner.close();}
 }
 #[cfg(test)]

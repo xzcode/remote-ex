@@ -7,10 +7,11 @@ pub mod turn;
 pub mod admin;
 pub mod contract;
 mod relay_pool;
+pub mod web_origin;
 
 use axum::{
     extract::{State, ws::{Message, WebSocket, WebSocketUpgrade}},
-    http::StatusCode,
+    http::{HeaderMap,StatusCode},
     response::{IntoResponse, Response},
     routing::get,
     Router,
@@ -41,6 +42,7 @@ struct App {
     slots: Arc<Semaphore>,
     next_connection: Arc<AtomicU64>,
     allowed_devices: Option<Arc<HashSet<String>>>,
+    web_origin: Option<web_origin::WebOrigin>,
 }
 
 pub fn router() -> Router {
@@ -59,6 +61,13 @@ pub fn router_with_ice(server_id:[u8;32],issuer:Option<turn::IceIssuer>)->Result
 
 /// Explicit operator enrollment. An absent allowlist is development-only.
 pub fn router_configured(server_id:[u8;32],issuer:Option<turn::IceIssuer>,allowed:Option<HashSet<String>>)->Result<Router,&'static str>{
+    router_configured_with_web(server_id,issuer,allowed,None)
+}
+
+/// Browser origins are disabled unless explicitly configured; the caller
+/// must serve the router over verified TLS. Origin is not device identity.
+pub fn router_configured_with_web(server_id:[u8;32],issuer:Option<turn::IceIssuer>,allowed:Option<HashSet<String>>,web_origin:Option<web_origin::WebOrigin>)->Result<Router,&'static str>{
+    if web_origin.is_some()&&allowed.is_none(){return Err("Web origin requires explicit device enrollment");}
     if allowed.as_ref().is_some_and(|ids|ids.is_empty()||ids.len()>4096||ids.iter().any(|id|!valid_device_id(id))){return Err("invalid device allowlist");}
     if server_id == [0;32] { return Err("invalid server identity"); }
     let hub=match issuer{Some(issuer)=>Hub::with_issuer(issuer),None=>Hub::default()};
@@ -67,7 +76,7 @@ pub fn router_configured(server_id:[u8;32],issuer:Option<turn::IceIssuer>,allowe
         hub: Arc::new(Mutex::new(hub)),
         slots: Arc::new(Semaphore::new(MAX_CONNECTIONS)),
         next_connection: Arc::new(AtomicU64::new(1)),
-        allowed_devices:allowed.map(Arc::new),
+        allowed_devices:allowed.map(Arc::new),web_origin,
     };
     Ok(Router::new()
         .route("/healthz", get(|| async { "ok" }))
@@ -79,7 +88,8 @@ pub fn valid_device_id(id:&str)->bool{
     id.len()==64&&id.bytes().all(|b|b.is_ascii_digit()||(b'a'..=b'f').contains(&b))&&decode_hex::<32>(id).is_ok_and(|key|key!=[0;32])
 }
 
-async fn upgrade(State(app): State<App>, ws: WebSocketUpgrade) -> Response {
+async fn upgrade(State(app): State<App>, headers:HeaderMap, ws: WebSocketUpgrade) -> Response {
+    if !web_origin::allowed(&headers,app.web_origin.as_ref()){return StatusCode::FORBIDDEN.into_response();}
     let Ok(permit) = app.slots.clone().try_acquire_owned() else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };

@@ -31,3 +31,6 @@
 
 
 M6.4/5 第二批：apps/web 本地合成实验，不支持输入远程地址。独立 Rust WASM 使用共享 v1 RouteBinding 和 Snow，WebCrypto 临时密钥、原生 Rust 测试进程互通、浏览器双 PeerConnection、签名 SDP、实际 DTLS 证书核对后附加生成视频轨，以及解码帧/像素检查。新 CI 必须通过后才能宣称实验成功。真实桌面/WSS、加密信令桥接、独立远端授权、移动端、在线管理和自动故障切换未完成。后续参见 M6_WEB_LAB_HANDOFF.md。
+
+
+M6 第三批：1c48ad8 Core CI 已通过，Web CI 的原生 Rust Noise 测试与 wasm32 编译通过；浏览器工具安装因 Ubuntu 26.04 不兼容 Playwright 1.56.1 失败，浏览器运行未验证。修复为 Ubuntu 24.04；增加显式 Web Origin 许可、复用真实 WSS 信令的隔离浏览器注册/路由实验、仅合成 profile 0 的加密 Offer/Answer/Proof 状态机、独立一次性测试 CA 与浏览器 NSS 信任库、真实 DTLS 及合成解码测试。新 CI 待验；真实桌面 Web 查看、桌面输入及移动客户端仍未实现。
