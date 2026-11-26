@@ -56,5 +56,32 @@ try{
         assert.deepEqual(sockets,[]);assert.deepEqual(outside,[]);
         await context.close();
     }
-    console.log("PASS real mobile Chromium capability/temporary key clone, no enrollment, missing WebRTC disables direct viewer, recheck resets consent, no remote socket");
+    // A simulated pre-137 crypto engine must reject identity creation
+    // before the user clicks anything. Do not replace the algorithm.
+    const legacy=await browser.newContext({permissions:[],hasTouch:true,viewport:{width:400,height:800},isMobile:true});
+    await legacy.addInitScript(()=>{
+        const original=SubtleCrypto.prototype.generateKey;
+        Object.defineProperty(SubtleCrypto.prototype,"generateKey",{configurable:true,value:function(algorithm,...args){
+            if((typeof algorithm==="string"?algorithm:algorithm?.name)==="Ed25519")return Promise.reject(new DOMException("Unavailable","NotSupportedError"));
+            return original.call(this,algorithm,...args);
+        }});
+    });
+    const lp=await legacy.newPage(),legacySockets=[];
+    lp.on("websocket",()=>legacySockets.push("unexpected"));
+    await lp.goto(url+"/mobile.html");
+    await lp.waitForFunction(()=>document.querySelector("#mobile-status").dataset.state==="unsupported"&&document.querySelector("#mobile-policy").textContent.includes("Identity management is local only."),null,{timeout:45000});
+    assert.match(await lp.locator("#mobile-status").textContent(),/137 or newer/);
+    assert(await lp.locator("#mobile-connect").isHidden());
+    await lp.goto(url+"/identity.html");
+    await lp.waitForFunction(()=>document.querySelector("#identity-status").dataset.state==="unsupported");
+    assert(await lp.locator("#identity-create").isDisabled());
+    assert.equal(await lp.locator("#device-id").inputValue(),"");
+    assert.match(await lp.locator("#identity-support").textContent(),/NotSupportedError/);
+    assert(await lp.evaluate(async()=>!(await (await import("/identity.js")).readIdentity())));
+    await lp.locator("#identity-refresh").click();
+    await lp.waitForFunction(()=>document.querySelector("#identity-status").dataset.state==="unsupported");
+    assert(await lp.locator("#identity-create").isDisabled());
+    assert.deepEqual(legacySockets,[]);
+    await legacy.close();
+    console.log("PASS mobile Chromium capability, identity-only legacy Ed25519 refusal, direct viewer and recheck gates, no remote socket");
 }finally{await browser?.close();await new Promise(resolve=>server.close(resolve));}

@@ -15,7 +15,7 @@ concurrency:
 jobs:
   webkit:
     runs-on: ubuntu-24.04
-    timeout-minutes: 18
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -28,12 +28,22 @@ jobs:
           cargo install wasm-bindgen-cli --version 0.2.106 --locked
           RUSTFLAGS='--cfg getrandom_backend="wasm_js"' cargo build --release --manifest-path apps/web/crypto/Cargo.toml --target wasm32-unknown-unknown
           wasm-bindgen --target web --out-dir apps/web/pkg --out-name noise apps/web/crypto/target/wasm32-unknown-unknown/release/remote_ex_web_crypto.wasm
-      - name: Install pinned WebKit runtime
-        timeout-minutes: 5
+      - name: Install pinned Playwright package
+        timeout-minutes: 4
         working-directory: apps/web
-        run: |
-          npm install --ignore-scripts --no-audit --no-fund
-          npx playwright install --with-deps webkit
+        run: npm install --ignore-scripts --no-audit --no-fund
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: remote-ex-webkit-ubuntu24-playwright-1.56.1
+      - name: Install WebKit system dependencies
+        timeout-minutes: 10
+        working-directory: apps/web
+        run: npx playwright install-deps webkit
+      - name: Install pinned WebKit browser binaries
+        timeout-minutes: 10
+        working-directory: apps/web
+        run: npx playwright install webkit
       - name: Actual HTTPS WebKit identity, capability and authenticated synthetic media
         timeout-minutes: 6
         run: |

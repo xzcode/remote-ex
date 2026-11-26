@@ -1,4 +1,4 @@
-import {probeCapabilities} from "./capabilities.js";
+import {probeCapabilities,compatibilityGuidance} from "./capabilities.js";
 const status=document.getElementById("mobile-status"),checks=document.getElementById("mobile-checks"),open=document.getElementById("mobile-connect");
 const policy=document.getElementById("mobile-policy");
 async function run(){
@@ -14,7 +14,7 @@ async function run(){
     }
     const all=results.length===6&&results.every(v=>v.ok);
     status.dataset.state=all?"ready":"unsupported";
-    status.textContent=all?"Required browser APIs detected; actual connection still needs verification.":"Required APIs missing. Update Android System WebView or your browser; no security downgrade is available.";
+    status.textContent=all?"Required browser APIs detected; actual connection still needs verification.":compatibilityGuidance(results);
     try{
         const r=await fetch("/view-config.json",{cache:"no-store"});const v=await r.json();
         const configured=r.ok&&v.schema===1&&v.mode==="direct-read-only"&&typeof v.endpoint==="string";

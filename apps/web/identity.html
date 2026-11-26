@@ -9,7 +9,8 @@
 <main>
 <section class="intro"><h1>Browser controller identity</h1><p>Create a device identity for this browser origin. The non-extractable private key stays in browser storage; the public device ID and key can be used for future administrator enrollment. This page cannot connect to a remote desktop or register with a server.</p></section>
 <section class="card">
-<div class="row"><h2>Device identity</h2><span id="identity-status" role="status" data-state="idle">Checking storage…</span></div>
+<div class="row"><h2>Device identity</h2><span id="identity-status" role="status" data-state="running">Checking storage…</span></div>
+<p id="identity-support" class="muted" role="status">Checking local identity compatibility…</p>
 <label for="device-id">Device ID (SHA-256 public-key fingerprint)</label>
 <input id="device-id" class="identity-value" readonly spellcheck="false" autocomplete="off">
 <label for="public-key">Public key (Ed25519, hexadecimal)</label>

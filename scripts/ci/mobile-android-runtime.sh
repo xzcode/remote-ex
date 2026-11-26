@@ -5,6 +5,14 @@ test "$RUNNER_ENVIRONMENT" = github-hosted
 test "$(uname -s)" = Linux
 test -c /dev/kvm
 test -n "$ANDROID_HOME"
+api="$REMOTE_EX_ANDROID_API"
+expectation="$REMOTE_EX_ANDROID_EXPECTATION"
+case "$api:$expectation" in
+    36:legacy|37:supported) ;;
+    *) echo "Invalid Android runtime matrix selection"; exit 1 ;;
+esac
+image="system-images;android-$api;google_apis;x86_64"
+printf 'REMOTE EX ANDROID MATRIX: API %s / %s\n' "$api" "$expectation"
 app="apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk"
 testapk="apps/mobile/android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk"
 test -f "$app"
@@ -51,7 +59,7 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 mark sdk-install
-bounded 240s sdkmanager "emulator" "system-images;android-36;google_apis;x86_64"
+bounded 300s sdkmanager "emulator" "$image"
 bounded 15s sudo chown "$(id -u):$(id -g)" /dev/kvm
 test -r /dev/kvm && test -w /dev/kvm
 mark avd-create
@@ -64,7 +72,7 @@ avd="$(mktemp -d)"
 export ANDROID_AVD_HOME="$avd"
 log="$(mktemp)"
 result="$(mktemp)"
-printf 'no\n' | bounded 60s avdmanager create avd --name remote-ex-offline --package 'system-images;android-36;google_apis;x86_64' --force
+printf 'no\n' | bounded 60s avdmanager create avd --name remote-ex-offline --package "$image" --force
 
 mark emulator-start
 "$ANDROID_HOME/emulator/emulator" -avd remote-ex-offline -port 5554 -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect -accel on -camera-back none -camera-front none -no-metrics >"$log" 2>&1 &
@@ -96,12 +104,16 @@ mark install-test
 adb_run 60s install "$testapk"
 mark instrumentation
 set +e
-adb_run 220s shell am instrument -w -r com.remoteex.mobile.test/com.remoteex.mobile.OfflineSmoke | tee "$result"
+adb_run 220s shell am instrument -w -r -e expectation "$expectation" com.remoteex.mobile.test/com.remoteex.mobile.OfflineSmoke | tee "$result"
 status=$?
 set -e
 adb_run 10s logcat -d -s RemoteEXOfflineSmoke:I '*:S' | tail -n 18 || true
 test "$status" = 0
-grep -Fq 'PASS REMOTE EX ANDROID OFFLINE RUNTIME:' "$result"
+if [[ "$expectation" = supported ]]; then
+    grep -Fq 'PASS REMOTE EX ANDROID OFFLINE RUNTIME:' "$result"
+else
+    grep -Eq 'PASS REMOTE EX ANDROID (OFFLINE RUNTIME|LEGACY REFUSAL):' "$result"
+fi
 grep -Eq '^INSTRUMENTATION_CODE: -1[[:space:]]*$' "$result"
 if grep -Fq 'FAIL REMOTE EX ANDROID OFFLINE RUNTIME:' "$result"; then exit 1; fi
 mark verified

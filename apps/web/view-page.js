@@ -3,7 +3,7 @@ import {hex} from "./crypto.js";
 import {endpoint,pin,ViewSession} from "./view-session.js";
 import {normalizePolicy,directPolicy} from "./ice-policy.js";
 import {QUALITY_MODES} from "./session-policy.js";
-import {probeCapabilities,capabilityBlockers} from "./capabilities.js";
+import {probeCapabilities,capabilityBlockers,compatibilityGuidance} from "./capabilities.js";
 import {BOOK_KEY,connectionKey,readBook,writeBook,saveEntry,removeEntry,forEndpoint} from "./connection-book.js";
 const $=id=>document.getElementById(id);
 const url=$("view-endpoint"),server=$("view-server"),host=$("view-host"),consent=$("view-consent"),connect=$("view-connect"),disconnect=$("view-disconnect"),next=$("view-next"),video=$("view-video"),status=$("view-status");
@@ -71,7 +71,7 @@ async function load(){
         const v=await r.json();if(v.schema!==1||v.mode!=="direct-read-only")throw Error("Invalid viewer configuration");
         config=endpoint(v.endpoint).href;url.value=config;policy=normalizePolicy(v.ice);allowControl=v.control===true;$("control-option").hidden=!allowControl;control.checked=false;allowExtended=v.extended===true;$("extended-option").hidden=!allowExtended;extended.checked=false;
         const checks=await probeCapabilities(),blockers=capabilityBlockers(checks);
-        $("view-compat").textContent=blockers.length?"Connection unavailable: "+blockers.join("; ")+". Update the browser or WebView, then recheck.":"Required browser capabilities verified locally (not a remote session).";
+        $("view-compat").textContent=blockers.length?"Connection unavailable: "+blockers.join("; ")+". "+compatibilityGuidance(checks):"Required browser capabilities verified locally (not a remote session).";
         if(blockers.length){identity=null;$("view-id").value="";$("view-public").value="";state("error","Local compatibility check failed. No connection attempted.");return;}
         identity=await readIdentity();compatible=true;
         $("view-id").value=identity?.id??"";$("view-public").value=identity?hex(identity.pub):"";

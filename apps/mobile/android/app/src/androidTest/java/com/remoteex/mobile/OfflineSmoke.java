@@ -19,8 +19,11 @@ import org.json.JSONArray;
 public final class OfflineSmoke extends Instrumentation {
     private static final String HOME = "https://appassets.androidplatform.net/mobile.html";
     private static final String IDENTITY = "https://appassets.androidplatform.net/identity.html";
+    private String expectation="supported";
+    private boolean lastSupported=false;
     @Override public void onCreate(Bundle args) {
         super.onCreate(args);
+        if(args!=null)expectation=args.getString("expectation","supported");
         start();
     }
     private static void require(boolean ok, String message) {
@@ -96,7 +99,18 @@ public final class OfflineSmoke extends Instrumentation {
         String version=provider==null?"unavailable":String.valueOf(provider.versionName).replaceAll("[^A-Za-z0-9._-]","_");
         if(version.length()>80)version=version.substring(0,80);
         android.util.Log.i("RemoteEXOfflineSmoke","WebView version="+version+" "+report);
-        require(yes(w, "document.querySelectorAll('#mobile-checks li[data-pass=true]').length===6"), "WebView "+version+" missing capabilities: "+report);
+        lastSupported=yes(w, "document.querySelectorAll('#mobile-checks li[data-pass=true]').length===6");
+        if(!lastSupported){
+            // A separately labelled legacy refusal test, not a successful
+            // controller runtime. Only accept the actual known missing API.
+            int major=0;
+            try{major=Integer.parseInt(version.split("\\.")[0]);}catch(Exception ignored){}
+            require("legacy".equals(expectation)&&major>0&&major<137&&
+                report.equals("secure:true:ok ed25519:false:NotSupportedError wasm:true:ok storage:true:ok_storage_only webrtc:true:ok pointer:true:ok"),
+                "WebView "+version+" missing capabilities: "+report);
+            require(yes(w, "document.querySelector('#mobile-status').dataset.state==='unsupported' && document.querySelector('#mobile-status').textContent.includes('137 or newer')"),
+                "Legacy WebView update guidance missing");
+        }
         require(main(() -> !w.getSettings().getAllowFileAccess() &&
                             !w.getSettings().getAllowContentAccess() &&
                             !w.getSettings().getJavaScriptCanOpenWindowsAutomatically()),
@@ -108,7 +122,7 @@ public final class OfflineSmoke extends Instrumentation {
         until(() -> url.equals(main(w::getUrl)) &&
                     yes(w, "Boolean(document.querySelector('#identity-status'))"), 20,
             "Identity page unavailable");
-        until(() -> yes(w, "['idle','verified','error'].includes(document.querySelector('#identity-status').dataset.state)"), 20,
+        until(() -> yes(w, "['idle','verified','error','unsupported'].includes(document.querySelector('#identity-status').dataset.state)"), 20,
             "Identity status did not settle");
     }
     private String identity(WebView w) throws Exception {
@@ -121,12 +135,20 @@ public final class OfflineSmoke extends Instrumentation {
         return value;
     }
     private void progress(String stage) { android.util.Log.i("RemoteEXOfflineSmoke", "stage="+stage); }
-    private void fullSmoke() throws Exception {
+    private boolean fullSmoke() throws Exception {
         progress("first_launch");
         Activity a = launch();
         String saved;
         try {
             WebView first = landing(a);
+            if(!lastSupported){
+                progress("legacy_identity_refusal");
+                navigate(first, IDENTITY);
+                require(yes(first, "document.querySelector('#identity-status').dataset.state==='unsupported' && document.querySelector('#identity-create').disabled && !document.querySelector('#device-id').value && document.querySelector('#identity-support').textContent.includes('NotSupportedError')"), "Legacy identity creation not blocked");
+                js(first, "document.querySelector('#identity-create').click(); true");
+                require(yes(first, "!document.querySelector('#device-id').value && document.querySelector('#identity-create').disabled"), "Legacy identity unexpectedly created");
+                return false;
+            }
             progress("capabilities_verified");
             navigate(first, IDENTITY);
             require(yes(first, "document.querySelector('#identity-status').dataset.state==='idle'"), "Expected fresh test installation");
@@ -165,12 +187,16 @@ public final class OfflineSmoke extends Instrumentation {
         } finally {
             main(() -> { if (!b.isFinishing()) b.finish(); return null; });
         }
+        return true;
     }
     @Override public void onStart() {
         Bundle result = new Bundle();
         try {
-            fullSmoke();
-            result.putString("stream", "\nPASS REMOTE EX ANDROID OFFLINE RUNTIME: installed WebView, secure origin, crypto/WASM capabilities, persistent identity, background destruction, fresh landing, explicit deletion\n");
+            require("legacy".equals(expectation)||"supported".equals(expectation),"Invalid runtime expectation");
+            boolean supported=fullSmoke();
+            result.putString("stream", supported
+                ? "\nPASS REMOTE EX ANDROID OFFLINE RUNTIME: installed WebView, secure origin, crypto/WASM capabilities, persistent identity, background destruction, fresh landing, explicit deletion\n"
+                : "\nPASS REMOTE EX ANDROID LEGACY REFUSAL: known missing Ed25519; connection and identity creation blocked; controller unavailable\n");
             finish(Activity.RESULT_OK, result);
         } catch (Throwable e) {
             result.putString("stream", "\nFAIL REMOTE EX ANDROID OFFLINE RUNTIME: " + e.getClass().getSimpleName() + ": " + e.getMessage() + "\n");

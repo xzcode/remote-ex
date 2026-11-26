@@ -105,3 +105,20 @@ export function capabilityBlockers(checks){
     }
     return checks.filter(v=>!v.ok).map(v=>v.id+": "+v.code);
 }
+
+/** Identity-only probe: no WASM fetch, ICE, WSS, or enrolled key creation. */
+export async function probeIdentityCapabilities(){
+    if(!globalThis.isSecureContext||!globalThis.crypto?.subtle)return {ok:false,code:"secure_context"};
+    let proof;
+    try{proof=await timeout(identityProbe(),4000,"ed25519_timeout");}
+    catch(e){return {ok:false,code:code(e,"ed25519_failed")};}
+    try{await timeout(storageProbe(proof),8000,"storage_timeout");}
+    catch(e){return {ok:false,code:code(e,"storage_failed")};}
+    return {ok:true,code:"ok_key_clone"};
+}
+export function compatibilityGuidance(checks){
+    if(checks.some(v=>v.id==="ed25519"&&!v.ok)){
+        return "Ed25519 is required. Update Android System WebView / Chrome to a current supported version (Chromium 137 or newer), or use a compatible current browser. Reopen the app after updating. No alternative identity algorithm or weaker mode is available.";
+    }
+    return "Update the browser or WebView, reopen the app and recheck. No security downgrade is available.";
+}
