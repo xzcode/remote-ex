@@ -69,10 +69,10 @@ export class ViewSession{
     stop(){this.releaseInput();this.blank();if(this.phase==="viewing"){this.stopRequested=true;}else this.cancel();}
     next(){if(!this.control&&this.phase==="viewing"&&!this.stopRequested&&this.count>1&&performance.now()-this.lastSwitch>=500)this.nextRequested=true;}
     releaseInput(){this.input?.disable();}
-    enableInput(){
+    enableInput(touchMode="mouse"){
         if(!this.control||this.phase!=="viewing"||this.stopRequested||this.frames===0||!this.geometry||!this.inputEncoder)return false;
         if(this.input?.active)return true;
-        this.input=new SurfaceInput({video:this.video,geometry:this.geometry,encoder:this.inputEncoder,send:bytes=>this.channel(bytes,true),onFailure:()=>this.cancel("Input transport failed"),onDisabled:()=>this.onInput(false)});
+        this.input=new SurfaceInput({video:this.video,geometry:this.geometry,encoder:this.inputEncoder,touchMode,send:bytes=>this.channel(bytes,true),onFailure:()=>this.cancel("Input transport failed"),onDisabled:()=>this.onInput(false)});
         this.input.enable();this.onInput(this.input.active);return this.input.active;
     }
     guard(){if(this.abort.signal.aborted)throw this.abort.signal.reason;need(!document.hidden,"Tab hidden");}

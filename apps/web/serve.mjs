@@ -50,7 +50,7 @@ export async function serve(port=0,fixtureEndpoint=null,viewer=null,options={stu
  }
  if(viewer!==null){
     const ep=viewEndpoint(viewer);
-    if(!["view.html","view-page.js","view-session.js","ice-policy.js","input.js"].every(file=>existsSync(path.join(root,file))))throw Error("Source-only viewer assets unavailable; use the repository checkout");
+    if(!["view.html","view-page.js","view-session.js","ice-policy.js","input.js","touch.js","mobile.html","mobile.js"].every(file=>existsSync(path.join(root,file))))throw Error("Source-only viewer assets unavailable; use the repository checkout");
     if(fixtureEndpoint!==null&&fixtureEndpoint!==viewer)throw Error("Only one WSS endpoint allowed");
     const {normalizePolicy}=await import("./ice-policy.js");
     const {stun,turn,relayOnly,control}=options;
@@ -58,6 +58,9 @@ export async function serve(port=0,fixtureEndpoint=null,viewer=null,options={stu
     viewConfig={schema:1,mode:"direct-read-only",endpoint:viewer,ice:normalizePolicy({stun,turn,relayOnly}),control};
     table.set("/ice-policy.js",["ice-policy.js","text/javascript; charset=utf-8"]);
     table.set("/input.js",["input.js","text/javascript; charset=utf-8"]);
+    table.set("/touch.js",["touch.js","text/javascript; charset=utf-8"]);
+    table.set("/mobile.html",["mobile.html","text/html; charset=utf-8"]);
+    table.set("/mobile.js",["mobile.js","text/javascript; charset=utf-8"]);
     table.set("/view.html",["view.html","text/html; charset=utf-8"]);
     table.set("/view-page.js",["view-page.js","text/javascript; charset=utf-8"]);
     table.set("/view-session.js",["view-session.js","text/javascript; charset=utf-8"]);

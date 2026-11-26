@@ -163,3 +163,8 @@ c757557 Web CI passed in full; 25c8be4 Rust/WASM and two-browser WSS passed at i
 ### M6 seventh candidate — approved ICE policy and explicit Web input
 
 48733f2 Core passed; full native browser integration still pending at start. Added operator allowlisted STUN/TURN, short-lived credential checks, native URI conversion, signed forced-relay policy and selected pair verification; separate explicit profile-2 input candidate gated by operator option, exact host grant and locally focused activation after decoded media. Bounded protobuf, physical keys, geometry/letterbox, wheel and release handling; pure Node tests. Direct read-only remains default, no unattended or automatic reconnect. Real control and cross-network relay acceptance pending. See [handoff](M6_WEB_CONTROL_NETWORK_HANDOFF.md).
+
+
+### M6 eighth candidate — mobile touch controller
+
+48733f2 Core, Native Media and Linux X11 CI passed. New explicit touch modes, single pointer lifecycle, compatibility page and narrow-screen UI. Pure touch test and CI added. Physical phone/browser acceptance, native mobile packaging and original browser-native integration still pending. See [mobile handoff](M6_MOBILE_HANDOFF.md).
