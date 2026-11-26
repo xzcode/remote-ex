@@ -6,7 +6,7 @@ import {fileURLToPath} from "node:url";
 import {headers,viewEndpoint} from "../apps/web/serve.mjs";
 import {normalizePolicy} from "../apps/web/ice-policy.js";
 const root=fileURLToPath(new URL("../apps/web/",import.meta.url));
-const names=["mobile.html","mobile.js","identity.html","identity.js","identity-page.js","view.html","view-page.js","view-session.js","crypto.js","ice-policy.js","input.js","touch.js","session-policy.js","style.css","pkg/noise.js","pkg/noise_bg.wasm"];
+export const names=["mobile.html","mobile.js","identity.html","identity.js","identity-page.js","view.html","view-page.js","view-session.js","crypto.js","ice-policy.js","input.js","touch.js","session-policy.js","connection-book.js","style.css","pkg/noise.js","pkg/noise_bg.wasm"];
 export function config(raw){
     if(raw===null)return {schema:1,mode:"disabled"};
     if(!raw||typeof raw!=="object"||Array.isArray(raw)||!["control,endpoint,ice","control,endpoint,extended,ice"].includes(Object.keys(raw).sort().join(","))||typeof raw.control!=="boolean"||(raw.extended!==undefined&&typeof raw.extended!=="boolean"))throw Error("Invalid mobile operator config");

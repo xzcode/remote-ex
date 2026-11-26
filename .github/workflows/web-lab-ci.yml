@@ -73,6 +73,7 @@ jobs:
           node --check mobile.js
           npm run test:touch
           npm run test:session-policy
+          npm run test:connection-book
           npm run test:policy-input
           node --check test-input-browser.mjs
           npm run test:input-browser

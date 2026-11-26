@@ -1,0 +1,16 @@
+import assert from "node:assert/strict";
+import {connectionKey,readBook,writeBook,saveEntry,removeEntry,forEndpoint} from "./connection-book.js";
+const a={endpoint:"wss://one.example.invalid/v1/ws",serverId:"01".repeat(32),hostKey:"02".repeat(32),label:"Desktop"};
+const b={...a,endpoint:"wss://two.example.invalid/v1/ws"};
+let entries=saveEntry(readBook(null),a);entries=saveEntry(entries,b);
+assert.deepEqual(readBook(writeBook(entries)),[a,b]);
+assert.deepEqual(forEndpoint(entries,a.endpoint),[a]);
+entries=saveEntry(entries,{...a,label:"Office"});assert.equal(entries.length,2);assert.equal(entries[0].label,"Office");
+assert.throws(()=>saveEntry(entries,{...a,grant:3}));assert.throws(()=>saveEntry(entries,{...a,endpoint:"ws://one.example.invalid/v1/ws"}));assert.throws(()=>saveEntry(entries,{...a,hostKey:"0".repeat(64)}));
+assert.throws(()=>readBook(JSON.stringify({schema:1,entries:[a,a]})));
+assert.throws(()=>readBook(JSON.stringify({schema:1,entries:[{...a,privateKey:"not allowed"}]})));
+assert.throws(()=>saveEntry(entries,{...a,label:"\nDesktop"}));
+assert.throws(()=>writeBook(Array.from({length:25},(_,i)=>({...a,hostKey:(i+1).toString(16).padStart(64,"0")}))));
+assert.deepEqual(removeEntry(entries,connectionKey(a)),[b]);
+assert.throws(()=>removeEntry(entries,"missing"));
+console.log("PASS endpoint-scoped local connection details, strict schema, limits, rename and removal; no saved grant");

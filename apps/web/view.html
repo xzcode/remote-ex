@@ -8,6 +8,10 @@
 <section class="card">
 <h2>Connection</h2>
 <label for="view-endpoint">Operator-configured WSS endpoint</label><input id="view-endpoint" class="identity-value" readonly>
+<label for="saved-connection">Saved connections (local details only)</label><select id="saved-connection" disabled><option value="">Select a connection</option></select>
+<label for="connection-label">Connection name</label><input id="connection-label" maxlength="64" autocomplete="off" placeholder="e.g. Office desktop">
+<div class="buttons"><button id="connection-save" disabled>Save details</button><button id="connection-remove" disabled>Remove selected</button></div>
+<p id="connection-book-status" class="muted" role="status">Saved details never authorize a session.</p>
 <label for="view-server">Server ID (64 lowercase hexadecimal characters)</label><input id="view-server" class="identity-value" spellcheck="false" autocomplete="off" maxlength="64">
 <label for="view-host">Host Ed25519 public key (64 hexadecimal characters)</label><input id="view-host" class="identity-value" spellcheck="false" autocomplete="off" maxlength="64">
 <p class="muted">Obtain both values independently from your administrator and host. The page does not discover or trust unknown devices automatically.</p>
