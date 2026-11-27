@@ -38,31 +38,48 @@ impl Locale{
     }}
 }
 #[derive(Clone,Debug)]
-pub struct Toolbar{pub actions:[Option<Rect>;5],pub summary:Option<Rect>,pub height:u32,pub footer_height:u32}
+pub struct Toolbar{pub actions:[Option<Rect>;5],pub brand:Option<Rect>,pub summary:Option<Rect>,pub height:u32,pub footer_height:u32}
 pub fn toolbar(width:u32,height:u32,scale:u32,switch:bool,extended:bool)->Toolbar{
     let scale=scale.clamp(1,3);
-    let mut result=Toolbar{actions:[None;5],summary:None,height:0,footer_height:0};
+    let mut result=Toolbar{actions:[None;5],brand:None,summary:None,height:0,footer_height:0};
     if width==0||height==0{return result;}
     // Actions retain their wire-independent IDs. Input, display and quality
     // precede fullscreen; the destructive disconnect button is always last.
     let ids:Vec<usize>=[2,3,4,1,0].into_iter().filter(|i|match i{3=>switch,4=>extended,_=>true}).collect();
-    let edge=(8*scale).min(width/4);
-    let gap=(5*scale).min(width/8);
+    let edge=(10*scale).min(width/4);
+    let gap=(6*scale).min(width/8);
     let inner=width.saturating_sub(2*edge);
     if inner==0{return result;}
-    let cols=((inner+gap)/(136*scale+gap)).clamp(1,ids.len()as u32);
-    let row_height=34*scale;
-    let rows=(ids.len()as u32).div_ceil(cols);
-    result.height=(rows*row_height+2*scale).min(height);
-    result.footer_height=(23*scale).min(height-result.height);
-    let available=inner.saturating_sub(gap*(cols-1));
+    let count=ids.len()as u32;
+    let cols=((inner+gap)/(136*scale+gap)).clamp(1,count);
+    let row_height=40*scale;
+    let rows=count.div_ceil(cols);
+    result.height=(rows*row_height+8*scale).min(height);
+    result.footer_height=(30*scale).min(height-result.height);
+    let cell_area=inner.saturating_sub(gap*(cols-1));
+    // On a wide window keep the actual controls compact and right aligned.
+    // The remaining space belongs to the local session identity, not huge
+    // stretched buttons. A small window wraps without losing Disconnect.
+    let cap=176*scale;
+    let ideal=(cell_area/cols).min(cap);
+    let group=ideal*cols+gap*(cols-1);
+    let brand_space=inner.saturating_sub(group);
+    let compact=rows==1&&brand_space>=160*scale;
+    let usable=if compact{ideal*cols}else{cell_area};
+    let origin=if compact{edge+inner-group}else{edge};
+    if compact{
+        result.brand=Some(Rect{x:edge,y:0,width:brand_space.saturating_sub(gap),height:result.height});
+    }
     for (n,id) in ids.into_iter().enumerate(){
         let n=n as u32;let row=n/cols;let col=n%cols;
-        let y=3*scale+row*row_height;
+        let y=7*scale+row*row_height;
         if y>=result.height{continue;}
-        let x=edge+(u64::from(col)*u64::from(available)/u64::from(cols))as u32+col*gap;
-        let right=edge+(u64::from(col+1)*u64::from(available)/u64::from(cols))as u32+col*gap;
-        if right>x{result.actions[id]=Some(Rect{x,y,width:right-x,height:(29*scale).min(result.height-y)});}
+        // Align a partially filled final row to the right.
+        let row_count=(count-row*cols).min(cols);
+        let col=col+cols-row_count;
+        let x=origin+(u64::from(col)*u64::from(usable)/u64::from(cols))as u32+col*gap;
+        let right=origin+(u64::from(col+1)*u64::from(usable)/u64::from(cols))as u32+col*gap;
+        if right>x{result.actions[id]=Some(Rect{x,y,width:right-x,height:(34*scale).min(result.height-y)});}
     }
     // Footer is independent of the top action strip and never accepts input.
     if result.footer_height>0{
@@ -124,6 +141,10 @@ mod tests{
         let t=toolbar(1024,720,1,true,true);
         assert!(t.actions[0].unwrap().x>t.actions[1].unwrap().x);
         assert_eq!(t.hit(0.,0.),None);
+        let wide=toolbar(1440,800,1,true,true);let brand=wide.brand.unwrap();
+        assert!(wide.actions.iter().flatten().all(|r|r.width<=176&&brand.x+brand.width<=r.x));
+        assert!(wide.picture_area(1440,800).height>=700);
+        assert_eq!(wide.hit(f64::from(brand.x)+2.,10.),None);
     }
     #[test]fn locales_are_closed_and_bitmap_safe(){
         assert_eq!(Locale::Zh.localized_labels()[0],"断开连接");assert_eq!(Locale::Ja.localized_labels()[2],"閲覧のみ");assert_eq!(Locale::Ko.localized_labels()[0],"연결 해제");

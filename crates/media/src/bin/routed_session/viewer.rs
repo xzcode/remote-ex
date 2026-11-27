@@ -6,6 +6,7 @@ use prost::Message as _;
 use remote_ex_desktop_features::viewport::{self,Rect};
 use remote_ex_desktop_features::viewer_ui::{self,Locale,Toolbar};
 mod native_text;
+mod chrome;
 use remote_ex_protocol::{InputEnvelope,VERSION,input_envelope::Event,Key,PointerButton,PointerMove,Scroll,ReleaseAll};
 use softbuffer::Surface;
 use std::{collections::BTreeSet,num::NonZeroU32,rc::Rc};
@@ -26,7 +27,7 @@ struct Viewer<'a>{
     peer:&'a Peer,channel:&'a ControlChannel,session:[u8;16],geometry:Rect,
     allow_input:bool,input_enabled:bool,av:bool,volume:u8,screens:u8,view_index:Option<u8>,switch_pending:bool,
     window:Option<Rc<Window>>,surface:Option<Surface<Rc<Window>,Rc<Window>>>,
-    size:PhysicalSize<u32>,toolbar:Toolbar,locale:Locale,labels:Option<native_text::Text>,font_rx:Option<std::sync::mpsc::Receiver<Option<native_text::Text>>>,scale:u32,fit:Option<Rect>,last_cursor:Option<(f64,f64)>,
+    size:PhysicalSize<u32>,toolbar:Toolbar,dark_chrome:bool,locale:Locale,labels:Option<native_text::Text>,font_rx:Option<std::sync::mpsc::Receiver<Option<native_text::Text>>>,scale:u32,fit:Option<Rect>,last_cursor:Option<(f64,f64)>,
     focused:bool,armed:bool,physical_keys:BTreeSet<u16>,physical_buttons:BTreeSet<u8>,
     sent_keys:BTreeSet<u16>,sent_buttons:BTreeSet<u8>,previous:Option<(u32,u32)>,seq:u64,
     pixels:Vec<u32>,frames:u32,metric_frames:u32,metric_bytes:u64,last_metric:Instant,last_frame:Instant,
@@ -152,49 +153,17 @@ impl Viewer<'_>{
                 }
             }
         }
-        fill_rect(&mut buffer,w,h,Rect{x:0,y:0,width:w,height:self.toolbar.height},0x202733);
-        fill_rect(&mut buffer,w,h,Rect{x:0,y:h.saturating_sub(self.toolbar.footer_height),width:w,height:self.toolbar.footer_height},0x202733);
-        let l=self.locale.labels();
-        let indices=[0,1,if !self.allow_input{2}else if self.input_enabled{3}else{4},if self.switch_pending{6}else{5},if self.quality_pending.is_some(){11}else{match self.quality_mode{0=>7,1=>8,2=>9,_=>10}}];
-        let labels=indices.map(|i|l[i]);
-        for(i,rect)in self.toolbar.actions.iter().enumerate(){
-            let Some(r)=rect else{continue;};
-            let enabled=match i{2=>self.allow_input,3=>!self.switch_pending,4=>self.quality_pending.is_none(),_=>true};
-            let hover=enabled&&self.focused&&self.last_cursor.is_some_and(|(x,y)|self.toolbar.hit(x,y)==Some(i as u32));
-            let color=match(i,enabled,hover){
-                (0,_,true)=>0xb74852,(0,_,_)=>0x913640,
-                (2,true,true) if self.input_enabled=>0x346c57,
-                (2,true,_) if self.input_enabled=>0x295442,
-                (_,false,_)=>0x29303a,(_,_,true)=>0x45546a,_=>0x303c4c,
-            };
-            fill_rect(&mut buffer,w,h,*r,color);
-            // Small original outline marks; hide them before sacrificing
-            // readable localized labels on narrow/high-DPI windows.
-            let mut label_rect=*r;
-            if r.width>=172*scale&&r.height>=24*scale{
-                draw_mark(&mut buffer,w,h,r.x+9*scale,r.y+(r.height-12*scale)/2,i,scale);
-                label_rect.x+=25*scale;label_rect.width-=25*scale;
-            }
-            if self.labels.as_ref().is_some_and(|text|text.draw(&mut buffer,w,h,label_rect,indices[i],scale)){continue;}
-            let text_width=(labels[i].len()as u32)*8*scale;
-            let x=label_rect.x+(label_rect.width.saturating_sub(text_width))/2;
-            let y=label_rect.y+(label_rect.height.saturating_sub(8*scale))/2;
-            let max_chars=(label_rect.width/(8*scale))as usize;
-            let label=&labels[i][..labels[i].len().min(max_chars)];
-            draw_text(&mut buffer,w,h,x,y,label,scale);
-        }
         let measured=self.last_transport.as_ref().filter(|(at,_)|at.elapsed()<Duration::from_secs(4)).map(|(_,s)|s);
-        let route=match measured.and_then(|s|s.route){Some("direct")=>"P2P",Some("relay")=>"TURN",_=>"-"};
-        let rtt=measured.and_then(|s|s.rtt_ms).map(|n|format!("{n} ms")).unwrap_or_else(||"- ms".into());
-        let size=if self.frames==0{None}else if self.extended{self.actual_stream}else{Some((config.width,config.height))};
-        let dimensions=size.map(|(x,y)|format!("{x}x{y}")).unwrap_or_else(||"-".into());
-        let fps=if self.fps>0.0{format!("{:.0} FPS",self.fps)}else{"- FPS".into()};
-        let display=self.view_index.map(|i|if i==self.screens{"All".into()}else{format!("{}/{}",i+1,self.screens)});
-        let summary=format!("{dimensions} | {fps} | {route} | {rtt}{}",display.map(|d|format!(" | {d}")).unwrap_or_default());
-        if let Some(r)=self.toolbar.summary{
-            let max_chars=(r.width/(8*scale))as usize;
-            draw_text(&mut buffer,w,h,r.x,r.y+((r.height.saturating_sub(8*scale))/2),&summary[..summary.len().min(max_chars)],scale);
-        }
+        let dimensions=if self.frames==0{None}else if self.extended{self.actual_stream}else{Some((config.width,config.height))};
+        chrome::paint(&mut buffer,w,h,&self.toolbar,scale,self.labels.as_ref(),&chrome::State{
+            locale:self.locale,dark:self.dark_chrome,allow_input:self.allow_input,input_enabled:self.input_enabled,
+            switching:self.switch_pending,quality:self.quality_mode,changing:self.quality_pending.is_some(),
+            fullscreen:self.window.as_ref().is_some_and(|w|w.fullscreen().is_some()),
+            hover:if self.focused{self.last_cursor.and_then(|(x,y)|self.toolbar.hit(x,y))}else{None},
+            frames:self.frames,dimensions,fps:self.fps,route:measured.and_then(|s|s.route),
+            rtt:measured.and_then(|s|s.rtt_ms),bitrate:measured.and_then(|s|s.bitrate),
+            display:self.view_index.map(|i|(i,self.screens)),
+        });
         buffer.present().map_err(error)
     }
     fn fail(&mut self,el:&ActiveEventLoop,e:String){self.error=Some(e);el.exit();}
@@ -207,7 +176,7 @@ fn fill_rect(buf:&mut[u32],width:u32,height:u32,r:Rect,color:u32){
         if let Some(row)=buf.get_mut(start..end){row.fill(color);}
     }
 }
-fn draw_mark(buf:&mut[u32],width:u32,height:u32,x:u32,y:u32,action:usize,scale:u32){
+fn draw_mark(buf:&mut[u32],width:u32,height:u32,x:u32,y:u32,action:usize,scale:u32,color:u32){
     // 12x12 local icons: disconnect, fullscreen, input, display, quality.
     // No remote-controlled pixels in the chrome.
     const MARKS:[[u16;12];5]=[
@@ -218,17 +187,17 @@ fn draw_mark(buf:&mut[u32],width:u32,height:u32,x:u32,y:u32,action:usize,scale:u
         [0,0x7fe,0x080,0x080,0,0x7fe,0x008,0x008,0,0x7fe,0x200,0x200],
     ];
     for(row,bits)in MARKS[action].iter().enumerate(){for col in 0..12u32{
-        if *bits&(1u16<<col)!=0{fill_rect(buf,width,height,Rect{x:x+col*scale,y:y+row as u32*scale,width:scale,height:scale},0xe6edf7);}
+        if *bits&(1u16<<col)!=0{fill_rect(buf,width,height,Rect{x:x+col*scale,y:y+row as u32*scale,width:scale,height:scale},color);}
     }}
 }
-fn draw_text(buf:&mut[u32],width:u32,height:u32,x:u32,y:u32,text:&str,scale:u32){
+fn draw_text(buf:&mut[u32],width:u32,height:u32,x:u32,y:u32,text:&str,scale:u32,color:u32){
     for(i,ch)in text.chars().enumerate(){
         if let Some(glyph)=BASIC_FONTS.get(ch){
             for (row,bits)in glyph.iter().enumerate(){for col in 0..8u32{
                 if bits&(1u8<<col)==0{continue;}
                 for dy in 0..scale{for dx in 0..scale{
                     let xx=x+i as u32*8*scale+col*scale+dx;let yy=y+row as u32*scale+dy;
-                    if xx<width&&yy<height{buf[(yy*width+xx)as usize]=0xf2f5f8;}
+                    if xx<width&&yy<height{buf[(yy*width+xx)as usize]=color;}
                 }}
             }}
         }
@@ -245,6 +214,7 @@ impl ApplicationHandler for Viewer<'_>{
             let context=softbuffer::Context::new(window.clone()).map_err(error)?;
             let surface=Surface::new(&context,window.clone()).map_err(error)?;
             let size=window.inner_size();
+            self.dark_chrome=matches!(window.theme(),Some(winit::window::Theme::Dark));
             self.window=Some(window);self.surface=Some(surface);self.layout(size)?;
             Ok(())
         })();
@@ -256,6 +226,7 @@ impl ApplicationHandler for Viewer<'_>{
             match event{
                 WindowEvent::CloseRequested=>el.exit(),
                 WindowEvent::Resized(size)=>self.layout(size)?,
+                WindowEvent::ThemeChanged(theme)=>{self.dark_chrome=theme==winit::window::Theme::Dark;if let Some(w)=&self.window{w.request_redraw();}},
                 WindowEvent::ScaleFactorChanged{..}=>{let size=self.window.as_ref().unwrap().inner_size();self.layout(size)?;}
                 WindowEvent::Focused(focused)=>{self.disarm()?;self.focused=focused;self.physical_keys.clear();self.physical_buttons.clear();self.last_cursor=None;}
                 WindowEvent::CursorLeft{..}=>{self.last_cursor=None;self.disarm()?;}
@@ -319,7 +290,7 @@ pub(super) fn run(peer:&Peer,channel:&ControlChannel,session:[u8;16],geometry:Ge
     let event_loop:EventLoop<()>=EventLoop::new().map_err(error)?;
     let mut v=Viewer{peer,channel,session,geometry:Rect{x:geometry.x,y:geometry.y,width:geometry.width,height:geometry.height},
         allow_input,input_enabled:allow_input,av,volume:audio::VOLUME.load(Ordering::Acquire),screens,view_index:None,switch_pending:false,window:None,surface:None,size:PhysicalSize::new(0,0),
-        toolbar:viewer_ui::toolbar(0,0,1,false,false),locale,labels:None,font_rx,scale:1,fit:None,last_cursor:None,focused:false,armed:false,physical_keys:BTreeSet::new(),physical_buttons:BTreeSet::new(),
+        toolbar:viewer_ui::toolbar(0,0,1,false,false),dark_chrome:false,locale,labels:None,font_rx,scale:1,fit:None,last_cursor:None,focused:false,armed:false,physical_keys:BTreeSet::new(),physical_buttons:BTreeSet::new(),
         sent_keys:BTreeSet::new(),sent_buttons:BTreeSet::new(),previous:None,seq:0,pixels:vec![0;(c.width*c.height)as usize],
         frames:0,metric_frames:0,metric_bytes:0,last_metric:now,last_frame:now,stats:Default::default(),last_transport:None,started:now,
         heartbeat:now-Duration::from_secs(1),released:false,error:None,next_frame:now,fps:0.,extended,quality_mode:0,quality_pending:None,actual_stream:None};

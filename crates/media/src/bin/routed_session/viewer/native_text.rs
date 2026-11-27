@@ -10,14 +10,14 @@ const MAX_FONT_BYTES:usize=64*1024*1024;
 const W:u32=136;
 const H:u32=24;
 struct Tile{width:u32,height:u32,alpha:Vec<u8>}
-pub(super) struct Text{tiles:Vec<Tile>}
-fn raster(font:&FontRef<'_>,label:&str,scale:u32)->Option<Tile>{
-    let width=W*scale;let height=H*scale;
+pub(super) struct Text{tiles:Vec<Tile>,ascii:Vec<Option<Tile>>}
+fn raster(font:&FontRef<'_>,label:&str,scale:u32,box_width:u32,box_height:u32,font_size:f32)->Option<Tile>{
+    let width=box_width*scale;let height=box_height*scale;
     let mut tile=Tile{width,height,alpha:vec![0;(width*height)as usize]};
-    let s=font.as_scaled(16.0*scale as f32);
+    let s=font.as_scaled(font_size*scale as f32);
     let mut advance=0.0f32;
     for ch in label.chars(){let id=font.glyph_id(ch);if id.0==0{return None;}advance+=s.h_advance(id);}
-    if !advance.is_finite()||advance<=0.0||advance>width as f32-4.0{return None;}
+    if !advance.is_finite()||advance<=0.0||advance>width as f32-1.0{return None;}
     let baseline=(height as f32-s.height())/2.0+s.ascent();
     if !baseline.is_finite(){return None;}
     let mut pen=(width as f32-advance)/2.0;
@@ -25,7 +25,7 @@ fn raster(font:&FontRef<'_>,label:&str,scale:u32)->Option<Tile>{
     for ch in label.chars(){
         let id=font.glyph_id(ch);
         if !ch.is_whitespace(){
-            let glyph=id.with_scale_and_position(16.0*scale as f32,point(pen,baseline));
+            let glyph=id.with_scale_and_position(font_size*scale as f32,point(pen,baseline));
             let outlined=font.outline_glyph(glyph)?;
             let b=outlined.px_bounds();
             if !b.min.x.is_finite()||!b.min.y.is_finite()||!b.max.x.is_finite()||!b.max.y.is_finite()||
@@ -68,8 +68,13 @@ fn build(locale:Locale)->Option<Text>{
             let font=FontRef::try_from_slice_and_index(bytes,index).ok()?;
             if labels.iter().flat_map(|s|s.chars()).any(|ch|font.glyph_id(ch).0==0){return None;}
             let mut tiles=Vec::with_capacity(36);
-            for scale in 1..=3{for label in labels{tiles.push(raster(&font,label,scale)?);}}
-            Some(Text{tiles})
+            for scale in 1..=3{for label in labels{tiles.push(raster(&font,label,scale,W,H,16.0)?);}}
+            let mut ascii=Vec::with_capacity(285);
+            for scale in 1..=3{for byte in 32..=126u8{
+                if byte==b' '{ascii.push(Some(Tile{width:10*scale,height:20*scale,alpha:vec![0;(200*scale*scale)as usize]}));}
+                else{ascii.push(raster(&font,&char::from(byte).to_string(),scale,10,20,13.0));}
+            }}
+            Some(Text{tiles,ascii})
         }).flatten();
         if result.is_some(){return result;}
     }
@@ -81,21 +86,34 @@ pub(super) fn start(locale:Locale)->Receiver<Option<Text>>{
     std::thread::spawn(move||{let result=std::panic::catch_unwind(||build(locale)).ok().flatten();let _=tx.send(result);});
     rx
 }
+fn blend_tile(tile:&Tile,buf:&mut[u32],width:u32,height:u32,ox:u32,oy:u32,color:u32){
+    for y in 0..tile.height{for x in 0..tile.width{
+        let a=u32::from(tile.alpha[(y*tile.width+x)as usize]);if a==0{continue;}
+        let px=ox+x;let py=oy+y;if px>=width||py>=height{continue;}
+        let Some(pixel)=buf.get_mut((u64::from(py)*u64::from(width)+u64::from(px))as usize)else{continue};
+        let blend=|shift:u32|(((((*pixel>>shift)&255)*(255-a)+((color>>shift)&255)*a+127)/255)&255)<<shift;
+        *pixel=blend(16)|blend(8)|blend(0);
+    }}
+}
 impl Text{
+    #[cfg(test)]
     pub(super) fn draw(&self,buf:&mut[u32],width:u32,height:u32,rect:Rect,label:usize,scale:u32)->bool{
+        self.draw_tinted(buf,width,height,rect,label,scale,0xf4f4f4)
+    }
+    pub(super) fn draw_tinted(&self,buf:&mut[u32],width:u32,height:u32,rect:Rect,label:usize,scale:u32,color:u32)->bool{
         let Some(tile)=self.tiles.get(((scale.clamp(1,3)-1)*12)as usize+label)else{return false};
         if rect.width<tile.width||rect.height<tile.height||width==0||height==0{return false;}
-        let ox=rect.x+(rect.width-tile.width)/2;let oy=rect.y+(rect.height-tile.height)/2;
-        for y in 0..tile.height{
-            for x in 0..tile.width{
-                let a=u32::from(tile.alpha[(y*tile.width+x)as usize]);if a==0{continue;}
-                let px=ox+x;let py=oy+y;
-                if px>=width||py>=height{continue;}
-                let Some(pixel)=buf.get_mut((u64::from(py)*u64::from(width)+u64::from(px))as usize)else{continue};
-                let blend=|shift:u32|(((((*pixel>>shift)&255)*(255-a)+244*a+127)/255)&255)<<shift;
-                *pixel=blend(16)|blend(8)|blend(0);
-            }
-        }true
+        blend_tile(tile,buf,width,height,rect.x+(rect.width-tile.width)/2,rect.y+(rect.height-tile.height)/2,color);
+        true
+    }
+    pub(super) fn draw_ascii(&self,buf:&mut[u32],width:u32,height:u32,rect:Rect,label:&str,scale:u32,color:u32)->bool{
+        let scale=scale.clamp(1,3);let cell=10*scale;
+        if !label.is_ascii()||label.len()>96||rect.height<20*scale||label.len()as u32*cell>rect.width{return false;}
+        let tile=|b:u8|if (32..=126).contains(&b){self.ascii.get(((scale-1)*95+u32::from(b-32))as usize).and_then(Option::as_ref)}else{None};
+        if label.bytes().any(|b|tile(b).is_none()){return false;}
+        let y=rect.y+(rect.height-20*scale)/2;
+        for (i,b) in label.bytes().enumerate(){blend_tile(tile(b).unwrap(),buf,width,height,rect.x+i as u32*cell,y,color);}
+        true
     }
 }
 #[cfg(test)]

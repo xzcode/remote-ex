@@ -200,3 +200,7 @@ User approved TeamViewer-inspired workflow (original Remote EX visuals). New des
 ### M7 second desktop workspace batch
 
 8b8557b desktop visual, desktop checks, Linux candidate and Web lab passed. New native top actions and bottom actual statistics strip, approved-catalog dual-pane browser, file mode shortcuts and scoped search/sort with preserved immutable indexes. Eight-language desktop labels added. No protocol or authorization changes. See M7_UI_REDESIGN.md. New CI pending; mobile gestures/virtual keyboard/localization and physical acceptance remain open.
+
+### M7 PC control-window visual polish
+
+User requested less plain PC session UI. New native chrome uses actual shared geometry, compact rounded icon controls, system light/dark, grouped live-only metrics and generated preview artifacts in Linux X11 CI. 1881285 Windows/macOS development builds and native tests passed; 99bdbc5 Web integrated UI passed. Latest native refinements require build/render verification. Mobile virtual keyboard and advanced gestures remain next; no release or physical acceptance.
