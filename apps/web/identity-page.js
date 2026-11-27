@@ -1,8 +1,8 @@
 import {createIdentity,readIdentity,deleteIdentity} from "./identity.js";
 import {hex} from "./crypto.js";
 import {probeIdentityCapabilities,compatibilityGuidance} from "./capabilities.js";
-import {applyAppearance} from "./controller-ui.js";
-applyAppearance();
+import {applyAppearance,applyLanguage,uiText as t} from "./controller-ui.js";
+applyAppearance();applyLanguage();
 const $=id=>document.getElementById(id);
 const status=$("identity-status"),create=$("identity-create"),remove=$("identity-delete"),refresh=$("identity-refresh"),confirm=$("identity-confirm"),support=$("identity-support");
 let busy=false,present=false,valid=false,canCreate=false;
@@ -17,29 +17,29 @@ function render(identity,probe){
     $("public-key").value=identity?hex(identity.pub):"";
     canCreate=!identity&&probe?.ok===true;
     if(identity){
-        status.dataset.state="verified";status.textContent="Local identity ready";
-        support.textContent="Stored non-extractable identity verified.";
+        status.dataset.state="verified";status.textContent=t("Local identity ready");
+        support.textContent=t("Stored non-extractable identity verified.");
     }else if(canCreate){
-        status.dataset.state="idle";status.textContent="No local identity";
-        support.textContent="Local Ed25519 signing and key storage verified. Create a device identity explicitly.";
+        status.dataset.state="idle";status.textContent=t("No local identity");
+        support.textContent=t("Local Ed25519 signing and key storage verified. Create a device identity explicitly.");
     }else{
-        status.dataset.state="unsupported";status.textContent="Identity creation unavailable";
-        support.textContent="Identity compatibility: "+(probe?.code??"identity_unavailable")+". "+compatibilityGuidance([{id:"ed25519",ok:!["NotSupportedError","ed25519_failed","ed25519_timeout","ed25519_proof","ed25519_export"].includes(probe?.code)}]);
+        status.dataset.state="unsupported";status.textContent=t("Identity creation unavailable");
+        support.textContent=t("Identity compatibility: ")+(probe?.code??"identity_unavailable")+". "+t(compatibilityGuidance([{id:"ed25519",ok:!["NotSupportedError","ed25519_failed","ed25519_timeout","ed25519_proof","ed25519_export"].includes(probe?.code)}]));
     }
 }
 async function run(action){
     if(busy)return;
-    busy=true;canCreate=false;$("identity-error").textContent="";support.textContent="Checking local identity and storage…";
-    status.dataset.state="running";status.textContent="Working…";controls();
+    busy=true;canCreate=false;$("identity-error").textContent="";support.textContent=t("Checking local identity and storage…");
+    status.dataset.state="running";status.textContent=t("Working…");controls();
     try{
         const value=await action();
         const probe=value?null:await probeIdentityCapabilities();
         render(value,probe);
     }catch{
         present=false;valid=false;confirm.checked=false;$("device-id").value="";$("public-key").value="";
-        status.dataset.state="error";status.textContent="Identity unavailable";
-        support.textContent="Refresh with a supported browser or WebView. No new identity will be created automatically.";
-        $("identity-error").textContent="Browser identity could not be verified or stored. Refresh, or explicitly remove the local record to recover.";
+        status.dataset.state="error";status.textContent=t("Identity unavailable");
+        support.textContent=t("Refresh with a supported browser or WebView. No new identity will be created automatically.");
+        $("identity-error").textContent=t("Browser identity could not be verified or stored. Refresh, or explicitly remove the local record to recover.");
     }finally{busy=false;controls();}
 }
 create.addEventListener("click",()=>{if(!create.disabled&&canCreate)run(createIdentity);});

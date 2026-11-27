@@ -83,6 +83,13 @@ try{
     await page.waitForFunction(()=>Number(document.querySelector("#view-frames").textContent)>=10,{},{timeout:10000});
     assert.equal(await page.locator("#view-resolution").textContent(),"960 × 540");
     const surface=page.locator("#view-video");
+    assert(await page.locator("#view-tools-toggle").isVisible());
+    await page.locator("#view-tools-toggle").click();
+    assert(await page.locator("#view-tools").isHidden());
+    assert(await page.locator("#view-disconnect").isVisible());
+    assert.equal(await page.locator("#view-tools-toggle").getAttribute("aria-expanded"),"false");
+    await page.locator("#view-tools-toggle").click();
+    assert(await page.locator("#view-tools").isVisible());
     // Decoded media and host permission do not activate input implicitly.
     assert(await page.locator("#input-disable").isDisabled());
     await surface.click();await page.keyboard.press("a");

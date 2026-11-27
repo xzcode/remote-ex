@@ -10,7 +10,7 @@ const {server,url}=await serve(0,null,endpoint,{stun:null,turn:[],relayOnly:fals
 let browser;
 try{
     browser=await chromium.launch({headless:true,args:["--disable-background-networking"]});
-    const context=await browser.newContext({permissions:[],hasTouch:true,isMobile:true,viewport:{width:390,height:844}});
+    const context=await browser.newContext({permissions:[],hasTouch:true,isMobile:true,locale:"en-US",viewport:{width:390,height:844}});
     const page=await context.newPage(),sockets=[],outside=[];
     const out=process.env.REMOTE_EX_UI_PREVIEW_DIR;
     if(out)await fs.mkdir(out,{recursive:true});
@@ -57,6 +57,25 @@ try{
     await snap("mobile-review-connection");
     await page.setViewportSize({width:844,height:390});
     assert(await fits());
+    await page.setViewportSize({width:390,height:844});
+    await page.goto(url+"/mobile.html");
+    await page.locator('.mobile-nav [data-home-target="home-settings"]').click();
+    await page.locator("#mobile-language").selectOption("zh");
+    await page.waitForFunction(()=>document.documentElement.lang==="zh-CN"&&!document.querySelector("#home-settings").hidden);
+    await page.waitForFunction(()=>!document.querySelector("#mobile-connect").hidden,null,{timeout:45000});
+    assert.equal(await page.locator("#mobile-language").inputValue(),"zh");
+    await snap("mobile-settings-zh");
+    await page.locator('.mobile-nav [data-home-target="home-devices"]').click();
+    assert(await page.getByRole("heading",{name:"我的设备"}).isVisible());
+    await page.locator("#mobile-devices .saved-row").click();
+    await page.waitForURL(url+"/view.html");
+    await page.waitForFunction(()=>document.querySelector("#view-status").dataset.state==="idle"&&!document.querySelector("#view-recheck").disabled,null,{timeout:45000});
+    assert.equal(await page.locator("#view-server").inputValue(),"01".repeat(32));
+    assert.match(await page.locator("#consent-label").textContent(),/仅查看.*30 秒.*主机单独授权/);
+    assert(await page.locator("#view-connect").isDisabled());
+    assert(await page.locator("#view-tools-toggle").isHidden());
+    assert(!(await page.locator("#view-consent").isChecked()));
+    await snap("mobile-review-zh");
     assert.deepEqual(sockets,[]);assert.deepEqual(outside,[]);
     console.log("PASS M7 mobile navigation, real empty/saved book, appearance persistence, one-shot review without consent or socket, portrait/landscape width");
 }finally{await browser?.close();await new Promise(r=>server.close(r));}
