@@ -12,3 +12,9 @@ assert.deepEqual(events,[["move",p],["button",{button:1,down:true}],["button",{b
 ({events,t}=fixture("drag"));t.start(1,p,100,100);assert(!t.move(1,null,150,150,50));t.cancel();assert(!t.current&&!t.held);assert(!t.end(1,p,100,100));
 assert.throws(()=>new TouchGesture("unknown",()=>true));
 console.log("PASS touch click/right/drag/scroll, motion cancellation, multi-pointer rejection and cleanup");
+
+({events,t}=fixture("smart"));assert(t.start(1,p,100,100,10));assert(t.end(1,p,100,100,100));assert.deepEqual(events.map(x=>x[0]),["move","move","button","button"]);assert.equal(events[2][1].button,1);
+({events,t}=fixture("smart"));t.start(1,p,100,100,10);t.end(1,p,100,100,560);assert.equal(events[2][1].button,3);
+({events,t}=fixture("smart"));t.start(1,p,100,100,10);t.move(1,q,150,150,50);t.end(1,q,150,150,700);assert(events.every(x=>x[0]==="move"));
+({events,t}=fixture("smart"));t.start(1,p,100,100,10);t.cancel();assert(!t.end(1,p,100,100,700));assert.deepEqual(events,[["move",p]]);
+console.log("PASS smart pointer: click, release-time long press, motion without button, canceled touch");

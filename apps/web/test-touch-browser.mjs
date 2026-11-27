@@ -41,6 +41,12 @@ try{
     const touch=(type,points)=>client.send("Input.dispatchTouchEvent",{type,touchPoints:points});
     await enable("tap");await page.touchscreen.tap(x,y);
     assert.deepEqual(kinds(await packets()),[82,90,90]);assert.deepEqual((await packets())[1].slice(-4),[8,1,16,1]);
+    await enable("smart");await page.touchscreen.tap(x,y);
+    assert.deepEqual(kinds(await packets()),[82,82,90,90]);
+    await enable("smart");await touch("touchStart",[point(x,y)]);await page.waitForTimeout(610);await touch("touchEnd",[]);
+    assert.deepEqual(kinds(await packets()),[82,82,90,90]);assert.deepEqual((await packets())[2].slice(-4),[8,3,16,1]);
+    await enable("smart");await touch("touchStart",[point(x,y)]);await page.waitForTimeout(60);await touch("touchMove",[point(x+25,y+15)]);await touch("touchEnd",[]);
+    assert((await packets()).length>=2&&kinds(await packets()).every(v=>v===82));
     await enable("right");await page.touchscreen.tap(x,y);
     assert.deepEqual(kinds(await packets()),[82,90,90]);assert.deepEqual((await packets())[1].slice(-4),[8,3,16,1]);
     await enable("drag");await touch("touchStart",[point(x,y)]);

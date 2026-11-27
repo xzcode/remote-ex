@@ -24,7 +24,7 @@ function updateTools(){
 toolsToggle.addEventListener("click",()=>{if(!active||active.phase!=="viewing"||active.stopRequested)return;active.releaseInput();toolsCollapsed=!toolsCollapsed;updateTools();});
 window.addEventListener("resize",()=>{if(inputActive)active?.releaseInput();});
 window.visualViewport?.addEventListener("resize",()=>{if(inputActive)active?.releaseInput();});
-if(matchMedia("(pointer: coarse)").matches)inputMode.value="tap";
+if(matchMedia("(pointer: coarse)").matches)inputMode.value="smart";
 function state(kind,label){status.dataset.state=kind;status.textContent=t(label);$("view-placeholder").hidden=!video.hidden;document.body.classList.toggle("session-live",kind==="viewing");}
 function controls(){
     const locked=!!active;
@@ -38,6 +38,7 @@ function controls(){
     const show=allowControl&&control.checked;enable.hidden=disable.hidden=$("input-status").hidden=$("input-mode-wrap").hidden=!show;inputMode.disabled=inputActive;
     enable.disabled=!locked||!active.inputReady()||active.qualityPending!==null||inputActive;
     disable.disabled=!inputActive;
+    $("smart-help").hidden=!show||inputMode.value!=="smart";
     const long=allowExtended&&extended.checked;
     $("quality-wrap").hidden=$("quality-status").hidden=!long;
     qualityApply.disabled=!locked||!active.scope.extended||active.phase!=="viewing"||active.qualityPending!==null||active.stopRequested;
@@ -107,7 +108,8 @@ function metrics(m){
 for(const item of [server,host])item.addEventListener("input",()=>{saved.value="";consent.checked=false;controls();});
 consent.addEventListener("change",controls);control.addEventListener("change",()=>{consent.checked=false;controls();});extended.addEventListener("change",()=>{consent.checked=false;controls();});
 qualityApply.addEventListener("click",()=>{active?.setQuality(Number(qualityMode.value));controls();});
-enable.addEventListener("click",()=>active?.enableInput(inputMode.value));disable.addEventListener("click",()=>active?.releaseInput());
+inputMode.addEventListener("change",()=>{active?.releaseInput();controls();});
+enable.addEventListener("click",e=>{if(e.isTrusted)active?.enableInput(inputMode.value);});disable.addEventListener("click",()=>active?.releaseInput());
 connect.addEventListener("click",async()=>{
     if(connect.disabled||active||!compatible||document.hidden)return;
     displayCount=0;for(const id of ["view-frames","view-resolution","view-time"])$(id).textContent="—";$("view-layout").textContent=t("No approved displays");$("quality-status").textContent=t("Awaiting host status");qualityMode.value="0";

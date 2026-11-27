@@ -24,6 +24,8 @@ export function takeSelection(){
 }
 
 const ZH=Object.freeze({
+  "Touch · smart pointer": "触屏 · 智能指针",
+  "Slide to move the pointer. Tap for left click, hold briefly and release for right click.": "滑动移动指针，轻点左键，长按后松开触发右键。",
   "Remote EX — Controller": "Remote EX — 远程连接",
   "Remote EX — Browser identity": "Remote EX — 本机身份",
   "Remote EX — Read-only Web controller": "Remote EX — 远程主控",
