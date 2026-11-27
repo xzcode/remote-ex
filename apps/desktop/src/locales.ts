@@ -12,6 +12,17 @@ type Row=[TextKey,string,string,string,string,string,string];
 // The settings page reports coverage; new untranslated keys fall back to
 // the original English until their translations are added.
 const rows:Row[]=[
+["catalogUp","Nach oben","Dossier parent","Subir","Subir","上へ","상위 폴더"],
+["catalogSearch","Ordner durchsuchen","Rechercher dans le dossier","Buscar en carpeta","Pesquisar na pasta","フォルダー内を検索","폴더 검색"],
+["catalogSort","Sortieren nach","Trier par","Ordenar por","Ordenar por","並べ替え","정렬"],
+["catalogName","Name","Nom","Nombre","Nome","名前","이름"],
+["catalogSize","Größe","Taille","Tamaño","Tamanho","サイズ","크기"],
+["catalogNoEntries","Keine passenden Einträge.","Aucun élément correspondant.","No hay elementos coincidentes.","Nenhum item correspondente.","該当する項目がありません。","일치하는 항목이 없습니다."],
+["catalogSelection","Ausgewählte Dateien","Fichiers sélectionnés","Archivos seleccionados","Arquivos selecionados","選択したファイル","선택한 파일"],
+["catalogLocal","Lokales Gerät","Appareil local","Dispositivo local","Dispositivo local","ローカル端末","로컬 장치"],
+["catalogPeer","Entferntes Gerät","Appareil distant","Dispositivo remoto","Dispositivo remoto","リモート端末","원격 장치"],
+["catalogPeerSelect","Das andere Gerät wählt und genehmigt seinen eigenen Pfad. Kein nicht genehmigter Dateizugriff.","L’autre appareil choisit et approuve son propre chemin. Aucun accès non autorisé.","El otro dispositivo selecciona y aprueba su ruta. Sin acceso no autorizado.","O outro dispositivo seleciona e aprova seu caminho. Sem acesso não autorizado.","相手側が自身のパスを選択して承認します。未承認のファイルにはアクセスしません。","상대 장치가 자체 경로를 선택하고 승인합니다. 승인되지 않은 파일 접근은 없습니다."],
+["catalogChooseFiles","Dateien aus dem genehmigten Remote-Katalog auswählen.","Choisir les fichiers du catalogue distant approuvé.","Seleccione archivos del catálogo remoto aprobado.","Selecione arquivos do catálogo remoto aprovado.","承認されたリモート一覧からファイルを選択します。","승인된 원격 목록에서 파일을 선택하세요."],
 ["workspaceReviewDevice","Verbindung prüfen","Vérifier la connexion","Revisar conexión","Revisar conexão","接続情報を確認","연결 정보 확인"],
 ["workspace","Arbeitsbereich","Espace de travail","Área de trabajo","Área de trabalho","ワークスペース","작업 공간"],
 ["management","Verwaltung","Gestion","Administración","Gerenciamento","管理","관리"],

@@ -1,4 +1,15 @@
 export const en = {
+  catalogUp:"Up",
+  catalogSearch:"Search in folder",
+  catalogSort:"Sort by",
+  catalogName:"Name",
+  catalogSize:"Size",
+  catalogNoEntries:"No matching items.",
+  catalogSelection:"Selected files",
+  catalogLocal:"Local device",
+  catalogPeer:"Remote device",
+  catalogPeerSelect:"The other device selects and approves its own path. No unapproved filesystem access.",
+  catalogChooseFiles:"Choose files from the approved remote catalog.",
   workspace:"Workspace",
   management:"Management",
   workspaceWelcome:"Ready to connect",
@@ -110,6 +121,17 @@ export const en = {
 } as const;
 export type TextKey = keyof typeof en;
 export const zh: Record<TextKey, string> = {
+  catalogUp:"上一级",
+  catalogSearch:"搜索当前目录",
+  catalogSort:"排序",
+  catalogName:"名称",
+  catalogSize:"大小",
+  catalogNoEntries:"没有符合条件的文件。",
+  catalogSelection:"已选文件",
+  catalogLocal:"本地设备",
+  catalogPeer:"远程设备",
+  catalogPeerSelect:"由对方选择并授权其本地路径，不访问未授权的文件系统。",
+  catalogChooseFiles:"从已授权的远端目录选择文件。",
   workspace:"工作台",
   management:"管理",
   workspaceWelcome:"开始远程连接",

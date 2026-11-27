@@ -47,6 +47,11 @@ try{
     await goto("File transfer");
     const fileMode=page.locator(".lan-panel:visible select").filter({has:page.locator('option[value="file"]')});
     assert.equal(await fileMode.inputValue(),"file");assert(await fits());await snap("desktop-file-connection");
+    assert(await page.locator(".file-mode-bar:visible").isVisible());
+    assert(await page.locator(".transfer-panes:visible").getByText("Local device",{exact:true}).isVisible());
+    assert(await page.locator(".transfer-panes:visible").getByText("Remote device",{exact:true}).isVisible());
+    await page.locator(".file-mode-bar:visible button").nth(3).click();assert.equal(await fileMode.inputValue(),"catalog_batch");
+    await page.locator(".file-mode-bar:visible button").first().click();assert.equal(await fileMode.inputValue(),"file");
     await goto("Preferences");await page.locator("#theme").selectOption("gray");
     assert.equal(await page.locator("html").getAttribute("data-theme"),"gray");
     await goto("Remote control");await snap("desktop-home-gray");

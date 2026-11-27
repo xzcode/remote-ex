@@ -5,6 +5,9 @@ import type {TextKey} from "./i18n";
 import {getCurrentWebview} from "@tauri-apps/api/webview";
 import ServerProfiles from "./ServerProfiles.vue";
 import ServerPreflight from "./ServerPreflight.vue";
+import FileCatalog from "./FileCatalog.vue";
+import WorkspaceIcon from "./WorkspaceIcon.vue";
+import {selectedRows} from "./catalog-view";
 type Stage="idle"|"starting"|"awaiting_approval"|"connecting"|"listening"|"connected"|"stopping"|"passed"|"failed"|"canceled";
 type CatalogEntry={parts:string[];directory:boolean;size:number};
 type Change={op:'create_folder';parent:number|null;name:string}|{op:'create_file';parent:number|null;name:string}|{op:'rename';index:number;name:string}|{op:'recycle';index:number}|{op:'restore';index:number;parent:number|null;name:string};
@@ -27,6 +30,13 @@ const sender=ref<"host"|"controller">("controller"),transferPath=ref(""),volume=
 const extraDisplays=ref<number[]>([]),secondaryControl=ref(false);
 const canSecondary=computed(()=>platform.value?.os!=="linux"&&role.value==="host"&&(mode.value==="control"||mode.value==="av_control"));
 const catalogQuery=ref(""),catalogChoice=ref<number|null>(null),batchChoice=ref<number[]>([]);
+const fileModes=[{value:"file",label:"exchangeFile"},{value:"directory",label:"exchangeDirectory"},{value:"catalog",label:"catalogMode"},{value:"catalog_batch",label:"catalogBatchMode"},{value:"manage",label:"manageMode"}] as const;
+const selectedCatalog=computed(()=>selectedRows(snapshot.value.catalog??[],mode.value==="catalog_batch"?batchChoice.value:catalogChoice.value===null?[]:[catalogChoice.value]));
+function chooseCatalog(indexes:number[]){
+ if(busy.value||!snapshot.value.active||snapshot.value.stage!=="connected"||snapshot.value.catalog_selected!=null)return;
+ if(mode.value==="catalog_batch")batchChoice.value=indexes;
+ else if(mode.value==="catalog")catalogChoice.value=indexes[0]??null;
+}
 const changes=ref<Change[]>([]),operation=ref<"create_folder"|"create_file"|"rename"|"recycle"|"restore">("create_folder"),newName=ref(""),parentIndex=ref<number|null>(null),fileIndex=ref<number|null>(null),reviewConfirmed=ref(false),planConfirmed=ref(false);
 const managedEditable=computed(()=>mode.value==="manage"&&role.value==="controller"&&snapshot.value.catalog_ready&&snapshot.value.stage==="connected"&&!snapshot.value.manage_submitted);
 const manageFile=computed(()=>operation.value==="rename"||operation.value==="recycle"||operation.value==="restore");
@@ -154,9 +164,12 @@ onMounted(()=>{void poll();if(native&&props.initialInvitation){invitation.value=
 onBeforeUnmount(()=>{disposed=true;stopDrop?.();if(timer!==undefined)window.clearInterval(timer);if(native&&snapshot.value.active)void invoke("routed_disconnect",{slot:props.slot}).catch(()=>{});});
 </script>
 <template>
-<section class="panel lan-panel">
+<section class="panel lan-panel" :class="{'file-workspace':props.initialMode==='file'}">
  <header class="preview-head"><h2>{{ t("routedTitle") }}</h2><span class="status" role="status">{{ status }}</span></header>
  <p>{{ t("routedDescription") }}</p>
+ <div v-if="props.initialMode==='file'" class="file-mode-bar">
+  <button v-for="item in fileModes" :key="item.value" :aria-pressed="mode===item.value" :class="{selected:mode===item.value}" :disabled="busy||snapshot.active" @click="mode=item.value"><WorkspaceIcon name="files"/><span>{{ t(item.label) }}</span></button>
+ </div>
  <div v-if="snapshot.active&&isDisplay" class="view-notice">{{ t(role==="host"?"routedHostNotice":"controlControllerNotice") }}</div>
  <details class="connection-section" :open="!!initialInvitation||undefined"><summary>{{ t("invitationCode") }}</summary><div class="field"><label>{{ t("invitationCode") }}</label><textarea v-model="invitation" maxlength="2048" :readonly="snapshot.active" rows="2"/><div class="actions"><button :disabled="busy||snapshot.active||!invitation.trim()" @click="readInvitation">{{ t("invitationImport") }}</button><button :disabled="busy||role!=='host'||!snapshot.device_id||isExchange||mode==='audio'||mode==='clipboard_sync'||mode==='catalog'||mode==='catalog_batch'||mode==='manage'||mode==='power'" @click="makeInvitation">{{ t("invitationCreate") }}</button></div><p class="muted">{{ t("invitationNotice") }}</p></div></details>
  <div class="field">
@@ -181,7 +194,13 @@ onBeforeUnmount(()=>{disposed=true;stopDrop?.();if(timer!==undefined)window.clea
    <label>{{ t("display") }}</label><div class="actions"><select v-model="displayId" :disabled="busy||snapshot.active"><option :value="null" disabled>{{ t("select") }}</option><option v-for="d in displays" :key="d.id" :value="d.id">{{ d.name }} · {{ d.width }} × {{ d.height }}</option></select><button :disabled="busy||snapshot.active" @click="loadDisplays">{{ t("refresh") }}</button></div>
    <template v-if="isView&&displayId!==null"><label>{{ t("extraDisplays") }}</label><label v-for="d in displays.filter(x=>x.id!==displayId)" :key="d.id" class="check-label"><input type="checkbox" v-model="extraDisplays" :value="d.id" :disabled="busy||snapshot.active||(extraDisplays.length>=3&&!extraDisplays.includes(d.id))"/>{{ d.name }} · {{ d.width }} × {{ d.height }}</label><p class="muted">{{ t("extraDisplaysNotice") }}</p></template>
   </template>
-  <template v-if="isExchange"><label>{{ t("exchangeSender") }}</label><select v-model="sender" :disabled="busy||snapshot.active"><option value="controller">{{ t("lanController") }}</option><option value="host">{{ t("lanHost") }}</option></select><template v-if="mode==='file'||mode==='directory'"><label>{{ t(mode==="directory"?(role===sender?"directorySource":"directoryDestination"):(role===sender?"exchangeSource":"exchangeDestination")) }}</label><div class="actions"><input v-model="transferPath" maxlength="2048" :disabled="busy||snapshot.active"/><button :disabled="busy||snapshot.active||!native" @click="chooseTransferFile">{{ t(mode==="directory"&&role===sender?"directoryChoose":"exchangeChooseFile") }}</button></div><p v-if="role===sender" class="muted">{{ t("dropSingle") }}</p><p v-if="mode==='directory'" class="muted">{{ t("directoryNotice") }}</p></template><p class="muted">{{ t("exchangeNotice") }}</p></template>
+  <template v-if="isExchange"><label>{{ t("exchangeSender") }}</label><select v-model="sender" :disabled="busy||snapshot.active"><option value="controller">{{ t("lanController") }}</option><option value="host">{{ t("lanHost") }}</option></select>
+   <div v-if="mode==='file'||mode==='directory'" class="transfer-panes">
+    <section class="transfer-pane"><header><WorkspaceIcon name="remote"/><strong>{{ t("catalogLocal") }}</strong></header>
+     <label>{{ t(mode==="directory"?(role===sender?"directorySource":"directoryDestination"):(role===sender?"exchangeSource":"exchangeDestination")) }}</label><div class="actions"><input v-model="transferPath" maxlength="2048" :disabled="busy||snapshot.active"/><button :disabled="busy||snapshot.active||!native" @click="chooseTransferFile">{{ t(mode==="directory"&&role===sender?"directoryChoose":"exchangeChooseFile") }}</button></div><p v-if="role===sender" class="muted">{{ t("dropSingle") }}</p>
+    </section>
+    <section class="transfer-pane remote-destination"><header><WorkspaceIcon name="devices"/><strong>{{ t("catalogPeer") }}</strong></header><strong>{{ t(role===sender?"exchangeDestination":"exchangeSource") }}</strong><p class="muted">{{ t("catalogPeerSelect") }}</p></section>
+   </div><p v-if="mode==='directory'" class="muted">{{ t("directoryNotice") }}</p><p class="muted">{{ t("exchangeNotice") }}</p></template>
   <div v-if="mode==='catalog'||mode==='catalog_batch'" class="field">
     <label>{{ t(role==="host"?"catalogRoot":mode==="catalog_batch"?"directoryDestination":"exchangeDestination") }}</label>
     <div class="actions"><input v-model="transferPath" maxlength="2048" :disabled="busy||snapshot.active"/><button :disabled="busy||snapshot.active||!native" @click="chooseTransferFile">{{ t(role==="host"?"directoryChoose":"exchangeChooseFile") }}</button></div>
@@ -198,7 +217,7 @@ onBeforeUnmount(()=>{disposed=true;stopDrop?.();if(timer!==undefined)window.clea
   </template>
   <p v-if="mode==='clipboard_sync'" class="view-notice">{{ t("clipboardSyncNotice") }}</p>
   <template v-if="hasAudio"><label>{{ t("audioVolume") }}: {{ volume }}%</label><input type="range" v-model.number="volume" min="0" max="100" :disabled="busy||(snapshot.active&&(role==='host'||snapshot.stage!=='connected'))" @change="snapshot.stage==='connected'&&role==='controller'&&command('routed_audio_volume',{volume})"/><p class="muted">{{ t("audioNotice") }}</p></template>
-  <label>{{ t("qualityPreset") }}</label><select v-model="quality" :disabled="busy||snapshot.active"><option value="compat">540p · 10 fps</option><option value="low">480p · 15 fps</option><option value="balanced">720p · 30 fps</option><option value="high">1080p · 30 fps</option><option value="qhd">1440p · 30 fps</option><option value="uhd">2160p · 30 fps</option></select><p class="muted">{{ t("qualityNotice") }}</p>
+  <template v-if="isDisplay||mode==='test'"><label>{{ t("qualityPreset") }}</label><select v-model="quality" :disabled="busy||snapshot.active"><option value="compat">540p · 10 fps</option><option value="low">480p · 15 fps</option><option value="balanced">720p · 30 fps</option><option value="high">1080p · 30 fps</option><option value="qhd">1440p · 30 fps</option><option value="uhd">2160p · 30 fps</option></select><p class="muted">{{ t("qualityNotice") }}</p></template>
   <label v-if="armAvailable" class="check-label"><input type="checkbox" v-model="armed" :disabled="busy||snapshot.active"/>{{ t("armedHost") }}</label>
   <p v-if="armAvailable&&armed" class="muted">{{ t("armedNotice") }}</p>
   <label v-if="isDisplay" class="check-label"><input type="checkbox" v-model="extended" :disabled="busy||snapshot.active"/>{{ t("extendedSession") }}</label>
@@ -266,18 +285,21 @@ onBeforeUnmount(()=>{disposed=true;stopDrop?.();if(timer!==undefined)window.clea
  </div>
  <p v-if="snapshot.manage_applied!=null" class="muted">{{ t("manageApplied") }}: {{ snapshot.manage_applied }}</p>
  <div v-if="(mode==='catalog'||mode==='catalog_batch')&&role==='controller'&&snapshot.catalog_ready" class="field">
-   <label>{{ t("catalogTitle") }} ({{ snapshot.catalog?.length??0 }})</label>
-   <input v-model="catalogQuery" :placeholder="t('deviceSearch')"/>
-   <div class="catalog-list" style="max-height:280px;overflow:auto;border:1px solid var(--border);border-radius:6px">
-     <div v-for="{entry,index} in catalogRows" :key="index" class="actions" style="padding:6px 8px;overflow-wrap:anywhere">
-       <input v-if="!entry.directory&&mode==='catalog_batch'" type="checkbox" :value="index" v-model="batchChoice" :disabled="busy||snapshot.catalog_selected!=null||!snapshot.active||(batchChoice.length>=4&&!batchChoice.includes(index))"/>
-       <input v-else-if="!entry.directory" type="radio" name="catalog-file" :value="index" v-model="catalogChoice" :disabled="busy||snapshot.catalog_selected!=null||!snapshot.active"/>
-       <span>{{ entry.directory?"▸":"·" }} {{ entry.parts.join("/") }}</span>
-       <span v-if="!entry.directory" class="muted">{{ entry.size }} B</span>
+   <h2>{{ t("catalogTitle") }} ({{ snapshot.catalog?.length??0 }})</h2>
+   <div class="transfer-panes catalog-workspace">
+    <section class="transfer-pane"><header><WorkspaceIcon name="remote"/><strong>{{ t("catalogLocal") }}</strong></header>
+     <label>{{ t(mode==="catalog_batch"?"directoryDestination":"exchangeDestination") }}</label><input readonly :value="transferPath"/>
+     <div class="catalog-selection"><strong>{{ t("catalogSelection") }} ({{ selectedCatalog.length }})</strong>
+      <div v-for="{entry,index} in selectedCatalog" :key="index" class="selected-file"><span>{{ entry.parts.join("/") }}</span><small>{{ entry.size.toLocaleString() }} B</small></div>
+      <p v-if="!selectedCatalog.length" class="muted">{{ t("catalogChooseFiles") }}</p>
      </div>
+     <button v-if="mode==='catalog_batch'" class="primary" :disabled="busy||!snapshot.active||snapshot.stage!=='connected'||batchChoice.length===0||snapshot.catalog_selected!=null" @click="command('routed_catalog_batch_select',{indexes:batchChoice,confirmed:true})">{{ t("catalogBatchDownload") }} ({{ batchChoice.length }}/4)</button>
+     <button v-else class="primary" :disabled="busy||!snapshot.active||snapshot.stage!=='connected'||catalogChoice===null||snapshot.catalog_selected!=null" @click="command('routed_catalog_select',{index:catalogChoice,confirmed:true})">{{ t("catalogDownload") }}</button>
+    </section>
+    <section class="transfer-pane"><header><WorkspaceIcon name="files"/><strong>{{ t("catalogPeer") }}</strong></header>
+     <FileCatalog :t="t" :entries="snapshot.catalog??[]" :selected="mode==='catalog_batch'?batchChoice:catalogChoice===null?[]:[catalogChoice]" :limit="mode==='catalog_batch'?4:1" :disabled="busy||!snapshot.active||snapshot.stage!=='connected'||snapshot.catalog_selected!=null" @change="chooseCatalog"/>
+    </section>
    </div>
-   <button v-if="mode==='catalog_batch'" class="primary" :disabled="busy||!snapshot.active||snapshot.stage!=='connected'||batchChoice.length===0||snapshot.catalog_selected!=null" @click="command('routed_catalog_batch_select',{indexes:batchChoice,confirmed:true})">{{ t("catalogBatchDownload") }} ({{ batchChoice.length }}/4)</button>
-   <button v-else class="primary" :disabled="busy||!snapshot.active||snapshot.stage!=='connected'||catalogChoice===null||snapshot.catalog_selected!=null" @click="command('routed_catalog_select',{index:catalogChoice,confirmed:true})">{{ t("catalogDownload") }}</button>
  </div>
  <p v-if="snapshot.clipboard_sent!=null" class="muted">{{ t("clipboardSyncCounts") }}: {{ snapshot.clipboard_sent }} / {{ snapshot.clipboard_received??0 }}</p>
  <p v-if="snapshot.directory_entries!=null" class="muted">{{ t("directoryEntries") }}: {{ snapshot.directory_entries }}</p>

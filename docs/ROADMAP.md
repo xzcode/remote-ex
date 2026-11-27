@@ -196,3 +196,7 @@ As of 74af07c, full Web regression passed at a72bbcc ([45802920103](https://gith
 ### M7 UI/UX redesign — first workspace batch
 
 User approved TeamViewer-inspired workflow (original Remote EX visuals). New desktop home/quick invitation review, host preparation, separate server-scoped device/history workspaces, file transfer route, unified controls/outline icons and soft gray theme; eight-language labels. All native grants/transport behavior preserved. See [M7 design](M7_UI_REDESIGN.md). Mobile redesign follows in the same milestone; M6 physical/Android/WebKit media gates remain separate. New build and UI evidence pending.
+
+### M7 second desktop workspace batch
+
+8b8557b desktop visual, desktop checks, Linux candidate and Web lab passed. New native top actions and bottom actual statistics strip, approved-catalog dual-pane browser, file mode shortcuts and scoped search/sort with preserved immutable indexes. Eight-language desktop labels added. No protocol or authorization changes. See M7_UI_REDESIGN.md. New CI pending; mobile gestures/virtual keyboard/localization and physical acceptance remain open.

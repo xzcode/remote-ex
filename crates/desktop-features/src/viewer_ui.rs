@@ -38,34 +38,51 @@ impl Locale{
     }}
 }
 #[derive(Clone,Debug)]
-pub struct Toolbar{pub actions:[Option<Rect>;5],pub summary:Option<Rect>,pub height:u32}
+pub struct Toolbar{pub actions:[Option<Rect>;5],pub summary:Option<Rect>,pub height:u32,pub footer_height:u32}
 pub fn toolbar(width:u32,height:u32,scale:u32,switch:bool,extended:bool)->Toolbar{
     let scale=scale.clamp(1,3);
-    let mut result=Toolbar{actions:[None;5],summary:None,height:0};
+    let mut result=Toolbar{actions:[None;5],summary:None,height:0,footer_height:0};
     if width==0||height==0{return result;}
-    let ids:Vec<usize>=[0,1,2,3,4].into_iter().filter(|i|match i{3=>switch,4=>extended,_=>true}).collect();
-    let cols=(width/(136*scale)).clamp(1,ids.len()as u32);
-    let row_height=32*scale;
+    // Actions retain their wire-independent IDs. Input, display and quality
+    // precede fullscreen; the destructive disconnect button is always last.
+    let ids:Vec<usize>=[2,3,4,1,0].into_iter().filter(|i|match i{3=>switch,4=>extended,_=>true}).collect();
+    let edge=(8*scale).min(width/4);
+    let gap=(5*scale).min(width/8);
+    let inner=width.saturating_sub(2*edge);
+    if inner==0{return result;}
+    let cols=((inner+gap)/(136*scale+gap)).clamp(1,ids.len()as u32);
+    let row_height=34*scale;
     let rows=(ids.len()as u32).div_ceil(cols);
+    result.height=(rows*row_height+2*scale).min(height);
+    result.footer_height=(23*scale).min(height-result.height);
+    let available=inner.saturating_sub(gap*(cols-1));
     for (n,id) in ids.into_iter().enumerate(){
-        let n=n as u32;let col=n%cols;let row=n/cols;let y=row*row_height;
-        if y>=height{continue;}
-        let x=(u64::from(col)*u64::from(width)/u64::from(cols))as u32;
-        let right=(u64::from(col+1)*u64::from(width)/u64::from(cols))as u32;
-        if right>x{result.actions[id]=Some(Rect{x,y,width:right-x,height:row_height.min(height-y)});}
+        let n=n as u32;let row=n/cols;let col=n%cols;
+        let y=3*scale+row*row_height;
+        if y>=result.height{continue;}
+        let x=edge+(u64::from(col)*u64::from(available)/u64::from(cols))as u32+col*gap;
+        let right=edge+(u64::from(col+1)*u64::from(available)/u64::from(cols))as u32+col*gap;
+        if right>x{result.actions[id]=Some(Rect{x,y,width:right-x,height:(29*scale).min(result.height-y)});}
     }
-    let y=(rows*row_height).min(height);
-    if y<height{result.summary=Some(Rect{x:0,y,width,height:(20*scale).min(height-y)});}
-    result.height=(y+20*scale).min(height);
+    // Footer is independent of the top action strip and never accepts input.
+    if result.footer_height>0{
+        result.summary=Some(Rect{x:edge,y:height-result.footer_height,width:inner,height:result.footer_height});
+    }
     result
 }
 impl Toolbar{
+    pub fn picture_area(&self,width:u32,height:u32)->Rect{
+        Rect{x:0,y:self.height.min(height),width,height:height.saturating_sub(self.height).saturating_sub(self.footer_height)}
+    }
     pub fn hit(&self,x:f64,y:f64)->Option<u32>{
         if !x.is_finite()||!y.is_finite(){return None;}
         self.actions.iter().enumerate().find_map(|(i,r)|{
             let r=r.as_ref()?;
             (x>=f64::from(r.x)&&x<f64::from(r.x+r.width)&&y>=f64::from(r.y)&&y<f64::from(r.y+r.height)).then_some(i as u32)
         })
+    }
+    pub fn chrome(&self,y:f64,window_height:u32)->bool{
+        y.is_finite()&&y>=0.0&&(y<f64::from(self.height)||y>=f64::from(window_height.saturating_sub(self.footer_height)))
     }
 }
 #[cfg(test)]
@@ -78,6 +95,9 @@ mod tests{
             assert!(t.height<h);
             for(i,r)in t.actions.iter().enumerate(){let r=r.unwrap();assert_eq!(t.hit(f64::from(r.x)+1.,f64::from(r.y)+1.),Some(i as u32));}
             let r=t.summary.unwrap();assert_eq!(t.hit(1.,f64::from(r.y)+1.),None);
+            assert!(t.chrome(f64::from(r.y)+1.,h));
+            let picture=t.picture_area(w,h);assert!(picture.height>0&&picture.y+picture.height==r.y);
+            assert!(!t.chrome(f64::from(picture.y),h));
             assert_eq!(t.hit(1.,f64::from(t.height)),None);
         }
     }
@@ -85,6 +105,25 @@ mod tests{
         let t=toolbar(800,400,1,false,false);assert!(t.actions[3].is_none()&&t.actions[4].is_none());
         assert_eq!(t.hit(f64::NAN,1.),None);assert_eq!(t.hit(-1.,1.),None);
         let t=toolbar(0,0,1,true,true);assert_eq!(t.height,0);
+    }
+    #[test]fn nonoverlapping_actions_and_footer_at_realistic_window_sizes(){
+        for scale in 1..=3{for w in [450,640,1024,1920]{for h in [180,360,720]{
+            let(width,height)=(w*scale,h*scale);
+            let t=toolbar(width,height,scale,true,true);
+            let p=t.picture_area(width,height);
+            assert!(p.height>0);
+            for (i,r) in t.actions.iter().enumerate(){
+                let r=r.unwrap();assert!(r.x+r.width<=width&&r.y+r.height<=p.y);
+                assert_eq!(t.hit(f64::from(r.x)+0.5,f64::from(r.y)+0.5),Some(i as u32));
+                for (j,b) in t.actions.iter().enumerate(){if i!=j{let b=b.unwrap();assert!(r.x+r.width<=b.x||b.x+b.width<=r.x||r.y+r.height<=b.y||b.y+b.height<=r.y);}}
+            }
+            let f=t.summary.unwrap();assert_eq!(p.y+p.height,f.y);
+            assert!(t.chrome(f64::from(f.y),height));
+            assert!(crate::viewport::map_pointer((f64::from(width)/2.,f64::from(f.y)),crate::viewport::fit((960,540),p).unwrap(),(960,540),Rect{x:0,y:0,width:960,height:540}).is_none());
+        }}}
+        let t=toolbar(1024,720,1,true,true);
+        assert!(t.actions[0].unwrap().x>t.actions[1].unwrap().x);
+        assert_eq!(t.hit(0.,0.),None);
     }
     #[test]fn locales_are_closed_and_bitmap_safe(){
         assert_eq!(Locale::Zh.localized_labels()[0],"断开连接");assert_eq!(Locale::Ja.localized_labels()[2],"閲覧のみ");assert_eq!(Locale::Ko.localized_labels()[0],"연결 해제");
