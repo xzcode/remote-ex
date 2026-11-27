@@ -29,12 +29,19 @@
 <div class="view-screen"><video id="view-video" muted playsinline autoplay hidden aria-label="Approved remote screen"></video><p id="view-placeholder" class="muted">No active screen sharing</p></div>
 <div id="view-tools" class="view-tools" aria-label="Session tools"><div class="row viewer-card-heading"><h2>Remote screen</h2><button id="view-next" disabled>Next display</button></div>
 <div class="metrics"><div><span>Frames</span><strong id="view-frames">—</strong></div><div><span>Resolution</span><strong id="view-resolution">—</strong></div><div><span>Remaining</span><strong id="view-time">—</strong></div></div>
-<div class="session-tools"><label id="input-mode-wrap" hidden for="input-mode">Input method <select id="input-mode"><option value="mouse">Mouse / physical keyboard</option><option value="smart">Touch · smart pointer</option><option value="tap">Touch · left click</option><option value="drag">Touch · drag</option><option value="right">Touch · right click</option><option value="scroll">Touch · scroll</option></select></label>
+<div class="session-tools"><label id="input-mode-wrap" hidden for="input-mode">Input method <select id="input-mode"><option value="mouse">Mouse / physical keyboard</option><option value="smart">Touch · smart pointer</option><option value="tap">Touch · left click</option><option value="drag">Touch · drag</option><option value="right">Touch · right click</option><option value="scroll">Touch · scroll</option><option value="keyboard">Screen keyboard</option></select></label>
 <div class="buttons"><button id="input-enable" disabled hidden>Enable input</button><button id="input-disable" disabled hidden>Release input</button></div><p class="muted" id="input-status" hidden>Input disabled; focus the remote screen only after activation.</p>
 <label id="quality-wrap" hidden for="quality-mode">Stream quality <select id="quality-mode"><option value="0">Auto</option><option value="1">Full</option><option value="2">Balanced</option><option value="3">Low</option></select> <button id="quality-apply" disabled>Apply</button></label>
 <p id="quality-status" class="muted" hidden></p>
 <p class="muted" id="view-route">Transport: —</p>
-<p class="muted" id="view-layout">No approved displays</p><p id="smart-help" class="muted" hidden>Slide to move the pointer. Tap for left click, hold briefly and release for right click.</p></div></div>
+<p class="muted" id="view-layout">No approved displays</p><p id="smart-help" class="muted" hidden>Slide to move the pointer. Tap for left click, hold briefly and release for right click.</p>
+</div>
+<section id="virtual-keyboard" class="virtual-keyboard" aria-label="Screen keyboard" hidden>
+ <div class="keyboard-heading"><strong>Screen keyboard</strong><div class="keyboard-tabs"><button type="button" data-key-bank="letters" aria-pressed="true">Letters</button><button type="button" data-key-bank="special" aria-pressed="false">Special keys</button></div></div>
+ <p class="muted keyboard-help">Physical keys only. Choose modifiers for the next key; no text or IME. Enable input explicitly.</p>
+ <div id="keyboard-modifiers" class="keyboard-modifiers"></div>
+ <div id="keyboard-letters" class="keyboard-bank"></div><div id="keyboard-special" class="keyboard-bank" hidden></div>
+</section></div>
 </section>
 </div>
 <p class="muted viewer-footnote">Uses operator-approved ICE endpoints only; no default server, automatic reconnect or background viewing. Leaving or hiding this page disconnects. The host can revoke sharing independently.</p>

@@ -93,6 +93,24 @@ try{
     // Decoded media and host permission do not activate input implicitly.
     assert(await page.locator("#input-disable").isDisabled());
     await surface.click();await page.keyboard.press("a");
+    // Real virtual key clicks through the native inert Dispatcher, before
+    // the existing mouse/physical keyboard focus-loss check.
+    await page.locator("#input-mode").selectOption("keyboard");
+    assert(await page.locator("#virtual-keyboard").isVisible());
+    assert(await page.locator('[data-virtual-key="KeyA"]').isDisabled());
+    await page.locator("#input-enable").click();
+    await page.waitForFunction(()=>document.querySelector("#virtual-keyboard").contains(document.activeElement)&&!document.querySelector("#input-disable").disabled);
+    await page.locator('[data-virtual-mod="ControlLeft"]').click();
+    assert.equal(await page.locator('[data-virtual-mod="ControlLeft"]').getAttribute("aria-pressed"),"true");
+    await page.locator('[data-virtual-key="KeyA"]').dispatchEvent("click");
+    assert.equal(await page.locator('[data-virtual-mod="ControlLeft"]').getAttribute("aria-pressed"),"true");
+    await page.locator('[data-virtual-key="KeyA"]').click();
+    await read("BROWSER_INERT_CHORD_VERIFIED",10000);
+    assert.equal(await page.locator('[data-virtual-mod="ControlLeft"]').getAttribute("aria-pressed"),"false");
+    await page.locator("#view-disconnect").focus();
+    await page.waitForFunction(()=>document.querySelector("#input-disable").disabled);
+    await page.locator("#input-mode").selectOption("mouse");
+    assert(await page.locator("#virtual-keyboard").isHidden());
     await page.locator("#input-enable").click();
     await page.waitForFunction(()=>document.activeElement===document.querySelector("#view-video")&&!document.querySelector("#input-disable").disabled);
     await surface.scrollIntoViewIfNeeded();

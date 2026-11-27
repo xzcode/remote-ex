@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import {canonicalIce,directPolicy,normalizePolicy,iceMode,rtcIce,candidateRoute} from "./ice-policy.js";
-import {InputEncoder,physicalKey,pointer,wheel} from "./input.js";
+import {InputEncoder,physicalKey,pointer,wheel,virtualChord,VIRTUAL_KEY_ROWS,VIRTUAL_SPECIAL_ROWS} from "./input.js";
 const now=1000,stun="stun://relay.example.com:3478",turn="turn://relay.example.com:3478",p={stun,turn:[turn],relayOnly:false};
 const credentials={url:turn,username:"1300:fixture",password:"A".repeat(27)+"=",expires_at:1300};
 assert.equal(canonicalIce(stun,["stun"]),stun);assert.equal(iceMode(directPolicy()),0);assert.equal(iceMode(p),1);assert.equal(iceMode({...p,relayOnly:true}),2);
@@ -26,3 +26,9 @@ assert.equal(pointer(rect,geometry,119,0),null);assert.deepEqual(pointer(rect,ge
 assert.deepEqual(pointer({left:0,top:0,width:480,height:480},geometry,60,105),{x:0,y:0});
 assert.equal(wheel(10000,0),1200);assert.equal(wheel(-3,1),-120);assert.equal(wheel(NaN,1),0);
 console.log("PASS operator ICE policy and temporary credentials; selected pair classification; exact v1 input bytes, sequence, key mapping, letterboxing, wheel bounds");
+
+assert.deepEqual(virtualChord("KeyA",["ControlLeft","ShiftLeft"]),[{usage:224,down:true},{usage:225,down:true},{usage:4,down:true},{usage:4,down:false},{usage:225,down:false},{usage:224,down:false}]);
+assert.equal(virtualChord("KeyA",["ControlLeft","ControlLeft"]),null);
+assert.equal(virtualChord("MetaLeft",[]),null);assert.equal(virtualChord("Numpad1",[]),null);
+for(const row of [...VIRTUAL_KEY_ROWS,...VIRTUAL_SPECIAL_ROWS])for(const [code] of row){const events=virtualChord(code);assert(events?.length===2&&events[0].usage===events[1].usage&&events[0].down&&!events[1].down);}
+console.log("PASS fixed virtual key whitelist, one-shot modifiers and reverse release");

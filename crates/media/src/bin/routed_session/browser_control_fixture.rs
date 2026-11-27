@@ -10,7 +10,7 @@ const AREA:DisplayArea=DisplayArea{x:0,y:0,width:1024,height:768};
 struct Evidence{
     position:(i32,i32),moves:u32,center:bool,
     key_held:bool,button_held:bool,key_down:u32,key_up:u32,button_down:u32,button_up:u32,
-    scroll:u32,released:bool,release_packets:u32,
+    scroll:u32,released:bool,release_packets:u32,modifier_held:bool,modifier_down:u32,modifier_up:u32,chord_key:bool,chord_verified:bool,
 }
 struct FixtureBackend(Rc<RefCell<Evidence>>);
 impl Backend for FixtureBackend{
@@ -24,11 +24,16 @@ impl Backend for FixtureBackend{
     }
     fn position(&mut self)->InputResult<(i32,i32)>{Ok(self.0.borrow().position)}
     fn key(&mut self,usage:u16,down:bool)->InputResult<()>{
-        // The fixture accepts only the one planned test key. It does not
-        // record arbitrary typed text, usage values or any real OS state.
-        if usage!=4{return Err("Unexpected inert test key".into());}
+        // Only the planned Ctrl+A and later physical A. No arbitrary
+        // keystroke logging or OS state.
         let mut v=self.0.borrow_mut();
-        if down{v.key_down+=1;}else{v.key_up+=1;}v.key_held=down;Ok(())
+        if usage==224{
+            if down{if v.modifier_held||v.key_held||v.modifier_down!=0{return Err("Unexpected inert modifier press".into());}v.modifier_down+=1;}
+            else{if !v.modifier_held||v.key_held||!v.chord_key{return Err("Unexpected inert modifier release order".into());}v.modifier_up+=1;}
+            v.modifier_held=down;return Ok(());
+        }
+        if usage!=4{return Err("Unexpected inert test key".into());}
+        if down{v.key_down+=1;if v.modifier_held{v.chord_key=true;}}else{v.key_up+=1;}v.key_held=down;Ok(())
     }
     fn button(&mut self,button:u8,down:bool)->InputResult<()>{
         if button!=1{return Err("Unexpected inert test button".into());}
@@ -62,7 +67,7 @@ pub(super) async fn serve(peer:&Peer,channel:&ControlChannel,conn:&mut Connectio
                 if bytes==HEARTBEAT{last=Instant::now();continue;}
                 if bytes==STOP{
                     let v=evidence.borrow();
-                    if !v.released||v.key_held||v.button_held||v.key_down!=1||v.key_up!=1||v.button_down!=1||v.button_up!=1||v.moves==0||!v.center||v.scroll==0||frames<10{
+                    if !v.released||!v.chord_verified||v.modifier_held||v.modifier_down!=1||v.modifier_up!=1||v.key_held||v.button_held||v.key_down!=2||v.key_up!=2||v.button_down!=1||v.button_up!=1||v.moves==0||!v.center||v.scroll==0||frames<10{
                         return Err("Browser input or explicit release evidence incomplete".into());
                     }
                     return Ok(());
@@ -74,9 +79,15 @@ pub(super) async fn serve(peer:&Peer,channel:&ControlChannel,conn:&mut Connectio
                 if evidence.borrow().released&&!release{return Err("Input continued after browser lost focus".into());}
                 // Real Rust permission/sequence/geometry/rate gate.
                 dispatcher.dispatch(&bytes)?;
+                {
+                    let mut v=evidence.borrow_mut();
+                    if !v.chord_verified&&v.chord_key&&v.modifier_down==1&&v.modifier_up==1&&!v.modifier_held&&!v.key_held&&v.key_down==1&&v.key_up==1{
+                        v.chord_verified=true;out("BROWSER_INERT_CHORD_VERIFIED")?;
+                    }
+                }
                 if release{
                     let mut v=evidence.borrow_mut();v.release_packets+=1;
-                    if v.key_held||v.button_held{return Err("Explicit input release failed".into());}
+                    if v.key_held||v.button_held||v.modifier_held{return Err("Explicit input release failed".into());}
                     if both_held{v.released=true;out("BROWSER_INERT_RELEASE_VERIFIED")?;}
                 }
             }

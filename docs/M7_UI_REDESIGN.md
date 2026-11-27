@@ -43,3 +43,7 @@ The actual native routed PC viewer receives a second styling pass, not a web moc
 ## M7 smart single-finger pointer
 
 6caaa92 passed all five relevant CI runs, including real Linux renderer previews and Windows/macOS development packages. Added smart touch as coarse-pointer default: slide without pressing a button, short stationary tap left-click, stationary hold of at least 550ms right-click only on release. Explicit drag/right/scroll modes remain; multi-pointer refusal and ReleaseAll remain. Actual touch browser and pure regressions pending. No new permission, physical-device acceptance or release.
+
+## M7 foreground screen keyboard
+
+The existing authorized control profile gains a separately selected keyboard owner. Fixed HID mappings for letters, digits, punctuation, navigation and function keys; Ctrl/Shift/Alt/Meta are local one-shot modifiers until a trusted key click emits a bounded synchronous down/up sequence with reverse modifier release. Keyboard and pointer cannot be active together. Focus loss, outside pointer, cancellation, viewport resize, reduced quality, hidden page and session stop release input; no arbitrary text/IME/paste, no macros, new wire grant or automatic activation. Real browser integration extends the independent native inert dispatcher with a planned Ctrl+A chord before its physical-key/mouse focus-loss test. Pure tests cover the whitelist and release order. New CI pending; physical mobile input remains unverified.

@@ -3,6 +3,7 @@ import {hex} from "./crypto.js";
 import {endpoint,pin,ViewSession} from "./view-session.js";
 import {normalizePolicy,directPolicy} from "./ice-policy.js";
 import {QUALITY_MODES} from "./session-policy.js";
+import {VIRTUAL_MODIFIERS,VIRTUAL_KEY_ROWS,VIRTUAL_SPECIAL_ROWS} from "./input.js";
 import {probeCapabilities,capabilityBlockers,compatibilityGuidance} from "./capabilities.js";
 import {BOOK_KEY,connectionKey,readBook,writeBook,saveEntry,removeEntry,forEndpoint} from "./connection-book.js";
 import {applyAppearance,takeSelection,applyLanguage,uiText as t} from "./controller-ui.js";
@@ -13,7 +14,27 @@ let config=null,identity=null,active=null,displayCount=0,policy=directPolicy(),a
 const control=$("view-control"),enable=$("input-enable"),disable=$("input-disable"),inputMode=$("input-mode"),extended=$("view-extended"),qualityMode=$("quality-mode"),qualityApply=$("quality-apply");
 const saved=$("saved-connection"),connectionLabel=$("connection-label"),save=$("connection-save"),remove=$("connection-remove"),bookStatus=$("connection-book-status");
 let book=[],bookAvailable=false,toolsCollapsed=false;
-const toolsToggle=$("view-tools-toggle"),tools=$("view-tools");
+const toolsToggle=$("view-tools-toggle"),tools=$("view-tools"),keyboard=$("virtual-keyboard");
+const keyboardButtons=[];
+function keyButton(code,label,modifier=false){
+    const b=document.createElement("button");b.type="button";b.textContent=label;b.disabled=true;
+    if(modifier){b.dataset.virtualMod=code;b.setAttribute("aria-pressed","false");}
+    else b.dataset.virtualKey=code;
+    b.setAttribute("aria-label",label);keyboardButtons.push(b);return b;
+}
+for(const [i,code] of VIRTUAL_MODIFIERS.entries())$("keyboard-modifiers").append(keyButton(code,["Ctrl","Shift","Alt","Meta"][i],true));
+for(const [id,rows] of [["keyboard-letters",VIRTUAL_KEY_ROWS],["keyboard-special",VIRTUAL_SPECIAL_ROWS]]){
+    for(const row of rows){
+        const div=document.createElement("div");div.className="keyboard-row";
+        for(const [code,label] of row)div.append(keyButton(code,t(label)));
+        $(id).append(div);
+    }
+}
+for(const b of keyboard.querySelectorAll("[data-key-bank]"))b.addEventListener("click",()=>{
+    const special=b.dataset.keyBank==="special";
+    $("keyboard-letters").hidden=special;$("keyboard-special").hidden=!special;
+    for(const tab of keyboard.querySelectorAll("[data-key-bank]"))tab.setAttribute("aria-pressed",String(tab===b));
+});
 function updateTools(){
     const live=!!active&&active.phase==="viewing"&&!active.stopRequested;
     if(!live)toolsCollapsed=false;
@@ -39,6 +60,10 @@ function controls(){
     enable.disabled=!locked||!active.inputReady()||active.qualityPending!==null||inputActive;
     disable.disabled=!inputActive;
     $("smart-help").hidden=!show||inputMode.value!=="smart";
+    const keyboardSelected=show&&inputMode.value==="keyboard";
+    keyboard.hidden=!keyboardSelected||!locked||active.phase!=="viewing"||active.stopRequested;
+    for(const b of keyboardButtons)b.disabled=keyboard.hidden||!inputActive||!keyboardSelected;
+    document.body.classList.toggle("keyboard-selected",!keyboard.hidden);
     const long=allowExtended&&extended.checked;
     $("quality-wrap").hidden=$("quality-status").hidden=!long;
     qualityApply.disabled=!locked||!active.scope.extended||active.phase!=="viewing"||active.qualityPending!==null||active.stopRequested;
@@ -109,11 +134,11 @@ for(const item of [server,host])item.addEventListener("input",()=>{saved.value="
 consent.addEventListener("change",controls);control.addEventListener("change",()=>{consent.checked=false;controls();});extended.addEventListener("change",()=>{consent.checked=false;controls();});
 qualityApply.addEventListener("click",()=>{active?.setQuality(Number(qualityMode.value));controls();});
 inputMode.addEventListener("change",()=>{active?.releaseInput();controls();});
-enable.addEventListener("click",e=>{if(e.isTrusted)active?.enableInput(inputMode.value);});disable.addEventListener("click",()=>active?.releaseInput());
+enable.addEventListener("click",e=>{if(e.isTrusted)active?.enableInput(inputMode.value,keyboard);});disable.addEventListener("click",()=>active?.releaseInput());
 connect.addEventListener("click",async()=>{
     if(connect.disabled||active||!compatible||document.hidden)return;
     displayCount=0;for(const id of ["view-frames","view-resolution","view-time"])$(id).textContent="—";$("view-layout").textContent=t("No approved displays");$("quality-status").textContent=t("Awaiting host status");qualityMode.value="0";
-    const s=new ViewSession({url:config,serverId:server.value,hostKey:host.value,identityId:identity.id,video,policy,control:allowControl&&control.checked,extended:allowExtended&&extended.checked,onInput:value=>{inputActive=value;$("input-status").textContent=value?t("Input active — keep focus on the remote screen. Leaving it releases input."):t("Input disabled; click Enable input again to resume.");controls();},onState:(kind,label)=>{if(active===s){state(kind,label);controls();}},onMetrics:m=>{if(active===s)metrics(m);}});
+    const s=new ViewSession({url:config,serverId:server.value,hostKey:host.value,identityId:identity.id,video,policy,control:allowControl&&control.checked,extended:allowExtended&&extended.checked,onInput:value=>{inputActive=value;$("input-status").textContent=value?t(inputMode.value==="keyboard"?"Keyboard active — leaving the keyboard releases input.":"Input active — keep focus on the remote screen. Leaving it releases input."):t("Input disabled; click Enable input again to resume.");controls();},onState:(kind,label)=>{if(active===s){state(kind,label);controls();}},onMetrics:m=>{if(active===s)metrics(m);}});
     active=s;controls();
     try{await s.run();}catch(e){s.cancel();state("error",String(e.message??e));}
     finally{if(active===s){active=null;inputActive=false;consent.checked=false;displayCount=0;document.body.classList.remove("session-live");$("view-placeholder").hidden=false;controls();}}

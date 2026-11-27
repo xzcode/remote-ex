@@ -124,3 +124,84 @@ export class SurfaceInput{
     }
     dispose(){this.active=false;for(const remove of this.handlers.splice(0))remove();this.releaseTouchCapture();this.video.classList.remove("touch-active");this.keys.clear();this.buttons.clear();this.video.removeAttribute("tabindex");}
 }
+
+
+// Separate foreground keyboard owner. Only fixed physical HID keys.
+// Modifiers are one-shot local choices, not held on the remote computer.
+export const VIRTUAL_MODIFIERS=Object.freeze(["ControlLeft","ShiftLeft","AltLeft","MetaLeft"]);
+export const VIRTUAL_KEY_ROWS=Object.freeze([
+    Object.freeze([..."1234567890"].map(c=>["Digit"+c,c])),
+    Object.freeze([..."QWERTYUIOP"].map(c=>["Key"+c,c])),
+    Object.freeze([..."ASDFGHJKL"].map(c=>["Key"+c,c])),
+    Object.freeze([..."ZXCVBNM"].map(c=>["Key"+c,c]).concat([["Backspace","⌫"]])),
+    Object.freeze([["Tab","Tab"],["Space","Space"],["Enter","Enter"],["Escape","Esc"]])
+]);
+export const VIRTUAL_SPECIAL_ROWS=Object.freeze([
+    Object.freeze(Array.from({length:6},(_,i)=>["F"+(i+1),"F"+(i+1)])),
+    Object.freeze(Array.from({length:6},(_,i)=>["F"+(i+7),"F"+(i+7)])),
+    Object.freeze([["Home","Home"],["End","End"],["PageUp","PgUp"],["PageDown","PgDn"],["Insert","Ins"],["Delete","Del"]]),
+    Object.freeze([["ArrowLeft","←"],["ArrowUp","↑"],["ArrowDown","↓"],["ArrowRight","→"]]),
+    Object.freeze([["Minus","-"],["Equal","="],["BracketLeft","["],["BracketRight","]"],["Backslash","\\"],["Semicolon",";"],["Quote","'"],["Comma",","],["Period","."],["Slash","/"]]),
+    Object.freeze([["Backquote","Grave"],["CapsLock","Caps"],["Backspace","⌫"],["Enter","Enter"]])
+]);
+const virtualKeys=new Set([...VIRTUAL_KEY_ROWS,...VIRTUAL_SPECIAL_ROWS].flat().map(([code])=>code));
+export function virtualChord(code,modifiers=[]){
+    if(!virtualKeys.has(code)||!Array.isArray(modifiers)||modifiers.length>4||
+        modifiers.some(m=>!VIRTUAL_MODIFIERS.includes(m))||new Set(modifiers).size!==modifiers.length)return null;
+    const keys=VIRTUAL_MODIFIERS.filter(m=>modifiers.includes(m)).map(physicalKey);
+    const usage=physicalKey(code);
+    if(usage===null||keys.some(k=>k===null))return null;
+    return [...keys.map(usage=>({usage,down:true})),{usage,down:true},{usage,down:false},...keys.slice().reverse().map(usage=>({usage,down:false}))];
+}
+export class VirtualKeyboardInput{
+    constructor({root,encoder,send,onFailure,onDisabled,ready=()=>true}){
+        require(root&&typeof root.contains==="function","Missing local keyboard");
+        this.root=root;this.encoder=encoder;this.send=send;this.onFailure=onFailure;this.onDisabled=onDisabled;this.ready=ready;
+        this.handlers=[];this.active=false;this.pending=new Set();this.rateStart=0;this.rate=0;
+    }
+    listen(target,name,fn,options){target.addEventListener(name,fn,options);this.handlers.push(()=>target.removeEventListener(name,fn,options));}
+    reset(){this.pending.clear();for(const b of this.root.querySelectorAll("[data-virtual-mod]"))b.setAttribute("aria-pressed","false");}
+    focused(){return !document.hidden&&this.root.contains(document.activeElement)&&document.hasFocus();}
+    #emit(kind,value){
+        try{this.send(this.encoder.encode(kind,value));return true;}catch{this.onFailure();return false;}
+    }
+    #stroke(code){
+        if(!this.active||!this.focused()||!this.ready()){this.disable();return false;}
+        const events=virtualChord(code,[...this.pending]);this.reset();
+        if(!events)return false;
+        const now=performance.now();if(now-this.rateStart>=1000){this.rateStart=now;this.rate=0;}
+        if(this.rate+events.length>160){this.disable();return false;}
+        this.rate+=events.length;
+        // Bounded synchronous press/release pairs. Any transport failure
+        // cancels the session; the host releases input independently.
+        for(const value of events){if(!this.active||!this.#emit("key",value))return false;}
+        return true;
+    }
+    enable(){
+        if(this.active||this.root.hidden||!this.ready()||document.hidden)return;
+        this.active=true;this.reset();this.rateStart=performance.now();this.rate=0;
+        this.root.tabIndex=0;this.root.focus({preventScroll:true});
+        if(!this.focused()){this.disable();return;}
+        this.listen(this.root,"click",e=>{
+            if(!this.active||!e.isTrusted)return;
+            const button=e.target?.closest?.("button[data-virtual-key],button[data-virtual-mod]");
+            if(!button||button.disabled||!this.root.contains(button))return;
+            if(!this.focused()||!this.ready()){this.disable();return;}
+            const mod=button.dataset.virtualMod;
+            if(mod!==undefined){
+                if(!VIRTUAL_MODIFIERS.includes(mod))return;
+                if(this.pending.has(mod))this.pending.delete(mod);else this.pending.add(mod);
+                button.setAttribute("aria-pressed",String(this.pending.has(mod)));return;
+            }
+            this.#stroke(button.dataset.virtualKey);
+        });
+        this.listen(this.root,"focusout",e=>{if(!this.root.contains(e.relatedTarget))this.disable();});
+        this.listen(document,"focusin",e=>{if(!this.root.contains(e.target))this.disable();});
+        this.listen(window,"pointerdown",e=>{if(e.isTrusted&&(!this.root.contains(e.target)||e.isPrimary===false))this.disable();},true);
+        this.listen(window,"pointercancel",()=>this.disable(),true);
+        this.listen(window,"blur",()=>this.disable());
+        this.listen(document,"visibilitychange",()=>{if(document.hidden)this.disable();});
+    }
+    dispose(){this.active=false;for(const remove of this.handlers.splice(0))remove();this.reset();this.root.removeAttribute("tabindex");}
+    disable(){if(!this.active)return;this.dispose();this.#emit("release");this.onDisabled();}
+}

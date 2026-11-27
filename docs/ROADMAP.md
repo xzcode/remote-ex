@@ -204,3 +204,7 @@ User approved TeamViewer-inspired workflow (original Remote EX visuals). New des
 ### M7 PC control-window visual polish
 
 User requested less plain PC session UI. New native chrome uses actual shared geometry, compact rounded icon controls, system light/dark, grouped live-only metrics and generated preview artifacts in Linux X11 CI. 1881285 Windows/macOS development builds and native tests passed; 99bdbc5 Web integrated UI passed. Latest native refinements require build/render verification. Mobile virtual keyboard and advanced gestures remain next; no release or physical acceptance.
+
+### M7 mobile input usability
+
+6caaa92 PC chrome/core/native/Linux/Windows/macOS/Web CI passed; actual renderer preview artifact in run 45926987757. Added smart single-finger pointing/tap/long-press and foreground virtual HID keyboard with local one-shot modifiers. Preserved explicit authorization and separate input ownership. New integration pending; advanced multi-touch zoom/scroll, IME and physical mobile runtime remain separate. No release.

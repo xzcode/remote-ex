@@ -24,6 +24,14 @@ export function takeSelection(){
 }
 
 const ZH=Object.freeze({
+  "Screen keyboard": "屏幕键盘",
+  "Letters": "字母键",
+  "Special keys": "功能键",
+  "Physical keys only. Choose modifiers for the next key; no text or IME. Enable input explicitly.": "仅发送实体按键。修饰键仅作用于下一次按键，不支持文本和输入法。请主动启用输入。",
+  "Keyboard active — leaving the keyboard releases input.": "键盘已启用，离开键盘区域将释放输入。",
+  "Space": "空格",
+  "Enter": "回车",
+  "Grave": "反引号",
   "Touch · smart pointer": "触屏 · 智能指针",
   "Slide to move the pointer. Tap for left click, hold briefly and release for right click.": "滑动移动指针，轻点左键，长按后松开触发右键。",
   "Remote EX — Controller": "Remote EX — 远程连接",

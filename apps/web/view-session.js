@@ -3,7 +3,7 @@
 import {loadControllerWasm} from "./wasm-loader.js";
 import {readIdentity} from "./identity.js";
 import {directPolicy,normalizePolicy,iceMode,rtcIce,candidateRoute} from "./ice-policy.js";
-import {InputEncoder,SurfaceInput} from "./input.js";
+import {InputEncoder,SurfaceInput,VirtualKeyboardInput} from "./input.js";
 import {sessionPolicy,leaseConfirmed,qualityStatus,qualityRequest,supportedFrame,mayEnableInput,remainingSeconds} from "./session-policy.js";
 import {text,concat,hex,sha,random,unhex,equal,sdpFingerprint,dtlsFingerprint} from "./crypto.js";
 const MAX=96*1024,READY=text("remote-ex-routed-test/ready/v1"),READY_ACK=text("remote-ex-routed-test/ready-ack/v1");
@@ -81,10 +81,15 @@ export class ViewSession{
         this.quality=status;
         if(this.qualityPending!==null&&status.mode===this.qualityPending)this.qualityPending=null;
     }
-    enableInput(touchMode="mouse"){
-        if(!this.inputReady()||!this.geometry||!this.inputEncoder||this.qualityPending!==null)return false;
-        if(this.input?.active)return true;
-        this.input=new SurfaceInput({video:this.video,geometry:this.geometry,encoder:this.inputEncoder,touchMode,send:bytes=>this.channel(bytes,true),onFailure:()=>this.cancel("Input transport failed"),onDisabled:()=>this.onInput(false)});
+    enableInput(touchMode="mouse",keyboard=null){
+        if(!this.inputReady()||!this.geometry||!this.inputEncoder||this.qualityPending!==null||this.abort.signal.aborted)return false;
+        if(this.input?.active)return false;
+        this.input?.dispose();
+        const common={encoder:this.inputEncoder,send:bytes=>this.channel(bytes,true),onFailure:()=>this.cancel("Input transport failed"),onDisabled:()=>this.onInput(false)};
+        if(touchMode==="keyboard"){
+            if(!keyboard||keyboard.id!=="virtual-keyboard"||keyboard.hidden)return false;
+            this.input=new VirtualKeyboardInput({...common,root:keyboard,ready:()=>this.inputReady()&&!this.video.hidden&&!this.abort.signal.aborted&&this.qualityPending===null});
+        }else this.input=new SurfaceInput({...common,video:this.video,geometry:this.geometry,touchMode});
         this.input.enable();this.onInput(this.input.active);return this.input.active;
     }
     guard(){if(this.abort.signal.aborted)throw this.abort.signal.reason;need(!document.hidden,"Tab hidden");}
