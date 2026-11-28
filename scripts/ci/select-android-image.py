@@ -7,18 +7,15 @@ not WebView compatibility; supported mode still requires full runtime proof.
 import sys
 
 LEGACY = "system-images;android-36;google_apis;x86_64"
-MODERN = (
-    "system-images;android-37.2;google_apis;x86_64",
-    "system-images;android-37.2;google_apis_ps16k;x86_64",
-    "system-images;android-37.1;google_apis;x86_64",
-    "system-images;android-37.1;google_apis_ps16k;x86_64",
-    "system-images;android-37.0;google_apis;x86_64",
-    "system-images;android-37.0;google_apis_ps16k;x86_64",
-    "system-images;android-37;google_apis;x86_64",
-    "system-images;android-37;google_apis_ps16k;x86_64",
-    "system-images;android-36.1;google_apis;x86_64",
-    "system-images;android-36.1;google_apis_ps16k;x86_64",
+# Prefer ordinary page-size candidates across the reviewed versions.
+# The 37.2 16 KB image repeatedly failed inside Android system services.
+KNOWN_UNSTABLE = "system-images;android-37.2;google_apis_ps16k;x86_64"
+MODERN = tuple(
+    f"system-images;android-{version};{variant};x86_64"
+    for variant in ("google_apis", "google_apis_ps16k")
+    for version in ("37.2", "37.1", "37.0", "37", "36.1")
 )
+MODERN = tuple(p for p in MODERN if p != KNOWN_UNSTABLE) + (KNOWN_UNSTABLE,)
 
 def select(mode, listing):
     if mode not in ("legacy", "supported") or len(listing) > 2_000_000:
@@ -38,6 +35,9 @@ def self_test():
     assert select("supported", MODERN[-2]+" | 4 | image") == MODERN[-2]
     assert select("supported", MODERN[1]+" | 4 | image\n"+MODERN[0]+" | 4 | image") == MODERN[0]
     assert select("supported", MODERN[1]+" | 4 | image") == MODERN[1]
+    normal = "system-images;android-36.1;google_apis;x86_64"
+    assert select("supported", KNOWN_UNSTABLE+" | 7 | image\n"+normal+" | 4 | image") == normal
+    assert select("supported", KNOWN_UNSTABLE+" | 7 | image") == KNOWN_UNSTABLE
     for bad in (LEGACY+" | 7 | image", MODERN[0]+"-fake | 1 | image",
                 "system-images;android-37.2;google_apis;arm64-v8a | 1 | image",
                 "description | "+MODERN[0], ""):

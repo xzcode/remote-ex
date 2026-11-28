@@ -34,6 +34,9 @@ cleanup() {
         printf 'FAIL REMOTE EX ANDROID PHASE: %s (exit %s)\n' "$phase" "$rc"
         if [[ "$owned_serial" = 1 ]]; then
             adb_run 8s logcat -d -s RemoteEXOfflineSmoke:I '*:S' | tail -n 18 || true
+            if [[ "$phase" = framework-ready || "$phase" = prepare-device || "$phase" = install-client || "$phase" = install-test ]]; then
+                adb_run 8s logcat -d -b system -b crash -s AndroidRuntime:E SystemServer:E PackageManager:E PackageInstaller:E '*:S' | tail -n 35 || true
+            fi
         fi
         if [[ -n "$log" && -f "$log" ]]; then
             grep -Ei 'error|fatal|panic|failed|startup|accelerat|warning' "$log" | tail -n 30 || true
@@ -65,6 +68,11 @@ mark sdk-catalog
 catalog="$(bounded 90s sdkmanager --list --channel=0)"
 image="$(printf '%s\n' "$catalog" | python3 scripts/ci/select-android-image.py "$expectation")"
 printf 'REMOTE EX ANDROID IMAGE: %s\n' "$image"
+printf '%s\n' "$catalog" | python3 -c 'import importlib.util,sys
+spec=importlib.util.spec_from_file_location("selector","scripts/ci/select-android-image.py")
+m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+available={s.split("|",1)[0].strip() for s in sys.stdin if "|" in s}
+print("REMOTE EX ANDROID CANDIDATES:",", ".join(p for p in m.MODERN if p in available))'
 unset catalog
 mark sdk-install
 bounded 300s sdkmanager --channel=0 "emulator" "$image"
@@ -164,14 +172,50 @@ while ((SECONDS<end)); do
 done
 if [[ "$ready" != 1 ]]; then echo "Android system boot deadline exceeded"; exit 124; fi
 printf 'REMOTE EX ANDROID BOOT READY: %ss\n' "$((SECONDS-started))"
+mark framework-ready
+# boot_completed alone is insufficient when system_server is restarting.
+framework_end=$((SECONDS+100))
+stable_pid=
+stable_count=0
+while ((SECONDS<framework_end)); do
+    kill -0 "$emulator_pid" || exit 1
+    pid="$(adb_run 5s shell pidof system_server 2>/dev/null | tr -d '\r' || true)"
+    if [[ "$pid" =~ ^[0-9]+$ ]] &&
+        [[ "$(adb_run 5s shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)" = 1 ]] &&
+        adb_run 8s shell pm path android 2>/dev/null | grep -q '^package:' &&
+        adb_run 8s shell service check input 2>/dev/null | grep -q 'Service input: found' &&
+        adb_run 8s shell service check window 2>/dev/null | grep -q 'Service window: found' &&
+        adb_run 8s shell am get-current-user 2>/dev/null | grep -Eq '^0[[:space:]]*$'; then
+        if [[ "$stable_pid" = "$pid" ]]; then stable_count=$((stable_count+1)); else stable_count=1; stable_pid="$pid"; fi
+        printf 'REMOTE EX ANDROID FRAMEWORK: pid=%s stable=%s/3\n' "$pid" "$stable_count"
+        if ((stable_count>=3)); then break; fi
+    else
+        stable_count=0; stable_pid=
+        printf '%s\n' 'REMOTE EX ANDROID FRAMEWORK: waiting for stable system services'
+    fi
+    sleep 4
+done
+if ((stable_count<3)); then echo "Android framework readiness deadline exceeded"; exit 1; fi
 mark prepare-device
 adb_run 15s shell getprop ro.build.version.sdk
 adb_run 15s shell getprop ro.build.version.release
-adb_run 12s shell input keyevent KEYCODE_WAKEUP
-adb_run 12s shell wm dismiss-keyguard
-adb_run 12s shell settings put global window_animation_scale 0
-adb_run 12s shell settings put global transition_animation_scale 0
-adb_run 12s shell settings put global animator_duration_scale 0
+# Retry only idempotent preparation on this disposable emulator, not tests.
+prepare() {
+    local label="$1"; shift
+    local rc=1 output
+    for attempt in 1 2 3; do
+        if output="$(adb_run 12s shell "$@" 2>&1)"; then return 0; else rc=$?; fi
+        printf 'REMOTE EX ANDROID PREPARE %s attempt=%s rc=%s\n' "$label" "$attempt" "$rc"
+        printf '%s\n' "$output" | tail -n 4
+        sleep 4
+    done
+    return "$rc"
+}
+prepare wake input keyevent KEYCODE_WAKEUP
+prepare unlock wm dismiss-keyguard
+prepare window-animation settings put global window_animation_scale 0
+prepare transition-animation settings put global transition_animation_scale 0
+prepare animator settings put global animator_duration_scale 0
 adb_run 15s shell dumpsys webviewupdate | grep -E "Current WebView package|Preferred WebView package|Minimum WebView version" || true
 # Boot completed is not sufficient for PackageInstaller: require the
 # package service and actual writable internal storage to be ready.
@@ -199,10 +243,19 @@ if [[ "$storage_ok" != 1 ]]; then
     echo "Package service or internal storage is not ready"
     exit 1
 fi
+# Modern lane uses normal staged adb installation instead of streaming.
+# Both paths still invoke PackageManager and ordinary APK verification.
+install_candidate() {
+    if [[ "$expectation" = supported ]]; then
+        adb_run 90s install --no-streaming "$1"
+    else
+        adb_run 60s install "$1"
+    fi
+}
 mark install-client
-adb_run 60s install "$app"
+install_candidate "$app"
 mark install-test
-adb_run 60s install "$testapk"
+install_candidate "$testapk"
 adb_run 10s shell df -k /data
 mark instrumentation
 set +e
