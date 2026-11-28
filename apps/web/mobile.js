@@ -1,6 +1,6 @@
 import {probeCapabilities,compatibilityGuidance} from "./capabilities.js";
 import {readIdentity} from "./identity.js";
-import {BOOK_KEY,readBook,forEndpoint,connectionKey} from "./connection-book.js";
+import {BOOK_KEY,readBook,forEndpoint,connectionKey,HISTORY_KEY,readHistory} from "./connection-book.js";
 import {applyAppearance,setAppearance,selectForReview,applyLanguage,setLanguage,takeSettingsPage,uiText as t} from "./controller-ui.js";
 const $=id=>document.getElementById(id);
 const status=$("mobile-status"),checks=$("mobile-checks"),open=$("mobile-connect"),policy=$("mobile-policy"),blocker=$("mobile-blocker");
@@ -14,6 +14,8 @@ const panels=[...document.querySelectorAll("[data-home-panel]")];
 function showPanel(id){
     if(!panels.some(p=>p.id===id))return;
     for(const p of panels)p.hidden=p.id!==id;
+    $("history-confirm").hidden=true;
+    if(id==="home-history")renderHistory();
     for(const b of document.querySelectorAll(".mobile-nav [data-home-target]")){
         if(b.dataset.homeTarget===id)b.setAttribute("aria-current","page");
         else b.removeAttribute("aria-current");
@@ -40,10 +42,42 @@ function renderList(container,entries){
         button.append(mark,content,arrow);button.addEventListener("click",()=>review(entry));container.append(button);
     }
 }
+function renderHistory(){
+    const list=$("mobile-history"),notice=$("mobile-history-status"),clear=$("history-clear");
+    list.replaceChildren();notice.textContent="";
+    let history;
+    try{history=readHistory(localStorage.getItem(HISTORY_KEY));}
+    catch{notice.textContent=t("Local history is unavailable or invalid. You can clear it.");clear.disabled=false;return;}
+    clear.disabled=!history.length;
+    if(!history.length){const p=document.createElement("p");p.className="empty-state muted";p.textContent=t("No saved sessions.");list.append(p);return;}
+    const known=new Map(rows.map(v=>[connectionKey(v),v]));
+    for(const record of history){
+        const entry=known.get(connectionKey(record));
+        const row=document.createElement("div");row.className="history-row";
+        const details=document.createElement("div");details.className="saved-name";
+        const title=document.createElement("strong");title.textContent=entry?.label??t("Unsaved device")+" · "+record.hostKey.slice(0,8);
+        const date=document.createElement("small");date.textContent=new Date(record.endedAt).toLocaleString(document.documentElement.lang);
+        const info=document.createElement("small");info.textContent=[t(record.mode==="control"?"Control session":"View session"),record.duration+" s",t(record.route==="direct"?"Direct":record.route==="relay"?"TURN relay":"Unknown route")].join(" · ");
+        const outcome=document.createElement("span");outcome.className="history-outcome";outcome.textContent=t(record.outcome==="ended"?"Ended":"Interrupted");outcome.dataset.outcome=record.outcome;
+        details.append(title,date,info,outcome);row.append(details);
+        if(entry&&ready&&entry.endpoint===configuredEndpoint){
+            const button=document.createElement("button");button.type="button";button.className="history-review";button.textContent=t("Review connection");button.addEventListener("click",()=>review(entry));row.append(button);
+        }
+        list.append(row);
+    }
+}
+$("history-clear").addEventListener("click",e=>{if(e.isTrusted)$("history-confirm").hidden=false;});
+$("history-clear-cancel").addEventListener("click",()=>{$("history-confirm").hidden=true;});
+$("history-clear-confirm").addEventListener("click",e=>{
+    if(!e.isTrusted||$("history-confirm").hidden)return;
+    try{localStorage.removeItem(HISTORY_KEY);$("history-confirm").hidden=true;renderHistory();$("mobile-history-status").textContent=t("Local history cleared.");}
+    catch{$("mobile-history-status").textContent=t("Local history could not be cleared.");}
+});
 function render(){
     const q=search.value.trim().toLowerCase();
     renderList($("mobile-recent"),rows.slice(0,3));
     renderList($("mobile-devices"),rows.filter(e=>e.label.toLowerCase().includes(q)));
+    if(!$("home-history").hidden)renderHistory();
 }
 function loadBook(){
     try{rows=configuredEndpoint?forEndpoint(readBook(localStorage.getItem(BOOK_KEY)),configuredEndpoint):[];}
@@ -51,7 +85,7 @@ function loadBook(){
     render();
 }
 search.addEventListener("input",render);
-window.addEventListener("storage",e=>{if(e.key===BOOK_KEY)loadBook();});
+window.addEventListener("storage",e=>{if(e.key===BOOK_KEY||e.key===null)loadBook();if(e.key===HISTORY_KEY&&!$("home-history").hidden){$("history-confirm").hidden=true;renderHistory();}});
 async function identityStatus(){
     try{const i=await readIdentity();$("mobile-identity").textContent=i?t("Local identity verified: ")+i.id.slice(0,12)+"…":t("No local identity. Create one explicitly before connecting.");}
     catch{$("mobile-identity").textContent=t("Local identity unavailable. Review compatibility or manage identity.");}

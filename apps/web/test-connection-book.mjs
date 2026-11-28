@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import {connectionKey,readBook,writeBook,saveEntry,removeEntry,forEndpoint} from "./connection-book.js";
+import {connectionKey,readBook,writeBook,saveEntry,removeEntry,forEndpoint,readHistory,writeHistory,appendHistory} from "./connection-book.js";
 const a={endpoint:"wss://one.example.invalid/v1/ws",serverId:"01".repeat(32),hostKey:"02".repeat(32),label:"Desktop"};
 const b={...a,endpoint:"wss://two.example.invalid/v1/ws"};
 let entries=saveEntry(readBook(null),a);entries=saveEntry(entries,b);
@@ -14,3 +14,17 @@ assert.throws(()=>writeBook(Array.from({length:25},(_,i)=>({...a,hostKey:(i+1).t
 assert.deepEqual(removeEntry(entries,connectionKey(a)),[b]);
 assert.throws(()=>removeEntry(entries,"missing"));
 console.log("PASS endpoint-scoped local connection details, strict schema, limits, rename and removal; no saved grant");
+
+const record={endpoint:a.endpoint,serverId:a.serverId,hostKey:a.hostKey,endedAt:1000,duration:10,mode:"control",outcome:"ended",route:"direct"};
+assert.deepEqual(readHistory(null),[]);
+let history=appendHistory([],record);
+assert.deepEqual(readHistory(writeHistory(history)),[record]);
+for(let i=0;i<70;i++)history=appendHistory(history,{...record,endedAt:2000+i});
+assert.equal(history.length,64);assert.equal(history[0].endedAt,2069);
+assert.throws(()=>appendHistory(history,{...record,grant:3}));
+assert.throws(()=>appendHistory(history,{...record,duration:301}));
+assert.throws(()=>appendHistory(history,{...record,endpoint:"ws://one.example.invalid/v1/ws"}));
+assert.throws(()=>appendHistory(history,{...record,hostKey:"0".repeat(64)}));
+assert.throws(()=>writeHistory([...history,record]));
+assert.throws(()=>readHistory('{"schema":1,"entries":[{}]}'));
+console.log("PASS bounded local history, no grant, immutable pin scope, 64 newest records");

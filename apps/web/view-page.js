@@ -6,13 +6,14 @@ import {QUALITY_MODES} from "./session-policy.js";
 import {VIRTUAL_MODIFIERS,VIRTUAL_KEY_ROWS,VIRTUAL_SPECIAL_ROWS} from "./input.js";
 import {LocalInspection} from "./touch.js";
 import {probeCapabilities,capabilityBlockers,compatibilityGuidance} from "./capabilities.js";
-import {BOOK_KEY,connectionKey,readBook,writeBook,saveEntry,removeEntry,forEndpoint} from "./connection-book.js";
+import {BOOK_KEY,connectionKey,readBook,writeBook,saveEntry,removeEntry,forEndpoint,HISTORY_KEY,readHistory,writeHistory,appendHistory} from "./connection-book.js";
 import {applyAppearance,takeSelection,applyLanguage,uiText as t} from "./controller-ui.js";
 applyAppearance();applyLanguage();
 const $=id=>document.getElementById(id);
 const url=$("view-endpoint"),server=$("view-server"),host=$("view-host"),consent=$("view-consent"),connect=$("view-connect"),disconnect=$("view-disconnect"),next=$("view-next"),video=$("view-video"),status=$("view-status");
 let config=null,identity=null,active=null,displayCount=0,policy=directPolicy(),allowControl=false,allowExtended=false,inputActive=false,compatible=false;
 const control=$("view-control"),enable=$("input-enable"),disable=$("input-disable"),inputMode=$("input-mode"),extended=$("view-extended"),qualityMode=$("quality-mode"),qualityApply=$("quality-apply");
+const historyOpt=$("view-save-history"),historyStatus=$("history-save-status");
 const saved=$("saved-connection"),connectionLabel=$("connection-label"),save=$("connection-save"),remove=$("connection-remove"),bookStatus=$("connection-book-status");
 let book=[],bookAvailable=false,toolsCollapsed=false;
 const toolsToggle=$("view-tools-toggle"),tools=$("view-tools"),keyboard=$("virtual-keyboard");
@@ -69,6 +70,7 @@ function controls(){
     if(!live)inspection.disable();
     inspectToggle.hidden=!live;inspectToggle.setAttribute("aria-pressed",String(inspection.active));
     inspectToggle.textContent=t(inspection.active?"Exit zoom":"Zoom view");inspectTools.hidden=!inspection.active;
+    historyOpt.disabled=locked;
     server.disabled=host.disabled=locked;consent.disabled=locked||!config||!identity||!compatible;
     let good=false;try{pin(server.value);pin(host.value);good=true;}catch{}
     connect.disabled=locked||!good||!identity||!config||!compatible||!consent.checked;
@@ -158,14 +160,40 @@ consent.addEventListener("change",controls);control.addEventListener("change",()
 qualityApply.addEventListener("click",()=>{active?.setQuality(Number(qualityMode.value));controls();});
 inputMode.addEventListener("change",()=>{active?.releaseInput();controls();});
 enable.addEventListener("click",e=>{if(e.isTrusted)active?.enableInput(inputMode.value,keyboard);});disable.addEventListener("click",()=>active?.releaseInput());
-connect.addEventListener("click",async()=>{
-    if(connect.disabled||active||!compatible||document.hidden)return;
+connect.addEventListener("click",async event=>{
+    if(!event.isTrusted||connect.disabled||active||!compatible||document.hidden)return;
+    const keepHistory=historyOpt.checked;
+    historyStatus.textContent="";
+    let enteredAt=null,finishedAt=null,decoded=false,lastRoute="unknown",outcome="interrupted";
     inspection.disable();observedPicture="";
     displayCount=0;for(const id of ["view-frames","view-resolution","view-time"])$(id).textContent="—";$("view-layout").textContent=t("No approved displays");$("quality-status").textContent=t("Awaiting host status");qualityMode.value="0";
-    const s=new ViewSession({url:config,serverId:server.value,hostKey:host.value,identityId:identity.id,video,policy,control:allowControl&&control.checked,extended:allowExtended&&extended.checked,onInput:value=>{inputActive=value;$("input-status").textContent=value?t(inputMode.value==="keyboard"?"Keyboard active — leaving the keyboard releases input.":"Input active — keep focus on the remote screen. Leaving it releases input."):t("Input disabled; click Enable input again to resume.");controls();},onState:(kind,label)=>{if(active===s){state(kind,label);controls();}},onMetrics:m=>{if(active===s)metrics(m);}});
+    const s=new ViewSession({url:config,serverId:server.value,hostKey:host.value,identityId:identity.id,video,policy,control:allowControl&&control.checked,extended:allowExtended&&extended.checked,onInput:value=>{inputActive=value;$("input-status").textContent=value?t(inputMode.value==="keyboard"?"Keyboard active — leaving the keyboard releases input.":"Input active — keep focus on the remote screen. Leaving it releases input."):t("Input disabled; click Enable input again to resume.");controls();},onState:(kind,label)=>{
+        if(active!==s)return;
+        if(kind==="viewing"&&enteredAt===null)enteredAt=performance.now();
+        if(enteredAt!==null&&kind!=="viewing"&&finishedAt===null)finishedAt=performance.now();
+        if(kind==="stopped")outcome="ended";
+        state(kind,label);controls();
+    },onMetrics:m=>{
+        if(active!==s)return;
+        if(enteredAt!==null&&m.frames>0&&m.width>0&&m.height>0)decoded=true;
+        if(m.route==="direct")lastRoute="direct";
+        else if(m.route==="relay"||m.route==="relay-both")lastRoute="relay";
+        else lastRoute="unknown";
+        metrics(m);
+    }});
     active=s;controls();
     try{await s.run();}catch(e){s.cancel();state("error",String(e.message??e));}
-    finally{if(active===s){active=null;inputActive=false;consent.checked=false;displayCount=0;document.body.classList.remove("session-live");$("view-placeholder").hidden=false;controls();}}
+    finally{if(active===s){
+        if(keepHistory&&decoded&&enteredAt!==null){
+            try{
+                const duration=Math.max(0,Math.min(s.scope.seconds,Math.round(((finishedAt??performance.now())-enteredAt)/1000)));
+                const record={endpoint:s.url,serverId:s.serverId,hostKey:s.hostKey,endedAt:Date.now(),duration,mode:s.control?"control":"view",outcome,route:lastRoute};
+                localStorage.setItem(HISTORY_KEY,writeHistory(appendHistory(readHistory(localStorage.getItem(HISTORY_KEY)),record)));
+                historyStatus.textContent=t("Session saved locally.");
+            }catch{historyStatus.textContent=t("Session history could not be saved.");}
+        }
+        active=null;inputActive=false;consent.checked=false;historyOpt.checked=false;displayCount=0;document.body.classList.remove("session-live");$("view-placeholder").hidden=false;controls();
+    }}
 });
 disconnect.addEventListener("click",()=>{inspection.disable();active?.stop();controls();});
 next.addEventListener("click",()=>active?.next());

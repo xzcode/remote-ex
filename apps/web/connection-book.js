@@ -44,3 +44,31 @@ export function forEndpoint(entries,endpoint){
     const exact=checkedEndpoint(endpoint);
     return readBook(writeBook(entries)).filter(x=>x.endpoint===exact);
 }
+
+
+// Opt-in local history is not the trusted connection book.
+export const HISTORY_KEY="remote-ex.connection-history.v1";
+const HISTORY_LIMIT=64,HISTORY_BYTES=65536;
+function historyEntry(v){
+    if(!v||typeof v!=="object"||Array.isArray(v)||Object.keys(v).sort().join(",")!=="duration,endedAt,endpoint,hostKey,mode,outcome,route,serverId")throw Error("Invalid history fields");
+    if(!exactKey(v.serverId)||!exactKey(v.hostKey)||
+        !Number.isSafeInteger(v.endedAt)||v.endedAt<=0||v.endedAt>8640000000000000||
+        !Number.isInteger(v.duration)||v.duration<0||v.duration>300||
+        !["view","control"].includes(v.mode)||!["ended","interrupted"].includes(v.outcome)||
+        !["direct","relay","unknown"].includes(v.route))throw Error("Invalid history record");
+    return {endpoint:checkedEndpoint(v.endpoint),serverId:v.serverId,hostKey:v.hostKey,endedAt:v.endedAt,duration:v.duration,mode:v.mode,outcome:v.outcome,route:v.route};
+}
+export function readHistory(raw){
+    if(raw===null)return [];
+    if(typeof raw!=="string"||raw.length>HISTORY_BYTES)throw Error("History exceeds bounds");
+    const v=JSON.parse(raw);
+    if(!v||typeof v!=="object"||Array.isArray(v)||Object.keys(v).sort().join(",")!=="entries,schema"||v.schema!==1||!Array.isArray(v.entries)||v.entries.length>HISTORY_LIMIT)throw Error("Invalid history");
+    return v.entries.map(historyEntry).sort((a,b)=>b.endedAt-a.endedAt);
+}
+export function writeHistory(entries){
+    const value=JSON.stringify({schema:1,entries});readHistory(value);return value;
+}
+export function appendHistory(entries,value){
+    const current=readHistory(writeHistory(entries));
+    return [historyEntry(value),...current].sort((a,b)=>b.endedAt-a.endedAt).slice(0,HISTORY_LIMIT);
+}

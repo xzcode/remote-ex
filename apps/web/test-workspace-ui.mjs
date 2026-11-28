@@ -43,6 +43,18 @@ try{
     await page.waitForFunction(()=>!document.querySelector("#mobile-connect").hidden&&document.querySelector("#mobile-recent").textContent.includes("CI-only"),null,{timeout:45000});
     await page.locator('.mobile-nav [data-home-target="home-devices"]').click();
     await snap("mobile-devices-ci-fixture");
+    await page.locator('.mobile-nav [data-home-target="home-history"]').click();
+    assert(await page.locator("#mobile-history").getByText("No saved sessions.").isVisible());
+    await page.evaluate(async endpoint=>{const h=await import("/connection-book.js");localStorage.setItem(h.HISTORY_KEY,h.writeHistory([{endpoint,serverId:"01".repeat(32),hostKey:"02".repeat(32),endedAt:1700000000000,duration:12,mode:"view",outcome:"ended",route:"direct"}]));},endpoint);
+    await page.locator('.mobile-nav [data-home-target="home-devices"]').click();
+    await page.locator('.mobile-nav [data-home-target="home-history"]').click();
+    assert(await page.locator("#mobile-history").getByText("CI-only saved device").isVisible());
+    await snap("mobile-history-ci-fixture");
+    await page.locator("#history-clear").click();await page.locator("#history-clear-cancel").click();
+    assert(await page.locator("#mobile-history .history-row").count()===1);
+    await page.locator("#history-clear").click();await page.locator("#history-clear-confirm").click();
+    assert(await page.locator("#mobile-history").getByText("No saved sessions.").isVisible());
+    await page.locator('.mobile-nav [data-home-target="home-devices"]').click();
     await page.locator("#mobile-device-search").fill("no match");
     assert(await page.locator("#mobile-devices").getByText("No saved devices.").isVisible());
     await page.locator("#mobile-device-search").fill("CI-only");

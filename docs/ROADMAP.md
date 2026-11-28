@@ -212,3 +212,5 @@ User requested less plain PC session UI. New native chrome uses actual shared ge
 M7 follow-up: 857ab1b Web integrated keyboard/dispatcher and actual isolated X11 direct/TURN, native media, Linux and core passed. Explicit two-finger scrolling added with separate input owner; latest physical/mobile/WebKit gaps remain open. See M7_UI_REDESIGN.md.
 
 M7 local inspection: zoom/pan 100–300%, pinch and fit/reset, explicit exit before remote input reactivation. No protocol expansion; real browser tests pending, physical mobile and Linux WebKit remain blocked independently.
+
+M7 mobile History tab: explicit opt-in, bounded local records, decoded-session evidence, fresh review of matching saved devices and independent clear. 6e1cc36 Web integration passed; new CI pending. No release.

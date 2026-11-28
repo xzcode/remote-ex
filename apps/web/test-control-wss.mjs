@@ -74,6 +74,8 @@ try{
     assert(!(await page.locator("#view-control").isChecked()));assert(!(await page.locator("#view-consent").isChecked()));
     assert(await page.locator("#view-connect").isDisabled());assert.deepEqual(sockets,[]);
     await page.locator("#view-control").check();await page.locator("#view-consent").check();
+    assert(!(await page.locator("#view-save-history").isChecked()));
+    await page.locator("#view-save-history").check();
     host.stdin.write("REGISTER TEST\n");assert.equal(await read("ONLINE "),"ONLINE "+hostId);
     await read("PEER_KEY ");host.stdin.write(controllerKey+"\n");await read("CONSENT (type ALLOW BROWSER INERT TEST;");host.stdin.write("ALLOW BROWSER INERT TEST\n");
     await page.locator("#view-connect").click();
@@ -140,6 +142,10 @@ try{
     await page.waitForFunction(()=>["stopped","error"].includes(document.querySelector("#view-status").dataset.state),{},{timeout:12000});
     assert.equal(await page.locator("#view-status").getAttribute("data-state"),"stopped",await page.locator("#view-status").textContent());
     assert(await page.evaluate(()=>document.querySelector("#view-video").srcObject===null));
+    await page.waitForFunction(()=>document.querySelector("#history-save-status").textContent==="Session saved locally.");
+    const recorded=await page.evaluate(async()=>{const h=await import("/connection-book.js");return h.readHistory(localStorage.getItem(h.HISTORY_KEY));});
+    assert.equal(recorded.length,1);assert.equal(recorded[0].hostKey,hostKey);assert.equal(recorded[0].serverId,serverId);assert.equal(recorded[0].mode,"control");assert.equal(recorded[0].outcome,"ended");
+    assert(!(await page.locator("#view-save-history").isChecked()));
     await read("PASS BROWSER INERT CONTROL:");
     const [code]=await exited;assert.equal(code,0);
     assert.equal(await page.evaluate(()=>window.__forbiddenCalls),0);
