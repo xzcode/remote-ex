@@ -60,6 +60,7 @@ function controls(){
     enable.disabled=!locked||!active.inputReady()||active.qualityPending!==null||inputActive;
     disable.disabled=!inputActive;
     $("smart-help").hidden=!show||inputMode.value!=="smart";
+    $("two-scroll-help").hidden=!show||inputMode.value!=="two-scroll";
     const keyboardSelected=show&&inputMode.value==="keyboard";
     keyboard.hidden=!keyboardSelected||!locked||active.phase!=="viewing"||active.stopRequested;
     for(const b of keyboardButtons)b.disabled=keyboard.hidden||!inputActive||!keyboardSelected;

@@ -24,6 +24,8 @@ export function takeSelection(){
 }
 
 const ZH=Object.freeze({
+  "Touch · two-finger scroll": "触屏 · 双指滚动",
+  "Slide two fingers together to scroll. Lift both fingers before repeating. Pinching does not scroll.": "双指同向滑动滚动页面，双指均松开后可重复操作。捏合不会触发滚动。",
   "Screen keyboard": "屏幕键盘",
   "Letters": "字母键",
   "Special keys": "功能键",

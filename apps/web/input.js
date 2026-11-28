@@ -1,7 +1,7 @@
 // Pure bounded v1 protobuf encoding and physical keyboard/viewport mapping.
 // Only used by explicitly authorized profile-2 controller. No OS input APIs.
 import {concat} from "./crypto.js";
-import {TouchGesture,modes} from "./touch.js";
+import {TouchGesture,TwoFingerScroll,modes} from "./touch.js";
 const require=(v,m)=>{if(!v)throw Error(m);};
 function uint(n,max){require(Number.isSafeInteger(n)&&n>=0&&n<=max,"Input value outside protocol bounds");return n;}
 function varint(n){uint(n,Number.MAX_SAFE_INTEGER);const out=[];while(n>=128){out.push(n%128+128);n=Math.floor(n/128);}out.push(n);return Uint8Array.from(out);}
@@ -52,8 +52,9 @@ export class SurfaceInput{
         this.video=video;this.geometry=geometry;this.encoder=encoder;this.send=send;this.onFailure=onFailure;this.onDisabled=onDisabled;
         this.keys=new Set();this.buttons=new Set();this.active=false;this.lastMove=0;this.rateStart=0;this.rate=0;
         this.handlers=[];this.touchMode=touchMode;
-        require(touchMode==="mouse"||modes.includes(touchMode),"Invalid touch mode");
-        this.touch=touchMode==="mouse"?null:new TouchGesture(touchMode,(kind,value)=>this.emit(kind,value));
+        require(touchMode==="mouse"||touchMode==="two-scroll"||modes.includes(touchMode),"Invalid touch mode");
+        this.twoFinger=touchMode==="two-scroll"?new TwoFingerScroll((kind,value)=>this.emit(kind,value)):null;
+        this.touch=touchMode==="mouse"||this.twoFinger?null:new TouchGesture(touchMode,(kind,value)=>this.emit(kind,value));
     }
     listen(target,name,fn,options){target.addEventListener(name,fn,options);this.handlers.push(()=>target.removeEventListener(name,fn,options));}
     emit(kind,value){
@@ -75,10 +76,31 @@ export class SurfaceInput{
         // it. The selected mode owns pointer events for this activation.
         this.listen(window,"pointerdown",e=>{
             if(!this.active||!e.isTrusted)return;
-            const selected=this.touch?"touch":"mouse";
-            if(e.pointerType!==selected||this.touch&&(!e.isPrimary||this.touch.current&&e.pointerId!==this.touch.current.id))this.disable();
+            const selected=this.touch||this.twoFinger?"touch":"mouse";
+            if(e.pointerType!==selected||this.touch&&(!e.isPrimary||this.touch.current&&e.pointerId!==this.touch.current.id)){this.disable();return;}
+            if(this.twoFinger&&(e.target!==v||this.twoFinger.draining||this.twoFinger.points.size>=2||this.twoFinger.points.has(e.pointerId)||(!this.twoFinger.points.size&&!e.isPrimary)))this.disable();
         },true);
-        if(this.touch){
+        if(this.twoFinger){
+            v.classList.add("touch-active");
+            const gesture=this.twoFinger;
+            const safe=fn=>e=>{if(!this.active||!e.isTrusted||e.pointerType!=="touch")return;try{fn(e);}catch{this.disable();}};
+            this.listen(v,"pointerdown",safe(e=>{
+                if(!this.enabled(e)||!gesture.start(e.pointerId,this.point(e),e.clientX,e.clientY,performance.now())){this.disable();return;}
+                e.preventDefault();v.setPointerCapture(e.pointerId);
+            }),{passive:false});
+            this.listen(v,"pointermove",safe(e=>{
+                if(!gesture.points.has(e.pointerId))return;
+                if(!this.enabled(e)||!gesture.move(e.pointerId,this.point(e),e.clientX,e.clientY,performance.now())){this.disable();return;}
+                e.preventDefault();
+            }),{passive:false});
+            this.listen(v,"pointerup",safe(e=>{
+                if(!gesture.points.has(e.pointerId))return;
+                if(!this.enabled(e)||!gesture.end(e.pointerId)){this.disable();return;}
+                e.preventDefault();
+                if(v.hasPointerCapture(e.pointerId))v.releasePointerCapture(e.pointerId);
+            }),{passive:false});
+            this.listen(v,"lostpointercapture",safe(e=>{if(gesture.points.has(e.pointerId))this.disable();}));
+        }else if(this.touch){
             v.classList.add("touch-active");
             const safe=fn=>e=>{if(!this.active||!e.isTrusted||e.pointerType!=="touch")return;try{fn(e);}catch{this.disable();}};
             this.listen(v,"pointerdown",safe(e=>{
@@ -107,15 +129,15 @@ export class SurfaceInput{
         }
         this.listen(v,"pointercancel",()=>this.disable());
         this.listen(v,"contextmenu",e=>{if(this.enabled(e))e.preventDefault();});
-        this.listen(v,"keydown",e=>{if(!this.enabled(e)||e.isComposing||e.repeat)return;const usage=physicalKey(e.code);if(!usage||this.keys.has(usage))return;e.preventDefault();if(this.emit("key",{usage,down:true}))this.keys.add(usage);});
-        this.listen(v,"keyup",e=>{if(!this.enabled(e))return;const usage=physicalKey(e.code);if(!this.keys.has(usage))return;e.preventDefault();this.emit("key",{usage,down:false});this.keys.delete(usage);});
+        this.listen(v,"keydown",e=>{if(this.twoFinger||!this.enabled(e)||e.isComposing||e.repeat)return;const usage=physicalKey(e.code);if(!usage||this.keys.has(usage))return;e.preventDefault();if(this.emit("key",{usage,down:true}))this.keys.add(usage);});
+        this.listen(v,"keyup",e=>{if(this.twoFinger||!this.enabled(e))return;const usage=physicalKey(e.code);if(!this.keys.has(usage))return;e.preventDefault();this.emit("key",{usage,down:false});this.keys.delete(usage);});
         this.listen(document,"visibilitychange",()=>{if(document.hidden)this.disable();});
         this.listen(v,"blur",()=>this.disable());this.listen(window,"blur",()=>this.disable());
     }
     releaseTouchCapture(){
-        const id=this.touch?.current?.id;
-        this.touch?.cancel();
-        if(id!==undefined)try{if(this.video.hasPointerCapture(id))this.video.releasePointerCapture(id);}catch{}
+        const ids=this.twoFinger?[...this.twoFinger.points.keys()]:this.touch?.current?[this.touch.current.id]:[];
+        this.touch?.cancel();this.twoFinger?.cancel();
+        for(const id of ids)try{if(this.video.hasPointerCapture(id))this.video.releasePointerCapture(id);}catch{}
     }
     disable(){
         if(!this.active)return;

@@ -49,3 +49,40 @@ export class TouchGesture{
     }
     cancel(){this.current=null;this.held=false;}
 }
+
+
+// Two-finger scroll is a distinct input owner, never a second pointer in
+// click/drag mode. A lone finger or a spread/pinch cannot send wheel events.
+export class TwoFingerScroll{
+    constructor(send){this.send=send;this.points=new Map();this.base=null;this.draining=false;this.lastTime=0;}
+    start(id,p,x,y,now){
+        if(this.draining||this.points.has(id)||this.points.size>=2||!p||![x,y,now].every(Number.isFinite))return false;
+        this.points.set(id,{p,x,y});
+        if(this.points.size===2){this.base=[...this.points.values()];this.lastTime=now;}
+        return true;
+    }
+    move(id,p,x,y,now){
+        if(!this.points.has(id)||!p||![x,y,now].every(Number.isFinite))return false;
+        this.points.set(id,{p,x,y});
+        if(this.draining||this.points.size!==2||!this.base||now-this.lastTime<35)return true;
+        const [a,b]=this.points.values(),[a0,b0]=this.base;
+        // Take only concordant motion on each axis. Sequential platform
+        // pointermove events for one finger, or symmetric pinching, do not
+        // create a wheel event until both fingers move in the same direction.
+        const axis=(d1,d2)=>{
+            if(!d1||!d2||Math.sign(d1)!==Math.sign(d2))return 0;
+            return Math.sign(d1)*Math.min(1200,Math.floor(Math.min(Math.abs(d1),Math.abs(d2))/12)*120);
+        };
+        const dx=axis(a0.x-a.x,b0.x-b.x),dy=axis(a0.y-a.y,b0.y-b.y);
+        if(!dx&&!dy)return true;
+        const center={x:Math.round((a.p.x+b.p.x)/2),y:Math.round((a.p.y+b.p.y)/2)};
+        if(!this.send("move",center)||!this.send("scroll",{x:dx,y:dy}))return false;
+        this.base=this.base.map((old,i)=>({...old,x:old.x-dx/10,y:old.y-dy/10,p:i===0?a.p:b.p}));
+        this.lastTime=now;return true;
+    }
+    end(id){
+        if(!this.points.delete(id))return false;
+        this.base=null;this.draining=this.points.size>0;return true;
+    }
+    cancel(){this.points.clear();this.base=null;this.draining=false;this.lastTime=0;}
+}

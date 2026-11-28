@@ -67,6 +67,25 @@ try{
     await enable("drag");await touch("touchStart",[point(x,y)]);await touch("touchCancel",[]);
     await page.waitForFunction(()=>!window.__touchFixture.input.active);
     assert.deepEqual(kinds(await packets()),[82,90,114]);
+    await enable("two-scroll");
+    await touch("touchStart",[point(x-20,y,1),point(x+20,y,2)]);
+    await page.waitForTimeout(60);
+    await touch("touchMove",[point(x-20,y-35,1),point(x+20,y-35,2)]);
+    await touch("touchEnd",[]);
+    assert.deepEqual(kinds(await packets()),[82,106]);
+    assert(await page.evaluate(()=>window.__touchFixture.input.active));
+    await enable("two-scroll");
+    await touch("touchStart",[point(x-20,y,1),point(x+20,y,2)]);
+    await page.waitForTimeout(60);
+    await touch("touchMove",[point(x-35,y,1),point(x+35,y,2)]);
+    await touch("touchEnd",[]);
+    assert.deepEqual(await packets(),[]);
+    await enable("two-scroll");
+    await touch("touchStart",[point(x-20,y,1),point(x+20,y,2)]);
+    await touch("touchStart",[point(x-20,y,1),point(x+20,y,2),point(x,y+20,3)]);
+    await page.waitForFunction(()=>!window.__touchFixture.input.active);
+    assert.deepEqual(kinds(await packets()),[114]);
+    await touch("touchEnd",[]);
     // A different physical pointer type cannot own the same button namespace.
     await enable("tap");await page.mouse.click(x,y);
     await page.waitForFunction(()=>!window.__touchFixture.input.active);
