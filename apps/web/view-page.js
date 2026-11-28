@@ -4,6 +4,7 @@ import {endpoint,pin,ViewSession} from "./view-session.js";
 import {normalizePolicy,directPolicy} from "./ice-policy.js";
 import {QUALITY_MODES} from "./session-policy.js";
 import {VIRTUAL_MODIFIERS,VIRTUAL_KEY_ROWS,VIRTUAL_SPECIAL_ROWS} from "./input.js";
+import {LocalInspection} from "./touch.js";
 import {probeCapabilities,capabilityBlockers,compatibilityGuidance} from "./capabilities.js";
 import {BOOK_KEY,connectionKey,readBook,writeBook,saveEntry,removeEntry,forEndpoint} from "./connection-book.js";
 import {applyAppearance,takeSelection,applyLanguage,uiText as t} from "./controller-ui.js";
@@ -15,6 +16,21 @@ const control=$("view-control"),enable=$("input-enable"),disable=$("input-disabl
 const saved=$("saved-connection"),connectionLabel=$("connection-label"),save=$("connection-save"),remove=$("connection-remove"),bookStatus=$("connection-book-status");
 let book=[],bookAvailable=false,toolsCollapsed=false;
 const toolsToggle=$("view-tools-toggle"),tools=$("view-tools"),keyboard=$("virtual-keyboard");
+const inspectToggle=$("inspect-toggle"),inspectTools=$("inspection-tools");
+const inspection=new LocalInspection({frame:$("inspection-frame"),video,onChange:scale=>{
+    $("inspect-percent").value=Math.round(scale*100)+"%";
+    $("inspect-less").disabled=scale<=1;$("inspect-more").disabled=scale>=3;
+}});
+let observedPicture="";
+inspectToggle.addEventListener("click",e=>{
+    if(!e.isTrusted||!active||active.phase!=="viewing"||active.stopRequested||video.hidden)return;
+    active.releaseInput();
+    if(inspection.active)inspection.disable();else inspection.enable();
+    controls();
+});
+$("inspect-less").addEventListener("click",e=>{if(e.isTrusted)inspection.zoom(-.25);});
+$("inspect-more").addEventListener("click",e=>{if(e.isTrusted)inspection.zoom(.25);});
+$("inspect-fit").addEventListener("click",e=>{if(e.isTrusted)inspection.reset();});
 const keyboardButtons=[];
 function keyButton(code,label,modifier=false){
     const b=document.createElement("button");b.type="button";b.textContent=label;b.disabled=true;
@@ -49,6 +65,10 @@ if(matchMedia("(pointer: coarse)").matches)inputMode.value="smart";
 function state(kind,label){status.dataset.state=kind;status.textContent=t(label);$("view-placeholder").hidden=!video.hidden;document.body.classList.toggle("session-live",kind==="viewing");}
 function controls(){
     const locked=!!active;
+    const live=locked&&active.phase==="viewing"&&!active.stopRequested&&!video.hidden;
+    if(!live)inspection.disable();
+    inspectToggle.hidden=!live;inspectToggle.setAttribute("aria-pressed",String(inspection.active));
+    inspectToggle.textContent=t(inspection.active?"Exit zoom":"Zoom view");inspectTools.hidden=!inspection.active;
     server.disabled=host.disabled=locked;consent.disabled=locked||!config||!identity||!compatible;
     let good=false;try{pin(server.value);pin(host.value);good=true;}catch{}
     connect.disabled=locked||!good||!identity||!config||!compatible||!consent.checked;
@@ -56,13 +76,13 @@ function controls(){
     saved.disabled=locked||!bookAvailable||!config||saved.options.length<=1;connectionLabel.disabled=locked||!bookAvailable;
     save.disabled=locked||!bookAvailable||!good||!config||!connectionLabel.value.trim();remove.disabled=locked||!bookAvailable||!saved.value;
     disconnect.disabled=!locked;control.disabled=locked||!allowControl;extended.disabled=locked||!allowExtended;next.disabled=!locked||active.control||active.phase!=="viewing"||active.stopRequested||displayCount<=1;
-    const show=allowControl&&control.checked;enable.hidden=disable.hidden=$("input-status").hidden=$("input-mode-wrap").hidden=!show;inputMode.disabled=inputActive;
-    enable.disabled=!locked||!active.inputReady()||active.qualityPending!==null||inputActive;
+    const show=allowControl&&control.checked;enable.hidden=disable.hidden=$("input-status").hidden=$("input-mode-wrap").hidden=!show;inputMode.disabled=inputActive||inspection.active;
+    enable.disabled=!locked||inspection.active||!active.inputReady()||active.qualityPending!==null||inputActive;
     disable.disabled=!inputActive;
     $("smart-help").hidden=!show||inputMode.value!=="smart";
     $("two-scroll-help").hidden=!show||inputMode.value!=="two-scroll";
     const keyboardSelected=show&&inputMode.value==="keyboard";
-    keyboard.hidden=!keyboardSelected||!locked||active.phase!=="viewing"||active.stopRequested;
+    keyboard.hidden=inspection.active||!keyboardSelected||!locked||active.phase!=="viewing"||active.stopRequested;
     for(const b of keyboardButtons)b.disabled=keyboard.hidden||!inputActive||!keyboardSelected;
     document.body.classList.toggle("keyboard-selected",!keyboard.hidden);
     const long=allowExtended&&extended.checked;
@@ -124,6 +144,8 @@ async function load(){
     }catch(e){config=null;identity=null;compatible=false;$("view-id").value="";$("view-public").value="";$("view-compat").textContent=t("Configuration or local identity unavailable. Recheck or manage identity.");state("error",String(e.message??e));}finally{loading=false;controls();}
 }
 function metrics(m){
+    const picture=[m.width,m.height,m.layout].join(":");
+    if(observedPicture!==picture){observedPicture=picture;inspection.reset();}
     displayCount=m.count;$("view-route").textContent=t("Transport: ")+(m.route==="relay-both"||m.route==="relay"?t("TURN relay"):m.route==="direct"?t("Direct"):t("Verifying"));$("view-frames").textContent=String(m.frames);
     $("view-resolution").textContent=m.width&&m.height?m.width+" × "+m.height:"—";
     $("view-time").textContent=m.seconds+" s";
@@ -138,13 +160,14 @@ inputMode.addEventListener("change",()=>{active?.releaseInput();controls();});
 enable.addEventListener("click",e=>{if(e.isTrusted)active?.enableInput(inputMode.value,keyboard);});disable.addEventListener("click",()=>active?.releaseInput());
 connect.addEventListener("click",async()=>{
     if(connect.disabled||active||!compatible||document.hidden)return;
+    inspection.disable();observedPicture="";
     displayCount=0;for(const id of ["view-frames","view-resolution","view-time"])$(id).textContent="—";$("view-layout").textContent=t("No approved displays");$("quality-status").textContent=t("Awaiting host status");qualityMode.value="0";
     const s=new ViewSession({url:config,serverId:server.value,hostKey:host.value,identityId:identity.id,video,policy,control:allowControl&&control.checked,extended:allowExtended&&extended.checked,onInput:value=>{inputActive=value;$("input-status").textContent=value?t(inputMode.value==="keyboard"?"Keyboard active — leaving the keyboard releases input.":"Input active — keep focus on the remote screen. Leaving it releases input."):t("Input disabled; click Enable input again to resume.");controls();},onState:(kind,label)=>{if(active===s){state(kind,label);controls();}},onMetrics:m=>{if(active===s)metrics(m);}});
     active=s;controls();
     try{await s.run();}catch(e){s.cancel();state("error",String(e.message??e));}
     finally{if(active===s){active=null;inputActive=false;consent.checked=false;displayCount=0;document.body.classList.remove("session-live");$("view-placeholder").hidden=false;controls();}}
 });
-disconnect.addEventListener("click",()=>{active?.stop();controls();});
+disconnect.addEventListener("click",()=>{inspection.disable();active?.stop();controls();});
 next.addEventListener("click",()=>active?.next());
 $("view-recheck").addEventListener("click",()=>{if(!active)load();});
 window.addEventListener("pageshow",()=>{if(!active)load();});

@@ -86,3 +86,102 @@ export class TwoFingerScroll{
     }
     cancel(){this.points.clear();this.base=null;this.draining=false;this.lastTime=0;}
 }
+
+
+// Local-only magnification. Geometry is calculated against the stable
+// containing viewport, not the transformed video. No remote input sender.
+export function fitInspection(box,media,scale=1,x=0,y=0){
+    if(![box.width,box.height,media.width,media.height,scale,x,y].every(Number.isFinite)||
+        Math.min(box.width,box.height,media.width,media.height)<=0)return {scale:1,x:0,y:0};
+    scale=Math.max(1,Math.min(3,scale));
+    const fit=Math.min(box.width/media.width,box.height/media.height);
+    const maxX=Math.max(0,(media.width*fit*scale-box.width)/2),maxY=Math.max(0,(media.height*fit*scale-box.height)/2);
+    return {scale,x:Math.max(-maxX,Math.min(maxX,x)),y:Math.max(-maxY,Math.min(maxY,y))};
+}
+export class LocalInspection{
+    constructor({frame,video,onChange}){
+        this.frame=frame;this.video=video;this.onChange=onChange;
+        this.active=false;this.points=new Map();this.handlers=[];this.base=null;this.value={scale:1,x:0,y:0};
+    }
+    listen(target,name,fn,options){target.addEventListener(name,fn,options);this.handlers.push(()=>target.removeEventListener(name,fn,options));}
+    set(scale,x,y){
+        if(!this.active)return;
+        this.value=fitInspection(this.frame.getBoundingClientRect(),{width:this.video.videoWidth,height:this.video.videoHeight},scale,x,y);
+        const v=this.value;
+        this.video.style.transform="translate("+v.x+"px,"+v.y+"px) scale("+v.scale+")";
+        this.onChange(v.scale);
+    }
+    clearGesture(){
+        const ids=[...this.points.keys()];this.points.clear();this.base=null;
+        for(const id of ids)try{if(this.frame.hasPointerCapture(id))this.frame.releasePointerCapture(id);}catch{}
+    }
+    reset(){this.clearGesture();this.set(1,0,0);}
+    zoom(delta){
+        if(!this.active||!Number.isFinite(delta))return;
+        this.clearGesture();const v=this.value,next=Math.max(1,Math.min(3,v.scale+delta));
+        this.set(next,v.x*next/v.scale,v.y*next/v.scale);
+    }
+    sample(){
+        const p=[...this.points.values()];
+        if(!p.length)return null;
+        if(p.length===1)return {x:p[0].x,y:p[0].y,d:0};
+        return {x:(p[0].x+p[1].x)/2,y:(p[0].y+p[1].y)/2,d:Math.hypot(p[0].x-p[1].x,p[0].y-p[1].y)};
+    }
+    rebase(){
+        const p=this.sample();this.base=p?{...p,value:{...this.value}}:null;
+    }
+    enable(){
+        if(this.active)return true;
+        if(document.hidden||this.video.hidden||!this.frame.contains(this.video)||!this.video.videoWidth||!this.video.videoHeight)return false;
+        this.active=true;this.frame.classList.add("inspect-frame");this.video.classList.add("inspect-active");this.reset();
+        this.listen(this.frame,"pointerdown",e=>{
+            if(!this.active||!e.isTrusted||!["touch","mouse"].includes(e.pointerType)||e.button!==0)return;
+            if(this.points.has(e.pointerId)||this.points.size>=2||
+                this.points.size&&[...this.points.values()].some(p=>p.type!==e.pointerType||p.type==="mouse")){
+                this.clearGesture();return;
+            }
+            if(!this.points.size&&!e.isPrimary)return;
+            this.points.set(e.pointerId,{x:e.clientX,y:e.clientY,type:e.pointerType});
+            try{this.frame.setPointerCapture(e.pointerId);}catch{this.clearGesture();return;}
+            e.preventDefault();this.rebase();
+        },{passive:false});
+        this.listen(this.frame,"pointermove",e=>{
+            if(!this.active||!e.isTrusted||!this.points.has(e.pointerId)||!this.base)return;
+            const old=this.points.get(e.pointerId);
+            this.points.set(e.pointerId,{...old,x:e.clientX,y:e.clientY});
+            const now=this.sample(),b=this.base,r=this.frame.getBoundingClientRect(),c=b.value;
+            if(!now)return;
+            const scale=b.d>=8?Math.max(1,Math.min(3,c.scale*now.d/b.d)):c.scale;
+            const ratio=scale/c.scale,cx=r.left+r.width/2,cy=r.top+r.height/2;
+            // Anchor the displayed point beneath the starting midpoint.
+            this.set(scale,now.x-cx-(b.x-cx-c.x)*ratio,now.y-cy-(b.y-cy-c.y)*ratio);
+            e.preventDefault();
+        },{passive:false});
+        this.listen(this.frame,"pointerup",e=>{
+            if(!e.isTrusted||!this.points.delete(e.pointerId))return;
+            try{if(this.frame.hasPointerCapture(e.pointerId))this.frame.releasePointerCapture(e.pointerId);}catch{}
+            this.rebase();
+        });
+        this.listen(this.frame,"lostpointercapture",e=>{if(this.points.has(e.pointerId))this.clearGesture();});
+        this.listen(window,"pointercancel",()=>this.clearGesture(),true);
+        this.listen(window,"blur",()=>this.clearGesture());
+        this.listen(document,"visibilitychange",()=>{if(document.hidden)this.disable();});
+        this.listen(this.frame,"contextmenu",e=>{if(e.isTrusted)e.preventDefault();});
+        // Toolbar changes alter the stable viewport; discard the gesture and
+        // clamp zoom to its new bounds without forwarding any input.
+        if(typeof ResizeObserver==="function"){
+            this.observer=new ResizeObserver(()=>{if(this.active){this.clearGesture();const v=this.value;this.set(v.scale,v.x,v.y);}});
+            this.observer.observe(this.frame);
+        }
+        return true;
+    }
+    disable(){
+        if(!this.active)return;
+        this.active=false;this.observer?.disconnect();this.observer=null;
+        for(const remove of this.handlers.splice(0))remove();
+        this.clearGesture();
+        this.video.style.removeProperty("transform");
+        this.video.classList.remove("inspect-active");this.frame.classList.remove("inspect-frame");
+        this.value={scale:1,x:0,y:0};this.onChange(1);
+    }
+}

@@ -210,3 +210,5 @@ User requested less plain PC session UI. New native chrome uses actual shared ge
 6caaa92 PC chrome/core/native/Linux/Windows/macOS/Web CI passed; actual renderer preview artifact in run 45926987757. Added smart single-finger pointing/tap/long-press and foreground virtual HID keyboard with local one-shot modifiers. Preserved explicit authorization and separate input ownership. New integration pending; advanced multi-touch zoom/scroll, IME and physical mobile runtime remain separate. No release.
 
 M7 follow-up: 857ab1b Web integrated keyboard/dispatcher and actual isolated X11 direct/TURN, native media, Linux and core passed. Explicit two-finger scrolling added with separate input owner; latest physical/mobile/WebKit gaps remain open. See M7_UI_REDESIGN.md.
+
+M7 local inspection: zoom/pan 100–300%, pinch and fit/reset, explicit exit before remote input reactivation. No protocol expansion; real browser tests pending, physical mobile and Linux WebKit remain blocked independently.

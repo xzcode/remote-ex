@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import {TouchGesture,TwoFingerScroll} from "./touch.js";
+import {TouchGesture,TwoFingerScroll,fitInspection} from "./touch.js";
 const p={x:100,y:200},q={x:500,y:600};
 function fixture(mode){const events=[];return {events,t:new TouchGesture(mode,(kind,value)=>{events.push([kind,value]);return true;})};}
 let {events,t}=fixture("tap");
@@ -28,3 +28,9 @@ two.cancel();wheelEvents.length=0;
 assert(two.start(1,p,100,100,0));assert(two.start(2,q,160,100,1));assert(two.move(1,p,70,100,40));assert(two.move(2,q,190,100,41));assert.deepEqual(wheelEvents,[]);
 two.cancel();assert.equal(two.points.size,0);
 console.log("PASS explicit two-finger scroll: paired translation, pinch refusal, no lone-finger or trailing scroll");
+
+assert.deepEqual(fitInspection({width:400,height:400},{width:960,height:540},1,99,99),{scale:1,x:0,y:0});
+assert.deepEqual(fitInspection({width:400,height:400},{width:960,height:540},2,999,-999),{scale:2,x:200,y:-25});
+assert.equal(fitInspection({width:400,height:400},{width:960,height:540},9,0,0).scale,3);
+assert.deepEqual(fitInspection({width:0,height:400},{width:960,height:540},2,1,1),{scale:1,x:0,y:0});
+console.log("PASS local-only fitted zoom/pan geometry, letterbox bounds and clamp");

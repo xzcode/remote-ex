@@ -70,7 +70,7 @@ export class ViewSession{
     stop(){this.releaseInput();this.blank();if(this.phase==="viewing"){this.stopRequested=true;}else this.cancel();}
     next(){if(!this.control&&this.phase==="viewing"&&!this.stopRequested&&this.count>1&&performance.now()-this.lastSwitch>=500)this.nextRequested=true;}
     releaseInput(){this.input?.disable();}
-    inputReady(){return mayEnableInput(this.control,this.phase,this.stopRequested,this.frames,this.video.videoWidth,this.video.videoHeight,this.quality);}
+    inputReady(){return !this.video.classList.contains("inspect-active")&&mayEnableInput(this.control,this.phase,this.stopRequested,this.frames,this.video.videoWidth,this.video.videoHeight,this.quality);}
     setQuality(mode){
         if(!this.scope.extended||this.phase!=="viewing"||this.stopRequested||this.qualityPending!==null||performance.now()-this.qualityAt<1000)return false;
         try{this.releaseInput();this.channel(qualityRequest(mode));this.qualityPending=mode;this.qualityAt=performance.now();return true;}catch{this.cancel("Runtime quality request failed");return false;}

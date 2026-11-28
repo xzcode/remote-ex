@@ -93,6 +93,19 @@ try{
     await enable("mouse");await page.touchscreen.tap(x,y);
     await page.waitForFunction(()=>!window.__touchFixture.input.active);
     assert.deepEqual(kinds(await packets()),[114]);
+    await page.evaluate(async()=>{
+        const f=window.__touchFixture;f.input.dispose();f.packets=[];
+        const {LocalInspection}=await import("/touch.js");
+        f.inspect=new LocalInspection({frame:document.querySelector("#inspection-frame"),video:document.querySelector("#view-video"),onChange:()=>{}});
+        if(!f.inspect.enable())throw Error("Local zoom unavailable");
+    });
+    await page.waitForTimeout(100);
+    await touch("touchStart",[point(x-20,y,1),point(x+20,y,2)]);
+    await touch("touchMove",[point(x-50,y,1),point(x+50,y,2)]);
+    await touch("touchEnd",[]);
+    assert(await page.evaluate(()=>window.__touchFixture.inspect.value.scale>=2));
+    assert.deepEqual(await packets(),[]);
+    await page.evaluate(()=>{const f=window.__touchFixture;f.inspect.disable();if(document.querySelector("#view-video").style.transform)throw Error("Zoom transform retained");});
     await page.evaluate(()=>{
         const f=window.__touchFixture;f.input.dispose();f.stream.getTracks().forEach(t=>t.stop());
         const v=document.querySelector("#view-video");v.srcObject=null;v.hidden=true;document.querySelector("#view-placeholder").hidden=false;delete window.__touchFixture;

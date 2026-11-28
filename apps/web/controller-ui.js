@@ -24,6 +24,12 @@ export function takeSelection(){
 }
 
 const ZH=Object.freeze({
+  "Zoom view": "缩放画面",
+  "Exit zoom": "退出缩放",
+  "Local zoom only. Pinch or drag to inspect; remote input is paused.": "仅放大本地画面。双指捏合或拖动画面查看细节，远程输入已暂停。",
+  "Zoom out": "缩小",
+  "Zoom in": "放大",
+  "Fit screen": "适合屏幕",
   "Touch · two-finger scroll": "触屏 · 双指滚动",
   "Slide two fingers together to scroll. Lift both fingers before repeating. Pinching does not scroll.": "双指同向滑动滚动页面，双指均松开后可重复操作。捏合不会触发滚动。",
   "Screen keyboard": "屏幕键盘",

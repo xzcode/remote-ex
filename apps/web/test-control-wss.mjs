@@ -90,6 +90,15 @@ try{
     assert.equal(await page.locator("#view-tools-toggle").getAttribute("aria-expanded"),"false");
     await page.locator("#view-tools-toggle").click();
     assert(await page.locator("#view-tools").isVisible());
+    // Zoom only changes local presentation; the signed input coordinate
+    // space is available again only after returning to the fitted view.
+    await page.locator("#inspect-toggle").click();
+    assert(await page.locator("#input-enable").isDisabled());
+    await page.locator("#inspect-more").click();
+    assert.equal(await page.locator("#inspect-percent").textContent(),"125%");
+    assert(await surface.evaluate(v=>v.classList.contains("inspect-active")&&getComputedStyle(v).transform!=="none"));
+    await page.locator("#inspect-toggle").click();
+    assert(await surface.evaluate(v=>!v.classList.contains("inspect-active")&&!v.style.transform));
     // Decoded media and host permission do not activate input implicitly.
     assert(await page.locator("#input-disable").isDisabled());
     await surface.click();await page.keyboard.press("a");
