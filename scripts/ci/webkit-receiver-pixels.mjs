@@ -2,6 +2,7 @@
 // Screenshots remain in memory. No physical device, desktop or user data.
 import assert from "node:assert/strict";
 import {execFileSync} from "node:child_process";
+import {fileURLToPath} from "node:url";
 const decode=String.raw`import io,json,sys
 from PIL import Image
 raw=sys.stdin.buffer.read(4*1024*1024+1)
@@ -16,6 +17,15 @@ export function matches(samples,color){
     assert(Array.isArray(samples)&&samples.length===9&&samples.every(p=>Array.isArray(p)&&p.length===3&&p.every(n=>Number.isInteger(n)&&n>=0&&n<=255)),"Invalid screenshot sample");
     const wanted=([r,g,b])=>color==="green"?g>120&&g>r+50&&g>b+25:b>140&&b>r+50&&b>g+40;
     return samples.filter(wanted).length>=8;
+}
+// Independently prove source color before checking any remote rendering.
+export function verifySource(color){
+    assert.equal(process.env.RUNNER_ENVIRONMENT,"github-hosted");
+    assert.match(process.env.DISPLAY??"",/^:\d+$/);
+    const samples=JSON.parse(execFileSync("/usr/bin/python3",[fileURLToPath(new URL("./x11-root-samples.py",import.meta.url))],{encoding:"utf8",timeout:3000,maxBuffer:4096}));
+    const match=matches(samples,color);
+    console.log("WEBKIT_SOURCE_PIXELS "+JSON.stringify({color,match,samples}));
+    assert(match,"Isolated X11 source color absent: "+color);
 }
 export function samplesFromPng(png){
     assert(Buffer.isBuffer(png)&&png.length>0&&png.length<=4*1024*1024,"Unexpected fixture screenshot size");
@@ -51,12 +61,14 @@ export async function verifyWebKitPixels(page){
     assert.equal(process.env.RUNNER_ENVIRONMENT,"github-hosted");
     assert.match(process.env.DISPLAY??"",/^:\d+$/);
     await page.locator("#view-video").scrollIntoViewIfNeeded({timeout:3000});
+    verifySource("green");
     await sampleVisible(page,"green");
     const frames=Number(await page.locator("#view-frames").textContent());
     // Change the independently running sender's isolated desktop after
     // confirming its first visible color. Stale decoded/painted frames
     // cannot pass both phases; no DOM-generated expected image is used.
     execFileSync("xsetroot",["-solid","#325bcf"],{stdio:"ignore",timeout:5000});
+    verifySource("blue");
     await page.waitForFunction(previous=>Number(document.querySelector("#view-frames").textContent)>=previous+3,frames,{timeout:4000});
     await sampleVisible(page,"blue");
 }

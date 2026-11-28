@@ -13,6 +13,11 @@ on:
       - 'apps/web/style.css'
       - 'scripts/stage-mobile-client.mjs'
       - 'scripts/ci/webkit-receiver-pixels.mjs'
+      - 'scripts/ci/x11-root-samples.py'
+      - 'apps/web/touch.js'
+      - 'apps/web/input.js'
+      - 'apps/web/connection-book.js'
+      - 'apps/web/view-session.js'
       - 'scripts/ci/webkit-controller-runtime.sh'
       - '.github/workflows/webkit-controller-ci.yml'
   workflow_dispatch:
